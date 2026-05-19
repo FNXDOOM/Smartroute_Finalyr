@@ -384,4 +384,4 @@ To develop a scalable, AI-driven shared mobility optimization platform that impr
 
 ## License
 
-MIT License — feel free to use, modify, and distribute.
+Apache 2.0  License — feel free to use, modify, and distribute.
