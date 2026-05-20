@@ -9,6 +9,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const [virtualStops, setVirtualStops] = useState([]);
   const [routes, setRoutes] = useState([]);
+  const [userLocation, setUserLocation] = useState(null);
 
   // Mock data simulation for MVP demonstration
   useEffect(() => {
@@ -70,8 +71,8 @@ const Dashboard = () => {
 
       {/* Main Content Area */}
       <main style={{ flex: 1, position: 'relative' }}>
-        <MapView virtualStops={virtualStops} routes={routes} />
-        <RideBooking onRideRequested={handleRideRequested} />
+        <MapView virtualStops={virtualStops} routes={routes} userLocation={userLocation} />
+        <RideBooking onRideRequested={handleRideRequested} onLocationFound={setUserLocation} />
       </main>
 
     </div>

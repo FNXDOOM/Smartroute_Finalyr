@@ -1,5 +1,15 @@
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
+import React, { useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
+
+const MapUpdater = ({ center }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (center) {
+      map.flyTo(center, 13);
+    }
+  }, [center, map]);
+  return null;
+};
 
 const MapView = ({ virtualStops = [], routes = [], userLocation = null }) => {
   // Center of the map (defaults to a central point if no location)
@@ -14,10 +24,22 @@ const MapView = ({ virtualStops = [], routes = [], userLocation = null }) => {
         style={{ height: '100%', width: '100%' }}
         zoomControl={false}
       >
+        <MapUpdater center={userLocation} />
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
+
+        {/* Render User Location */}
+        {userLocation && (
+          <Marker position={userLocation}>
+            <Popup>
+              <div style={{ color: '#000' }}>
+                <strong>Your Location</strong>
+              </div>
+            </Popup>
+          </Marker>
+        )}
         
         {/* Render Virtual Stops */}
         {virtualStops.map((stop, idx) => (

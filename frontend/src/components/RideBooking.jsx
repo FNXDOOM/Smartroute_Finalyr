@@ -1,11 +1,34 @@
 import React, { useState } from 'react';
-import { MapPin, Navigation, Clock, User } from 'lucide-react';
+import { MapPin, Navigation, Clock, User, LocateFixed } from 'lucide-react';
 import { ridesAPI } from '../services/api';
 
-const RideBooking = ({ onRideRequested }) => {
+const RideBooking = ({ onRideRequested, onLocationFound }) => {
   const [pickup, setPickup] = useState('');
   const [destination, setDestination] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
+
+  const fetchLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser');
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setPickup(`${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`);
+        if (onLocationFound) {
+          onLocationFound([position.coords.latitude, position.coords.longitude]);
+        }
+        setIsLocating(false);
+      },
+      (error) => {
+        console.error('Error fetching location:', error);
+        alert('Unable to retrieve your location. Please check browser permissions.');
+        setIsLocating(false);
+      }
+    );
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -42,14 +65,27 @@ const RideBooking = ({ onRideRequested }) => {
           <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <User size={14} /> Pickup Location
           </label>
-          <input 
-            type="text" 
-            className="input-field" 
-            placeholder="Current Location" 
-            value={pickup}
-            onChange={e => setPickup(e.target.value)}
-            required
-          />
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <input 
+              type="text" 
+              className="input-field" 
+              placeholder="Current Location" 
+              value={pickup}
+              onChange={e => setPickup(e.target.value)}
+              required
+              style={{ flex: 1 }}
+            />
+            <button 
+              type="button" 
+              onClick={fetchLocation} 
+              className="btn btn-outline" 
+              style={{ padding: '0 0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              disabled={isLocating}
+              title="Fetch Live Location"
+            >
+              <LocateFixed size={18} className={isLocating ? 'animate-pulse' : ''} />
+            </button>
+          </div>
         </div>
 
         <div className="input-group">
