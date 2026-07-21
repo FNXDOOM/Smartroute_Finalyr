@@ -1,25 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { LogOut, LayoutDashboard, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import MapView from '../components/MapView';
 import RideBooking from '../components/RideBooking';
-import { clusterAPI, routeAPI } from '../services/api';
+
+import { useVehicleTracking } from '../hooks/useVehicleTracking';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const [virtualStops, setVirtualStops] = useState([]);
   const [routes, setRoutes] = useState([]);
   const [userLocation, setUserLocation] = useState(null);
+  const [destinationLocation, setDestinationLocation] = useState(null);
+  const { vehicles } = useVehicleTracking();
 
-  // Mock data simulation for MVP demonstration
-  useEffect(() => {
-    // In a real app, this would be fetched from backend or WebSockets
-    const mockStops = [
-      { lat: 40.7128, lng: -74.0060, cluster_id: 1 },
-      { lat: 40.7306, lng: -73.9352, cluster_id: 2 }
-    ];
-    setVirtualStops(mockStops);
-  }, []);
+
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -28,19 +23,22 @@ const Dashboard = () => {
 
   const handleRideRequested = (payload) => {
     console.log("Ride requested", payload);
-    // You could trigger clustering or refresh data here
+    setUserLocation([payload.pickupCoords.lat, payload.pickupCoords.lng]);
+    setDestinationLocation([payload.destCoords.lat, payload.destCoords.lng]);
   };
 
   const triggerOptimization = async () => {
     try {
-      // await clusterAPI.triggerCluster();
-      // await routeAPI.optimize();
-      alert("Triggering backend optimization pipeline...");
-      
-      // Mock result
-      setRoutes([
-        { path: [{lat: 40.7128, lng: -74.0060}, {lat: 40.7306, lng: -73.9352}] }
-      ]);
+      if (userLocation && destinationLocation) {
+        setRoutes([{
+          path: [
+            { lat: userLocation[0], lng: userLocation[1] },
+            { lat: destinationLocation[0], lng: destinationLocation[1] }
+          ]
+        }]);
+      } else {
+        alert("Please enter a pickup and destination first.");
+      }
     } catch (error) {
       console.error("Optimization failed", error);
     }
@@ -71,7 +69,13 @@ const Dashboard = () => {
 
       {/* Main Content Area */}
       <main style={{ flex: 1, position: 'relative' }}>
-        <MapView virtualStops={virtualStops} routes={routes} userLocation={userLocation} />
+        <MapView 
+          virtualStops={virtualStops} 
+          routes={routes} 
+          userLocation={userLocation} 
+          destinationLocation={destinationLocation} 
+          vehicles={vehicles} 
+        />
         <RideBooking onRideRequested={handleRideRequested} onLocationFound={setUserLocation} />
       </main>
 

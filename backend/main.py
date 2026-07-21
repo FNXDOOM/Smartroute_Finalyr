@@ -1,9 +1,20 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routers import auth, rides, cluster, route, vehicle, predict
+from backend.routers import auth, rides, cluster, route, vehicle, predict, tracking
 
-app = FastAPI(title="SmartRouteAI", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: launch GPS simulation background task
+    tracking.start_simulation()
+    yield
+    # Shutdown: nothing special needed
+
+
+app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,6 +30,7 @@ app.include_router(cluster.router, prefix="/cluster", tags=["Cluster"])
 app.include_router(route.router, prefix="/route", tags=["Route"])
 app.include_router(vehicle.router, prefix="/vehicle", tags=["Vehicle"])
 app.include_router(predict.router, prefix="/predict", tags=["Predict"])
+app.include_router(tracking.router, tags=["Tracking"])
 
 
 @app.get("/")
