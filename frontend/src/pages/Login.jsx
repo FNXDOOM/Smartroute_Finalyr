@@ -6,27 +6,33 @@ import { authAPI } from '../services/api';
 const Login = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({ email: '', password: '', name: '' });
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // Assuming backend takes email and password.
-    // In a real implementation, you'd handle loading states and error toasts here.
+    setError('');
+    setIsLoading(true);
     try {
       if (isLogin) {
-        const res = await authAPI.login(formData);
+        const res = await authAPI.login({ email: formData.email, password: formData.password });
         if (res.data && res.data.token) {
           localStorage.setItem('token', res.data.token);
         }
         navigate('/dashboard');
       } else {
         await authAPI.register({ name: formData.name, email: formData.email, password_hash: formData.password });
-        setIsLogin(true); // Switch to login after registration
+        setFormData({ email: formData.email, password: '', name: '' });
+        setIsLogin(true);
+        setError(''); // clear any errors
+        alert('Account created! Please log in.');
       }
-    } catch (error) {
-      console.error("Auth error", error);
-      // For MVP, if backend is not running or throws error, we'll just navigate to dashboard anyway for testing the UI
-      navigate('/dashboard');
+    } catch (err) {
+      const msg = err?.response?.data?.detail || 'Something went wrong. Please try again.';
+      setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -46,6 +52,11 @@ const Login = () => {
         </h2>
 
         <form onSubmit={handleSubmit}>
+          {error && (
+            <div style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem', marginBottom: '1rem', color: '#fca5a5', fontSize: '0.875rem' }}>
+              {error}
+            </div>
+          )}
           {!isLogin && (
             <div className="input-group">
               <label className="input-label">Full Name</label>
@@ -84,8 +95,8 @@ const Login = () => {
             />
           </div>
 
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>
-            {isLogin ? 'Log In' : 'Sign Up'} <LogIn size={18} />
+          <button type="submit" className="btn btn-primary" disabled={isLoading} style={{ width: '100%', marginTop: '1rem' }}>
+            {isLoading ? 'Please wait...' : (isLogin ? 'Log In' : 'Sign Up')} <LogIn size={18} />
           </button>
         </form>
 
