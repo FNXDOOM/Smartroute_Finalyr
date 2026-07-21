@@ -1,10 +1,10 @@
-# 🚌 SmartRouteAI — Industrial Shared Mobility Optimization System
+# SmartRouteAI — Industrial Shared Mobility Optimization System
 
 > An AI-powered intelligent shared mobility platform designed to optimize urban transportation through dynamic passenger clustering, virtual pickup stops, real road-network routing, vehicle route optimization, and demand prediction.
 
 ---
 
-## 📌 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Core Features](#core-features)
@@ -32,12 +32,12 @@ SmartRouteAI is a scalable, AI-driven shared mobility optimization platform that
 
 | Feature | Description |
 |---|---|
-| 🧠 Intelligent Passenger Matching | Uses H3 spatial indexing + HDBSCAN clustering to group nearby passengers |
-| 📍 Dynamic Virtual Stops | Generates optimal pickup/drop-off points based on cluster geometry |
-| 🗺️ Real Road-Network Routing | Leverages OpenStreetMap data via OSMnx and NetworkX |
-| 🚐 Vehicle Route Optimization | Solves Vehicle Routing Problems (VRP) using Google OR-Tools |
-| 🔁 Vehicle Assignment Engine | Hungarian Algorithm for optimal vehicle-to-route matching |
-| 📈 Demand Prediction | XGBoost model forecasts ride demand by zone and time |
+| Intelligent Passenger Matching | Uses H3 spatial indexing + HDBSCAN clustering to group nearby passengers |
+| Dynamic Virtual Stops | Generates optimal pickup/drop-off points based on cluster geometry |
+| Real Road-Network Routing | Leverages OpenStreetMap data via OSMnx and NetworkX |
+| Vehicle Route Optimization | Solves Vehicle Routing Problems (VRP) using Google OR-Tools |
+| Vehicle Assignment Engine | Hungarian Algorithm for optimal vehicle-to-route matching |
+| Demand Prediction | XGBoost model forecasts ride demand by zone and time |
 
 ---
 
@@ -76,6 +76,7 @@ PostgreSQL + PostGIS
 
 ### Backend
 - **FastAPI** — High-performance async Python API
+- **WebSockets** — Real-time data streaming
 - **Python 3.10+**
 
 ### Database
@@ -108,7 +109,7 @@ PostgreSQL + PostGIS
 
 ## Workflows
 
-### 🔵 Virtual Stop Workflow
+### Virtual Stop Workflow
 
 ```
 Ride Requests
@@ -126,7 +127,7 @@ Evaluate Stop Cost
 Select Best Virtual Stop
 ```
 
-### 🟢 Route Optimization Workflow
+### Route Optimization Workflow
 
 ```
 Clustered Passengers
@@ -363,12 +364,13 @@ pip install passlib[bcrypt]
 - [x] Route optimization (OR-Tools VRP)
 - [x] Vehicle assignment (Hungarian Algorithm)
 - [x] Route visualization on map
+- [x] Real-time GPS tracking (via WebSockets)
+- [x] Address Geocoding (via OpenStreetMap Nominatim)
 
 ---
 
 ## Future Enhancements
 
-- [ ] Real-time GPS tracking
 - [ ] Live traffic data integration
 - [ ] Dynamic surge pricing engine
 - [ ] Reinforcement learning-based optimization
