@@ -1,12 +1,42 @@
-import osmnx as ox
-import networkx as nx
+from math import radians, cos, sin, asin, sqrt
+from typing import Tuple
 
 
-def snap_to_road(graph: nx.MultiDiGraph, lat: float, lng: float) -> tuple:
+def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6_371_000
+    lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
+    dlat = lat2 - lat1
+    dlng = lng2 - lng1
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
+    return 2 * R * asin(sqrt(a))
+
+
+def snap_to_road(graph, lat: float, lng: float) -> Tuple[float, float, str]:
     """
-    Snap a lat/lng coordinate to the nearest road network node.
-    Returns (snapped_lat, snapped_lng).
+    Snap a lat/lng coordinate to the nearest road network node using OSMnx.
+    Returns (snapped_lat, snapped_lng, node_id_str).
+    Falls back to original lat/lng if graph is None or OSMnx fails.
     """
-    nearest_node = ox.distance.nearest_nodes(graph, X=lng, Y=lat)
-    node_data = graph.nodes[nearest_node]
-    return node_data["y"], node_data["x"]
+    if graph is None:
+        return lat, lng, "none"
+
+    try:
+        import osmnx as ox
+        nearest_node = ox.distance.nearest_nodes(graph, X=lng, Y=lat)
+        node_data = graph.nodes[nearest_node]
+        return float(node_data["y"]), float(node_data["x"]), str(nearest_node)
+    except Exception:
+        return lat, lng, "none"
+
+
+def build_road_graph(lat: float, lng: float, dist: int = 3000):
+    """
+    Download a drivable road graph centred on lat/lng within `dist` metres.
+    Returns networkx MultiDiGraph or None on failure.
+    """
+    try:
+        import osmnx as ox
+        G = ox.graph_from_point((lat, lng), dist=dist, network_type="drive")
+        return G
+    except Exception:
+        return None

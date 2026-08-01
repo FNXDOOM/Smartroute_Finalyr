@@ -1,5 +1,13 @@
 import h3
-import numpy as np
+
+
+def get_h3_index(lat: float, lng: float, resolution: int = 9) -> str:
+    """Get H3 index string for given lat/lng and resolution"""
+    if hasattr(h3, "latlng_to_cell"):
+        return h3.latlng_to_cell(lat, lng, resolution)
+    elif hasattr(h3, "geo_to_h3"):
+        return h3.geo_to_h3(lat, lng, resolution)
+    raise AttributeError("H3 library missing latlng_to_cell or geo_to_h3")
 
 
 def partition_requests(ride_requests: list, resolution: int = 9) -> dict:
@@ -9,7 +17,9 @@ def partition_requests(ride_requests: list, resolution: int = 9) -> dict:
     """
     buckets = {}
     for req in ride_requests:
-        lat, lng = req["pickup_lat"], req["pickup_lng"]
-        h3_index = h3.geo_to_h3(lat, lng, resolution)
-        buckets.setdefault(h3_index, []).append(req)
+        lat = req.pickup_lat if hasattr(req, "pickup_lat") else req["pickup_lat"]
+        lng = req.pickup_lng if hasattr(req, "pickup_lng") else req["pickup_lng"]
+        h3_idx = get_h3_index(lat, lng, resolution)
+        buckets.setdefault(h3_idx, []).append(req)
     return buckets
+
