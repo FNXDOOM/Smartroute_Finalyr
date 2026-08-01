@@ -152,6 +152,7 @@ Generate Optimized Shared Route
 | name | VARCHAR |
 | email | VARCHAR (unique) |
 | password_hash | VARCHAR |
+| phone | VARCHAR |
 
 ### Vehicles
 | Column | Type |
@@ -185,6 +186,7 @@ Generate Optimized Shared Route
 |---|---|---|
 | `/auth/register` | POST | Register a new user |
 | `/auth/login` | POST | Authenticate and get token |
+| `/auth/me` | PATCH | Update user profile (name, email, phone) |
 | `/rides/request` | POST | Submit a new ride request |
 | `/rides/status` | GET | Check status of a ride |
 | `/cluster/create` | POST | Trigger passenger clustering |
