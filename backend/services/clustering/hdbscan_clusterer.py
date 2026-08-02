@@ -1,6 +1,7 @@
 import numpy as np
-from math import radians, cos, sin, asin, sqrt
 from typing import List, Tuple
+
+from backend.utils.geo import haversine_meters
 
 
 def _extract_pickup_coords(request) -> Tuple[float, float]:
@@ -11,16 +12,6 @@ def _extract_pickup_coords(request) -> Tuple[float, float]:
     return float(request["pickup_lat"]), float(request["pickup_lng"])
 
 
-def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    """Calculate great-circle distance in meters between two lat/lng points."""
-    R = 6_371_000
-    lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
-    dlat = lat2 - lat1
-    dlng = lng2 - lng1
-    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
-    return 2 * R * asin(sqrt(a))
-
-
 def cluster_passengers(
     requests: list, min_cluster_size: int = 2
 ) -> np.ndarray:
@@ -28,25 +19,36 @@ def cluster_passengers(
     Apply HDBSCAN clustering to passenger pickup locations.
     Returns array of integer cluster labels (-1 = noise/outlier).
     Falls back to DBSCAN (via sklearn) if hdbscan is unavailable.
+
+    Note: haversine metric operates on radians, so coordinates are converted
+    before being passed to the clusterer.  cluster_selection_epsilon is also
+    expressed in radians:
+        50 m / 6_371_000 m ≈ 7.85e-6 rad  (~50 m pickup-grouping radius)
     """
     coords = np.array([_extract_pickup_coords(r) for r in requests], dtype=float)
 
-    # Need at least min_cluster_size points to form a cluster
     if len(coords) < min_cluster_size:
         return np.array([-1] * len(coords))
+
+    # ~50 m in radians  (was incorrectly 0.0005 ≈ 3 km)
+    epsilon_rad = 50.0 / 6_371_000
 
     try:
         import hdbscan
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
             metric="haversine",
-            cluster_selection_epsilon=0.0005,  # ~55m in radians
+            cluster_selection_epsilon=epsilon_rad,
         )
         labels = clusterer.fit_predict(np.radians(coords))
     except ImportError:
         # Fallback to sklearn DBSCAN with haversine metric
         from sklearn.cluster import DBSCAN
-        clusterer = DBSCAN(eps=0.001, min_samples=min_cluster_size, metric="haversine")
+        clusterer = DBSCAN(
+            eps=epsilon_rad,
+            min_samples=min_cluster_size,
+            metric="haversine",
+        )
         labels = clusterer.fit_predict(np.radians(coords))
 
     return labels
