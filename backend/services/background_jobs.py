@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from math import radians, cos, sin, asin, sqrt
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from uuid import uuid4
 
@@ -24,6 +23,7 @@ from backend.services.prediction.feature_engineering import get_h3_center
 from backend.services.stops.road_snapper import build_road_graph, snap_to_road
 from backend.services.stops.virtual_stop_generator import generate_virtual_stops
 from backend.services.notifications import create_notification
+from backend.utils.geo import haversine_meters as _haversine_meters
 
 CLUSTER_INTERVAL_SECONDS = 60
 DEMAND_INTERVAL_SECONDS = 300
@@ -45,11 +45,6 @@ STATE = SchedulerState(active_tasks=[])
 _TASKS: List[asyncio.Task] = []
 
 
-def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    radius = 6_371_000
-    lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
-    a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lng2 - lng1) / 2) ** 2
-    return 2 * radius * asin(sqrt(a))
 
 
 def _start_job_run(db: Session, job_name: str, triggered_by_user_id: Optional[int], is_scheduled: bool = True) -> JobRun:
@@ -69,13 +64,12 @@ def _finish_job_run(db: Session, job_run: JobRun, status: str, summary: Dict, er
     job_run.status = status
     job_run.summary = summary
     job_run.error_message = error_message
-    job_run.finished_at = datetime.utcnow()
+    job_run.finished_at = datetime.now(timezone.utc)
     db.add(job_run)
 
 
 def run_cluster_job(
     db: Session,
-    *,
     resolution: int = 9,
     min_cluster_size: int = 2,
     triggered_by_user_id: Optional[int] = None,
@@ -223,7 +217,6 @@ def run_cluster_job(
 
 def run_demand_refresh_job(
     db: Session,
-    *,
     lookback_days: int = 30,
     resolution: int = 9,
     reference_time: Optional[datetime] = None,
@@ -232,7 +225,7 @@ def run_demand_refresh_job(
 ) -> Dict:
     job_run = _start_job_run(db, "refresh_demand_snapshots", triggered_by_user_id, is_scheduled)
     try:
-        ref_time = reference_time or datetime.utcnow()
+        ref_time = reference_time or datetime.now(timezone.utc)
         threshold = ref_time - timedelta(days=lookback_days)
         rides = db.query(RideRequest).filter(RideRequest.request_time >= threshold).all()
         h3_indexes = set()
@@ -287,7 +280,6 @@ def run_demand_refresh_job(
 
 def run_vehicle_rebalance_job(
     db: Session,
-    *,
     lookback_days: int = 30,
     max_zones: int = 10,
     triggered_by_user_id: Optional[int] = None,
@@ -310,7 +302,7 @@ def run_vehicle_rebalance_job(
                 "idle_vehicles": 0,
             }
 
-        threshold = datetime.utcnow() - timedelta(days=lookback_days)
+        threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
         rides = db.query(RideRequest).filter(RideRequest.request_time >= threshold).all()
         demand_cells = {}
         for ride in rides:
@@ -323,7 +315,7 @@ def run_vehicle_rebalance_job(
             prediction = predict_zone_demand(
                 db,
                 h3_index=h3_index,
-                reference_time=datetime.utcnow(),
+                reference_time=datetime.now(timezone.utc),
                 lookback_days=lookback_days,
             )
             lat, lng = get_h3_center(h3_index)
@@ -396,7 +388,7 @@ def run_vehicle_rebalance_job(
         raise
 
 
-def run_simulate_ride_dispatch_job(db: Session, *, is_scheduled: bool = True) -> Dict:
+def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Dict:
     """
     Simulates the ride lifecycle (pending -> assigned -> arriving -> in_progress -> completed)
     every few seconds to feed real-time WebSocket events to the frontend.
@@ -461,15 +453,17 @@ async def _run_periodic(name: str, interval_seconds: int, runner):
         while True:
             db = SessionLocal()
             try:
+                # All job runners accept db as the first positional argument
                 runner(db)
+                now = datetime.now(timezone.utc)
                 if name == "cluster_pending_rides":
-                    STATE.last_cluster_run_at = datetime.utcnow()
+                    STATE.last_cluster_run_at = now
                 elif name == "refresh_demand_snapshots":
-                    STATE.last_demand_run_at = datetime.utcnow()
+                    STATE.last_demand_run_at = now
                 elif name == "rebalance_idle_vehicles":
-                    STATE.last_rebalance_run_at = datetime.utcnow()
+                    STATE.last_rebalance_run_at = now
                 elif name == "simulate_ride_dispatch":
-                    STATE.last_dispatch_run_at = datetime.utcnow()
+                    STATE.last_dispatch_run_at = now
             finally:
                 db.close()
             await asyncio.sleep(interval_seconds)
