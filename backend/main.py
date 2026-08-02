@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -17,15 +18,20 @@ async def lifespan(app: FastAPI):
     tracking.start_simulation()
     start_background_jobs()
     yield
-    # Shutdown: nothing special needed
+    # Shutdown
     await stop_background_jobs()
 
 
 app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
 
+# CORS — wildcard origins are incompatible with allow_credentials=True.
+# Read explicit origins from the environment; fall back to localhost dev only.
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
