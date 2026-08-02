@@ -1,9 +1,9 @@
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
-from math import asin, cos, radians, sin, sqrt
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -16,15 +16,9 @@ from backend.models.ride_request import RideRequest
 from backend.models.virtual_stop import VirtualStop
 from backend.schemas.analytics import AnalyticsDailyPoint, AnalyticsDailyResponse, AnalyticsOverviewResponse
 from backend.utils.auth_utils import get_current_user
+from backend.utils.geo import haversine_meters
 
 router = APIRouter()
-
-
-def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    radius = 6_371_000
-    lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
-    a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lng2 - lng1) / 2) ** 2
-    return 2 * radius * asin(sqrt(a))
 
 
 def _require_admin_or_driver(current_user: User) -> None:
@@ -54,61 +48,96 @@ def get_analytics_overview(
 ):
     _require_admin_or_driver(current_user)
 
-    rides = db.query(RideRequest).all()
-    vehicles = db.query(Vehicle).all()
-    virtual_stops = db.query(VirtualStop).all()
-    cluster_runs = db.query(ClusterRun).all()
-    route_plans = db.query(RoutePlan).all()
-    tracking_events = db.query(TrackingEvent).all()
+    # Use aggregation queries instead of loading entire tables into memory
+    total_rides = db.query(func.count(RideRequest.id)).scalar() or 0
+    total_vehicles = db.query(func.count(Vehicle.id)).scalar() or 0
+    total_virtual_stops = db.query(func.count(VirtualStop.id)).scalar() or 0
+    total_cluster_runs = db.query(func.count(ClusterRun.id)).scalar() or 0
+    total_route_plans = db.query(func.count(RoutePlan.id)).scalar() or 0
+    total_tracking_events = db.query(func.count(TrackingEvent.id)).scalar() or 0
 
-    rides_by_status = Counter(ride.status for ride in rides)
-    total_rides = len(rides)
-    total_vehicles = len(vehicles)
-    idle_vehicles = sum(1 for vehicle in vehicles if vehicle.status == "idle")
-    active_vehicles = sum(1 for vehicle in vehicles if vehicle.status != "idle")
-    total_virtual_stops = len(virtual_stops)
-    total_cluster_runs = len(cluster_runs)
-    total_route_plans = len(route_plans)
-    total_tracking_events = len(tracking_events)
-
-    avg_passengers_per_virtual_stop = (
-        sum(stop.passenger_count or 0 for stop in virtual_stops) / total_virtual_stops
-        if total_virtual_stops
-        else 0.0
+    # Status breakdown via GROUP BY
+    status_rows = (
+        db.query(RideRequest.status, func.count(RideRequest.id))
+        .group_by(RideRequest.status)
+        .all()
     )
+    rides_by_status = {row[0]: row[1] for row in status_rows}
 
-    avg_route_distance_meters = (
-        sum(float(route.total_distance_meters or 0.0) for route in route_plans) / total_route_plans
-        if total_route_plans
-        else 0.0
+    # Vehicle idle/active counts via GROUP BY
+    vehicle_status_rows = (
+        db.query(Vehicle.status, func.count(Vehicle.id))
+        .group_by(Vehicle.status)
+        .all()
     )
+    idle_vehicles = 0
+    active_vehicles = 0
+    for vst, cnt in vehicle_status_rows:
+        if vst == "idle":
+            idle_vehicles = cnt
+        else:
+            active_vehicles += cnt
 
+    # Average passengers per virtual stop
+    avg_passengers_row = db.query(func.avg(VirtualStop.passenger_count)).scalar()
+    avg_passengers_per_virtual_stop = round(float(avg_passengers_row or 0.0), 2)
+
+    # Average route distance
+    avg_route_dist_row = db.query(func.avg(RoutePlan.total_distance_meters)).scalar()
+    avg_route_distance_meters = round(float(avg_route_dist_row or 0.0), 2)
+
+    # Average trip distance — computed over a capped sample to stay memory-safe
+    SAMPLE_LIMIT = 1000
+    ride_sample = (
+        db.query(
+            RideRequest.pickup_lat,
+            RideRequest.pickup_lng,
+            RideRequest.dest_lat,
+            RideRequest.dest_lng,
+        )
+        .limit(SAMPLE_LIMIT)
+        .all()
+    )
     avg_trip_distance_meters = 0.0
-    if rides:
-        total_trip_distance = 0.0
-        for ride in rides:
-            total_trip_distance += _haversine_meters(
-                ride.pickup_lat,
-                ride.pickup_lng,
-                ride.dest_lat,
-                ride.dest_lng,
-            )
-        avg_trip_distance_meters = total_trip_distance / total_rides
+    if ride_sample:
+        total_dist = sum(
+            haversine_meters(r.pickup_lat, r.pickup_lng, r.dest_lat, r.dest_lng)
+            for r in ride_sample
+        )
+        avg_trip_distance_meters = round(total_dist / len(ride_sample), 2)
 
-    stops_by_id = {stop.id: stop for stop in virtual_stops}
-    total_passengers_assigned = sum(_route_passenger_count(route, stops_by_id) for route in route_plans)
-    total_vehicle_capacity = sum(vehicle.capacity or 0 for vehicle in vehicles)
+    # Route utilisation — aggregate stop passenger counts for assigned stops
+    route_meta_rows = (
+        db.query(RoutePlan.route_metadata).limit(500).all()
+    )
+    total_passengers_assigned = 0
+    all_stop_ids: List[int] = []
+    for (meta,) in route_meta_rows:
+        if meta and isinstance(meta, dict):
+            all_stop_ids.extend(meta.get("assigned_stop_ids", []) or [])
+
+    if all_stop_ids:
+        stop_passenger_rows = (
+            db.query(VirtualStop.id, VirtualStop.passenger_count)
+            .filter(VirtualStop.id.in_(set(all_stop_ids)))
+            .all()
+        )
+        stop_map = {sid: (pc or 0) for sid, pc in stop_passenger_rows}
+        total_passengers_assigned = sum(stop_map.get(sid, 0) for sid in all_stop_ids)
+
+    total_vehicle_capacity_row = db.query(func.sum(Vehicle.capacity)).scalar()
+    total_vehicle_capacity = int(total_vehicle_capacity_row or 0)
     route_utilization_percent = (
-        (total_passengers_assigned / total_vehicle_capacity) * 100.0
+        round((total_passengers_assigned / total_vehicle_capacity) * 100.0, 2)
         if total_vehicle_capacity
         else 0.0
     )
 
     return AnalyticsOverviewResponse(
         status="ok",
-        generated_at=datetime.utcnow(),
+        generated_at=datetime.now(timezone.utc),
         total_rides=total_rides,
-        rides_by_status=dict(rides_by_status),
+        rides_by_status=rides_by_status,
         total_vehicles=total_vehicles,
         idle_vehicles=idle_vehicles,
         active_vehicles=active_vehicles,
@@ -116,10 +145,10 @@ def get_analytics_overview(
         total_cluster_runs=total_cluster_runs,
         total_route_plans=total_route_plans,
         total_tracking_events=total_tracking_events,
-        avg_passengers_per_virtual_stop=round(avg_passengers_per_virtual_stop, 2),
-        avg_route_distance_meters=round(avg_route_distance_meters, 2),
-        avg_trip_distance_meters=round(avg_trip_distance_meters, 2),
-        route_utilization_percent=round(route_utilization_percent, 2),
+        avg_passengers_per_virtual_stop=avg_passengers_per_virtual_stop,
+        avg_route_distance_meters=avg_route_distance_meters,
+        avg_trip_distance_meters=avg_trip_distance_meters,
+        route_utilization_percent=route_utilization_percent,
     )
 
 
@@ -137,11 +166,21 @@ def get_analytics_daily(
             detail="days must be between 1 and 90",
         )
 
-    end_date = datetime.utcnow().date()
+    end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=days - 1)
+    start_dt = datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc)
 
-    rides = db.query(RideRequest).all()
-    route_plans = db.query(RoutePlan).all()
+    # Only fetch rides within the requested window
+    rides = (
+        db.query(RideRequest)
+        .filter(RideRequest.request_time >= start_dt)
+        .all()
+    )
+    route_plans = (
+        db.query(RoutePlan)
+        .filter(RoutePlan.created_at >= start_dt)
+        .all()
+    )
 
     points_by_day: Dict[date, AnalyticsDailyPoint] = {}
     for offset in range(days):
