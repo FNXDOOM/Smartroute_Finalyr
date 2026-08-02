@@ -31,7 +31,7 @@ class DemandSnapshotResponse(BaseModel):
     method: Optional[str] = None
     created_at: Optional[datetime] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
 class VehicleRebalanceSuggestionResponse(BaseModel):

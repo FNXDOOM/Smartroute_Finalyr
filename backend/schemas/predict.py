@@ -34,7 +34,7 @@ class DemandPredictionResult(BaseModel):
     model_name: str
     method: str
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
 
 class DemandHeatmapCell(BaseModel):
