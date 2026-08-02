@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
@@ -18,7 +19,7 @@ from backend.schemas.tracking import (
     VehicleTelemetryUpdate,
 )
 from backend.services.notifications import create_notification, create_notifications_for_users
-from backend.utils.auth_utils import get_current_user
+from backend.utils.auth_utils import get_current_user, decode_access_token
 
 router = APIRouter()
 
@@ -101,7 +102,6 @@ async def broadcast_live_feed():
             )
             await manager.broadcast(payload)
         except Exception:
-            # Keep the live feed resilient even if a telemetry query fails.
             pass
         finally:
             db.close()
@@ -148,12 +148,13 @@ def list_tracking_events(
 
 
 @router.post("/vehicles/{vehicle_id}/location", response_model=VehicleSnapshot)
-def update_vehicle_location(
+async def update_vehicle_location(
     vehicle_id: int,
     payload: VehicleTelemetryUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Update vehicle GPS location and broadcast to WebSocket subscribers."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -224,6 +225,7 @@ def update_vehicle_location(
     db.refresh(vehicle)
     db.refresh(event)
 
+    # Safe to call create_task here because the function is now async
     asyncio.create_task(
         manager.broadcast(
             json.dumps(
@@ -242,6 +244,21 @@ def update_vehicle_location(
 
 @router.websocket("/ws/tracking")
 async def websocket_endpoint(websocket: WebSocket):
+    """
+    WebSocket endpoint for live vehicle tracking.
+    Clients must pass a valid JWT as a query parameter: /ws/tracking?token=<jwt>
+    """
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401, reason="Missing authentication token")
+        return
+
+    try:
+        decode_access_token(token)
+    except Exception:
+        await websocket.close(code=4401, reason="Invalid or expired token")
+        return
+
     await manager.connect(websocket)
     try:
         while True:

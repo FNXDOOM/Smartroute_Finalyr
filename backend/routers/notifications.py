@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
@@ -13,7 +14,7 @@ from backend.schemas.notification import (
     NotificationResponse,
 )
 from backend.services.notifications import manager
-from backend.utils.auth_utils import get_current_user
+from backend.utils.auth_utils import get_current_user, decode_access_token
 
 router = APIRouter()
 
@@ -74,10 +75,8 @@ def mark_notification_read(
 ):
     notification = _get_notification_for_user(db, notification_id, current_user.id)
     if not notification.is_read:
-        from datetime import datetime
-
         notification.is_read = True
-        notification.read_at = datetime.utcnow()
+        notification.read_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(notification)
     return NotificationReadResponse(status="ok", notification=NotificationResponse.model_validate(notification))
@@ -88,8 +87,6 @@ def mark_all_notifications_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from datetime import datetime
-
     notifications = (
         db.query(Notification)
         .filter(Notification.user_id == current_user.id, Notification.is_read.is_(False))
@@ -98,7 +95,7 @@ def mark_all_notifications_read(
     count = 0
     for notification in notifications:
         notification.is_read = True
-        notification.read_at = datetime.utcnow()
+        notification.read_at = datetime.now(timezone.utc)
         count += 1
     db.commit()
     return NotificationActionResponse(status="ok", updated_count=count)
@@ -106,6 +103,21 @@ def mark_all_notifications_read(
 
 @router.websocket("/ws/notifications")
 async def websocket_notifications(websocket: WebSocket):
+    """
+    WebSocket endpoint for real-time notifications.
+    Clients must pass a valid JWT as a query parameter: /ws/notifications?token=<jwt>
+    """
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401, reason="Missing authentication token")
+        return
+
+    try:
+        decode_access_token(token)
+    except Exception:
+        await websocket.close(code=4401, reason="Invalid or expired token")
+        return
+
     await manager.connect(websocket)
     try:
         while True:
