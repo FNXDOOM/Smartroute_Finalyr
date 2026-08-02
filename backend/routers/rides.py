@@ -16,6 +16,9 @@ from backend.services.clustering.h3_partitioner import get_h3_index
 
 router = APIRouter()
 
+# Valid ride statuses — enforced on every write
+VALID_RIDE_STATUSES = {"pending", "clustered", "assigned", "arriving", "in_progress", "completed", "cancelled"}
+
 
 @router.post("/request", response_model=RideRequestResponse, status_code=status.HTTP_201_CREATED)
 def create_ride_request(
@@ -97,17 +100,27 @@ def get_ride_request_by_id(
 
 @router.get("/", response_model=List[RideRequestResponse])
 def list_ride_requests(
-    status: Optional[str] = Query(None, description="Filter by ride status (e.g. pending, clustered, assigned)"),
+    ride_status: Optional[str] = Query(None, alias="status", description="Filter by ride status"),
     h3_index: Optional[str] = Query(None, description="Filter by H3 spatial cell index"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List ride requests across the system (dispatch/admin view or status query)"""
+    """List ride requests across the system. Admin/driver only."""
+    if current_user.role not in {"admin", "driver"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin or driver users can list all ride requests",
+        )
     query = db.query(RideRequest)
-    if status:
-        query = query.filter(RideRequest.status == status)
+    if ride_status:
+        if ride_status not in VALID_RIDE_STATUSES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_RIDE_STATUSES))}",
+            )
+        query = query.filter(RideRequest.status == ride_status)
     if h3_index:
         query = query.filter(RideRequest.h3_index == h3_index)
 
@@ -138,6 +151,11 @@ def update_ride_request_status(
         )
 
     old_status = ride.status
+    if status_update.status not in VALID_RIDE_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_RIDE_STATUSES))}",
+        )
     ride.status = status_update.status
     create_notification(
         db,
