@@ -1,12 +1,6 @@
-from math import radians, cos, sin, asin, sqrt
 from typing import List, Dict, Any, Optional
 
-
-def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    R = 6_371_000
-    lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
-    a = sin((lat2 - lat1) / 2) ** 2 + cos(lat1) * cos(lat2) * sin((lng2 - lng1) / 2) ** 2
-    return 2 * R * asin(sqrt(a))
+from backend.utils.geo import haversine_meters as _haversine_meters
 
 
 def build_distance_matrix(stops: List[Dict]) -> List[List[int]]:

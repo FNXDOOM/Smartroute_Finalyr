@@ -1,14 +1,6 @@
-from math import radians, cos, sin, asin, sqrt
 from typing import Tuple
 
-
-def _haversine_meters(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    R = 6_371_000
-    lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
-    dlat = lat2 - lat1
-    dlng = lng2 - lng1
-    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlng / 2) ** 2
-    return 2 * R * asin(sqrt(a))
+from backend.utils.geo import haversine_meters as _haversine_meters  # noqa: F401 — kept for any future internal use
 
 
 def snap_to_road(graph, lat: float, lng: float) -> Tuple[float, float, str]:

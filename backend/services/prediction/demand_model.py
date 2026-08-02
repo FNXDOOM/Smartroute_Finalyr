@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -38,7 +38,7 @@ def _query_historical_requests(
     max_lng: Optional[float] = None,
     lookback_days: int = 30,
 ) -> List[RideRequest]:
-    threshold = datetime.utcnow() - timedelta(days=lookback_days)
+    threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     query = db.query(RideRequest).filter(RideRequest.request_time >= threshold)
 
     if h3_index:
@@ -61,7 +61,7 @@ def _count_historical_requests(
     h3_index: str,
     lookback_days: int,
 ) -> int:
-    threshold = datetime.utcnow() - timedelta(days=lookback_days)
+    threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     return (
         db.query(RideRequest)
         .filter(RideRequest.request_time >= threshold, RideRequest.h3_index == h3_index)
