@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -21,10 +21,6 @@ from backend.utils.auth_utils import get_current_user
 router = APIRouter()
 
 
-@router.get("/")
-def get_predict():
-    return {"message": "Predict router"}
-
 
 @router.get("/demand", response_model=DemandPredictionResult)
 def predict_demand_for_point(
@@ -37,7 +33,7 @@ def predict_demand_for_point(
     current_user: User = Depends(get_current_user),
 ):
     h3_index = get_h3_index(latitude, longitude, resolution=resolution)
-    ref_time = reference_time or datetime.utcnow()
+    ref_time = reference_time or datetime.now(timezone.utc)
     prediction = predict_zone_demand(
         db,
         h3_index=h3_index,
@@ -75,7 +71,7 @@ def predict_demand_heatmap(
             detail="Invalid bounding box coordinates",
         )
 
-    threshold = reference_time or datetime.utcnow()
+    threshold = reference_time or datetime.now(timezone.utc)
     query = (
         db.query(RideRequest)
         .filter(
