@@ -28,10 +28,6 @@ from backend.utils.auth_utils import get_current_user
 router = APIRouter()
 
 
-@router.get("/")
-def get_route():
-    return {"message": "Route router"}
-
 
 @router.post("/optimize", response_model=OptimizedRouteResponse)
 def optimize_routes(

@@ -36,10 +36,6 @@ def _cluster_centroid(requests: List[RideRequest]) -> tuple[float, float]:
     return lat_sum / len(requests), lng_sum / len(requests)
 
 
-@router.get("/")
-def get_cluster():
-    return {"message": "Cluster router"}
-
 
 @router.post("/create", response_model=ClusterResultResponse, status_code=status.HTTP_201_CREATED)
 @router.post("/run", response_model=ClusterResultResponse, status_code=status.HTTP_201_CREATED)
