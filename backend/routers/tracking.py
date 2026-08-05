@@ -242,7 +242,7 @@ async def update_vehicle_location(
     return VehicleSnapshot.model_validate(vehicle)
 
 
-@router.websocket("/ws/tracking")
+@router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for live vehicle tracking.

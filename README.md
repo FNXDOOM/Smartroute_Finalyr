@@ -411,8 +411,8 @@ Both require `?token=<jwt>` query parameter for authentication.
 
 | Endpoint | Broadcast |
 |---|---|
-| `ws://localhost:8000/ws/tracking?token=<jwt>` | Vehicle positions + events every 2s |
-| `ws://localhost:8000/notifications/ws/notifications?token=<jwt>` | Real-time notification push |
+| `ws://localhost:8000/tracking/ws?token=<jwt>` | Vehicle positions + events every 2s |
+| `ws://localhost:8000/notifications/ws?token=<jwt>` | Real-time notification push |
 
 ---
 

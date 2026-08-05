@@ -101,7 +101,7 @@ def mark_all_notifications_read(
     return NotificationActionResponse(status="ok", updated_count=count)
 
 
-@router.websocket("/ws/notifications")
+@router.websocket("/ws")
 async def websocket_notifications(websocket: WebSocket):
     """
     WebSocket endpoint for real-time notifications.
