@@ -59,3 +59,7 @@ logs/
 # Misc
 *.bak
 *.tmp
+
+# ML model files and training cache (large binaries, regenerate with train script)
+ml/models/*.pkl
+ml/cache/
