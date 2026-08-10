@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Request
+import os
 
 from backend.database import create_db_tables
 from backend.routers import auth, rides, cluster, route, vehicle, predict, tracking, notifications
@@ -36,6 +38,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _maybe_add_dev_csp(request: Request, call_next):
+    """During local development, add a relaxed CSP that allows `unsafe-eval` so
+    dev tools and certain dev-only bundles don't trigger CSP errors when the
+    frontend is served through the backend. This middleware enables the relaxed
+    header only when `allowed_origins` appears to include a localhost dev URL.
+
+    IMPORTANT: Do NOT ship this to production. The header reduces CSP security.
+    """
+    response = await call_next(request)
+    try:
+        origins = allowed_origins
+    except NameError:
+        origins = []
+
+    is_local_dev = any("localhost" in o or "127.0.0.1" in o for o in origins)
+    if is_local_dev:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-eval' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline';"
+        )
+    return response
 
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(rides.router, prefix="/rides", tags=["Rides"])
