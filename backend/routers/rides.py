@@ -2,21 +2,21 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models.user import User
-from backend.models.ride_request import RideRequest
-from backend.models.route_waypoint import RouteWaypointRecord
-from backend.models.route_plan import RoutePlan
-from backend.models.vehicle import Vehicle
-from backend.schemas.ride_request import (
+from database import get_db
+from models.user import User
+from models.ride_request import RideRequest
+from models.route_waypoint import RouteWaypointRecord
+from models.route_plan import RoutePlan
+from models.vehicle import Vehicle
+from schemas.ride_request import (
     RideRequestCreate,
     RideRequestResponse,
     RideRequestStatusUpdate,
 )
-from backend.schemas.tracking import VehicleSnapshot
-from backend.services.notifications import create_notification
-from backend.utils.auth_utils import get_current_user
-from backend.services.clustering.h3_partitioner import get_h3_index
+from schemas.tracking import VehicleSnapshot
+from services.notifications import create_notification
+from utils.auth_utils import get_current_user
+from services.clustering.h3_partitioner import get_h3_index
 
 router = APIRouter()
 

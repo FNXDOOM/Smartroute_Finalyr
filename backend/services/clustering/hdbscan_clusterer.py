@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple
 
-from backend.utils.geo import haversine_meters
+from utils.geo import haversine_meters
 
 
 def _extract_pickup_coords(request) -> Tuple[float, float]:

@@ -6,11 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
 import os
 
-from backend.database import create_db_tables
-from backend.routers import auth, rides, cluster, route, vehicle, predict, tracking, notifications
-from backend.routers import analytics
-from backend.routers import jobs
-from backend.services.background_jobs import start_background_jobs, stop_background_jobs
+from database import create_db_tables
+from routers import auth, rides, cluster, route, vehicle, predict, tracking, notifications
+from routers import analytics
+from routers import jobs
+from services.background_jobs import start_background_jobs, stop_background_jobs
 
 
 @asynccontextmanager

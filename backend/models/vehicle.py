@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime
 from sqlalchemy.sql import func
-from backend.database import Base, PortableGeometry
+from database import Base, PortableGeometry
 
 
 class Vehicle(Base):

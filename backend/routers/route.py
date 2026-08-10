@@ -5,14 +5,14 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models.cluster_run import ClusterRun
-from backend.models.route_plan import RoutePlan
-from backend.models.route_waypoint import RouteWaypointRecord
-from backend.models.user import User
-from backend.models.vehicle import Vehicle
-from backend.models.virtual_stop import VirtualStop
-from backend.schemas.route import (
+from database import get_db
+from models.cluster_run import ClusterRun
+from models.route_plan import RoutePlan
+from models.route_waypoint import RouteWaypointRecord
+from models.user import User
+from models.vehicle import Vehicle
+from models.virtual_stop import VirtualStop
+from schemas.route import (
     OptimizedRouteResponse,
     RouteHistoryResponse,
     RoutePlanResponse,
@@ -21,9 +21,9 @@ from backend.schemas.route import (
     RouteWaypointRecordResponse,
     VRPRequest,
 )
-from backend.services.routing.vrp_solver import solve_vrp
-from backend.services.notifications import create_notification, create_notifications_for_users
-from backend.utils.auth_utils import get_current_user
+from services.routing.vrp_solver import solve_vrp
+from services.notifications import create_notification, create_notifications_for_users
+from utils.auth_utils import get_current_user
 
 router = APIRouter()
 

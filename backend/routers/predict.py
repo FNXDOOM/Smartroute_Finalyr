@@ -5,18 +5,18 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models.ride_request import RideRequest
-from backend.models.user import User
-from backend.schemas.predict import (
+from database import get_db
+from models.ride_request import RideRequest
+from models.user import User
+from schemas.predict import (
     DemandHeatmapCell,
     DemandHeatmapResponse,
     DemandPredictionResult,
 )
-from backend.services.clustering.h3_partitioner import get_h3_index
-from backend.services.prediction.feature_engineering import get_h3_center
-from backend.services.prediction.demand_model import build_heatmap_cells, predict_zone_demand
-from backend.utils.auth_utils import get_current_user
+from services.clustering.h3_partitioner import get_h3_index
+from services.prediction.feature_engineering import get_h3_center
+from services.prediction.demand_model import build_heatmap_cells, predict_zone_demand
+from utils.auth_utils import get_current_user
 
 router = APIRouter()
 

@@ -10,8 +10,8 @@ import pickle
 import numpy as np
 from sqlalchemy.orm import Session
 
-from backend.models.ride_request import RideRequest
-from backend.services.prediction.feature_engineering import (
+from models.ride_request import RideRequest
+from services.prediction.feature_engineering import (
     build_demand_features,
     features_to_dict,
 )

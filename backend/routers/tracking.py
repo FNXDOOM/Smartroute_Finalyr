@@ -6,20 +6,20 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
-from backend.database import SessionLocal, get_db
-from backend.models.tracking_event import TrackingEvent
-from backend.models.route_plan import RoutePlan
-from backend.models.virtual_stop import VirtualStop
-from backend.models.user import User
-from backend.models.vehicle import Vehicle
-from backend.schemas.tracking import (
+from database import SessionLocal, get_db
+from models.tracking_event import TrackingEvent
+from models.route_plan import RoutePlan
+from models.virtual_stop import VirtualStop
+from models.user import User
+from models.vehicle import Vehicle
+from schemas.tracking import (
     TrackingEventResponse,
     TrackingFeedResponse,
     VehicleSnapshot,
     VehicleTelemetryUpdate,
 )
-from backend.services.notifications import create_notification, create_notifications_for_users
-from backend.utils.auth_utils import get_current_user, decode_access_token
+from services.notifications import create_notification, create_notifications_for_users
+from utils.auth_utils import get_current_user, decode_access_token
 
 router = APIRouter()
 

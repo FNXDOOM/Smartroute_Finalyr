@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Tuple
 
-from backend.services.clustering.h3_partitioner import get_h3_index
+from services.clustering.h3_partitioner import get_h3_index
 
 
 @dataclass(frozen=True)

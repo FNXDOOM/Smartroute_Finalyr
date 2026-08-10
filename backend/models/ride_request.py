@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from backend.database import Base, PortableGeometry
+from database import Base, PortableGeometry
 
 
 class RideRequest(Base):

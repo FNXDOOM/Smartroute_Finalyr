@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models.cluster_run import ClusterRun
-from backend.models.ride_request import RideRequest
-from backend.models.user import User
-from backend.models.virtual_stop import VirtualStop
-from backend.schemas.cluster import (
+from database import get_db
+from models.cluster_run import ClusterRun
+from models.ride_request import RideRequest
+from models.user import User
+from models.virtual_stop import VirtualStop
+from schemas.cluster import (
     ClusterGroup,
     ClusterHistoryResponse,
     ClusterResultResponse,
@@ -18,12 +18,12 @@ from backend.schemas.cluster import (
     ClusterRunSummary,
     ClusterTriggerRequest,
 )
-from backend.schemas.virtual_stop import VirtualStopResponse
-from backend.services.clustering.h3_partitioner import get_h3_index, partition_requests
-from backend.services.clustering.hdbscan_clusterer import cluster_passengers, get_cluster_groups
-from backend.services.stops.road_snapper import build_road_graph, snap_to_road
-from backend.services.stops.virtual_stop_generator import generate_virtual_stops
-from backend.utils.auth_utils import get_current_user
+from schemas.virtual_stop import VirtualStopResponse
+from services.clustering.h3_partitioner import get_h3_index, partition_requests
+from services.clustering.hdbscan_clusterer import cluster_passengers, get_cluster_groups
+from services.stops.road_snapper import build_road_graph, snap_to_road
+from services.stops.virtual_stop_generator import generate_virtual_stops
+from utils.auth_utils import get_current_user
 
 router = APIRouter()
 

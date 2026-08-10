@@ -3,24 +3,24 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models.demand_snapshot import DemandSnapshot
-from backend.models.job_run import JobRun
-from backend.models.user import User
-from backend.models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
-from backend.schemas.jobs import (
+from database import get_db
+from models.demand_snapshot import DemandSnapshot
+from models.job_run import JobRun
+from models.user import User
+from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
+from schemas.jobs import (
     BackgroundJobStatusResponse,
     DemandSnapshotResponse,
     JobRunResponse,
     VehicleRebalanceSuggestionResponse,
 )
-from backend.services.background_jobs import (
+from services.background_jobs import (
     get_background_job_state,
     run_cluster_job,
     run_demand_refresh_job,
     run_vehicle_rebalance_job,
 )
-from backend.utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_user
 
 router = APIRouter()
 

@@ -1,6 +1,6 @@
 from typing import Tuple
 
-from backend.utils.geo import haversine_meters as _haversine_meters  # noqa: F401 — kept for any future internal use
+from utils.geo import haversine_meters as _haversine_meters  # noqa: F401 — kept for any future internal use
 
 
 def snap_to_road(graph, lat: float, lng: float) -> Tuple[float, float, str]:

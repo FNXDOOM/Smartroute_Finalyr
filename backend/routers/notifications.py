@@ -4,17 +4,17 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models.notification import Notification
-from backend.models.user import User
-from backend.schemas.notification import (
+from database import get_db
+from models.notification import Notification
+from models.user import User
+from schemas.notification import (
     NotificationActionResponse,
     NotificationListResponse,
     NotificationReadResponse,
     NotificationResponse,
 )
-from backend.services.notifications import manager
-from backend.utils.auth_utils import get_current_user, decode_access_token
+from services.notifications import manager
+from utils.auth_utils import get_current_user, decode_access_token
 
 router = APIRouter()
 

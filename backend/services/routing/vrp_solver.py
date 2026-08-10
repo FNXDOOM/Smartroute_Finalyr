@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 
-from backend.utils.geo import haversine_meters as _haversine_meters
+from utils.geo import haversine_meters as _haversine_meters
 
 
 def build_distance_matrix(stops: List[Dict]) -> List[List[int]]:

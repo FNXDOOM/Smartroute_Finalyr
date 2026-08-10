@@ -8,7 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from fastapi import WebSocket
 from sqlalchemy.orm import Session
 
-from backend.models.notification import Notification
+from models.notification import Notification
 
 
 class NotificationConnectionManager:

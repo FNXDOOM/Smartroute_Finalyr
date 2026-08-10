@@ -8,22 +8,22 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from backend.database import SessionLocal
-from backend.models.cluster_run import ClusterRun
-from backend.models.demand_snapshot import DemandSnapshot
-from backend.models.job_run import JobRun
-from backend.models.ride_request import RideRequest
-from backend.models.vehicle import Vehicle
-from backend.models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
-from backend.models.virtual_stop import VirtualStop
-from backend.services.clustering.h3_partitioner import get_h3_index, partition_requests
-from backend.services.clustering.hdbscan_clusterer import cluster_passengers, get_cluster_groups
-from backend.services.prediction.demand_model import predict_zone_demand
-from backend.services.prediction.feature_engineering import get_h3_center
-from backend.services.stops.road_snapper import build_road_graph, snap_to_road
-from backend.services.stops.virtual_stop_generator import generate_virtual_stops
-from backend.services.notifications import create_notification
-from backend.utils.geo import haversine_meters as _haversine_meters
+from database import SessionLocal
+from models.cluster_run import ClusterRun
+from models.demand_snapshot import DemandSnapshot
+from models.job_run import JobRun
+from models.ride_request import RideRequest
+from models.vehicle import Vehicle
+from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
+from models.virtual_stop import VirtualStop
+from services.clustering.h3_partitioner import get_h3_index, partition_requests
+from services.clustering.hdbscan_clusterer import cluster_passengers, get_cluster_groups
+from services.prediction.demand_model import predict_zone_demand
+from services.prediction.feature_engineering import get_h3_center
+from services.stops.road_snapper import build_road_graph, snap_to_road
+from services.stops.virtual_stop_generator import generate_virtual_stops
+from services.notifications import create_notification
+from utils.geo import haversine_meters as _haversine_meters
 
 CLUSTER_INTERVAL_SECONDS = 60
 DEMAND_INTERVAL_SECONDS = 300

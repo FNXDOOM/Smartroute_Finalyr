@@ -3,10 +3,10 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from backend.database import get_db
-from backend.models.user import User
-from backend.models.vehicle import Vehicle
-from backend.schemas.vehicle import (
+from database import get_db
+from models.user import User
+from models.vehicle import Vehicle
+from schemas.vehicle import (
     RouteAssignmentCandidate,
     VehicleAssignmentItem,
     VehicleAssignmentRequest,
@@ -15,9 +15,9 @@ from backend.schemas.vehicle import (
     VehicleResponse,
     VehicleUpdate,
 )
-from backend.services.assignment.hungarian_assigner import assign_vehicles
-from backend.utils.auth_utils import get_current_user
-from backend.utils.geo import haversine_meters
+from services.assignment.hungarian_assigner import assign_vehicles
+from utils.auth_utils import get_current_user
+from utils.geo import haversine_meters
 
 router = APIRouter()
 

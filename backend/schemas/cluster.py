@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
-from backend.schemas.virtual_stop import VirtualStopResponse
+from schemas.virtual_stop import VirtualStopResponse
 
 
 class ClusterTriggerRequest(BaseModel):
