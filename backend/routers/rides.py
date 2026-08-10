@@ -5,11 +5,15 @@ from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models.user import User
 from backend.models.ride_request import RideRequest
+from backend.models.route_waypoint import RouteWaypointRecord
+from backend.models.route_plan import RoutePlan
+from backend.models.vehicle import Vehicle
 from backend.schemas.ride_request import (
     RideRequestCreate,
     RideRequestResponse,
     RideRequestStatusUpdate,
 )
+from backend.schemas.tracking import VehicleSnapshot
 from backend.services.notifications import create_notification
 from backend.utils.auth_utils import get_current_user
 from backend.services.clustering.h3_partitioner import get_h3_index
@@ -96,6 +100,61 @@ def get_ride_request_by_id(
             detail="Access denied to this ride request",
         )
     return ride
+
+
+@router.get("/{ride_id}/vehicle", response_model=Optional[VehicleSnapshot])
+def get_ride_vehicle(
+    ride_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Passenger-scoped: which vehicle (if any) is currently assigned to this ride.
+
+    Unlike /vehicle/* and /tracking/*, this endpoint has no admin/driver
+    restriction — only ownership (or admin) is required, since a passenger
+    needs to know their own assigned vehicle.
+
+    Resolves via: ride.virtual_stop_id == waypoint.stop_id (and ride.id is in
+    that waypoint's passenger_ids) -> waypoint.route_plan_id -> RoutePlan.vehicle_id.
+    Returns null if no route has been optimized for this ride yet.
+    """
+    ride = db.query(RideRequest).filter(RideRequest.id == ride_id).first()
+    if not ride:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ride request #{ride_id} not found",
+        )
+    if ride.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this ride request",
+        )
+
+    if not ride.virtual_stop_id:
+        return None
+
+    candidate_waypoints = (
+        db.query(RouteWaypointRecord)
+        .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id)
+        .all()
+    )
+    match = next(
+        (w for w in candidate_waypoints if ride.id in (w.passenger_ids or [])),
+        None,
+    )
+    if not match:
+        return None
+
+    route_plan = db.query(RoutePlan).filter(RoutePlan.id == match.route_plan_id).first()
+    if not route_plan:
+        return None
+
+    vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+    if not vehicle:
+        return None
+
+    return VehicleSnapshot.model_validate(vehicle)
 
 
 @router.get("/", response_model=List[RideRequestResponse])

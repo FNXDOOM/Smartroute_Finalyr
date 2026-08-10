@@ -106,6 +106,8 @@ async def websocket_notifications(websocket: WebSocket):
     """
     WebSocket endpoint for real-time notifications.
     Clients must pass a valid JWT as a query parameter: /ws/notifications?token=<jwt>
+    Notifications are scoped to the authenticated user — the connection is
+    registered under their user_id so broadcasts never cross between users.
     """
     token = websocket.query_params.get("token")
     if not token:
@@ -113,17 +115,18 @@ async def websocket_notifications(websocket: WebSocket):
         return
 
     try:
-        decode_access_token(token)
+        payload = decode_access_token(token)
+        user_id = int(payload.get("sub"))
     except Exception:
         await websocket.close(code=4401, reason="Invalid or expired token")
         return
 
-    await manager.connect(websocket)
+    await manager.connect(websocket, user_id)
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        manager.disconnect(websocket, user_id)
     except Exception:
-        manager.disconnect(websocket)
+        manager.disconnect(websocket, user_id)
 
