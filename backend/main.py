@@ -1,10 +1,8 @@
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Request
-import os
 
 from database import create_db_tables
 from routers import auth, rides, cluster, route, vehicle, predict, tracking, notifications
@@ -28,7 +26,10 @@ app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
 
 # CORS — wildcard origins are incompatible with allow_credentials=True.
 # Read explicit origins from the environment; fall back to localhost dev only.
-_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173")
+_raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173",
+)
 allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
@@ -58,9 +59,14 @@ async def _maybe_add_dev_csp(request: Request, call_next):
     is_local_dev = any("localhost" in o or "127.0.0.1" in o for o in origins)
     if is_local_dev:
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-eval' 'unsafe-inline'; "
-            "style-src 'self' 'unsafe-inline';"
+            # Allow Clerk's hosted assets and API across all relevant directives.
+            # This only applies during local development (see is_local_dev guard above).
+            "default-src 'self' https://*.clerk.accounts.dev; "
+            "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev; "
+            "style-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev; "
+            "connect-src 'self' https://*.clerk.accounts.dev; "
+            "frame-src https://*.clerk.accounts.dev; "
+            "img-src 'self' data: https://*.clerk.accounts.dev;"
         )
     return response
 

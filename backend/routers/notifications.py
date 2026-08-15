@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import SessionLocal, get_db
 from models.notification import Notification
 from models.user import User
 from schemas.notification import (
@@ -14,7 +14,7 @@ from schemas.notification import (
     NotificationResponse,
 )
 from services.notifications import manager
-from utils.auth_utils import get_current_user, decode_clerk_token
+from utils.auth_utils import get_current_user, get_user_from_token
 
 router = APIRouter()
 
@@ -114,12 +114,16 @@ async def websocket_notifications(websocket: WebSocket):
         await websocket.close(code=4401, reason="Missing authentication token")
         return
 
+    db = SessionLocal()
     try:
-        payload = decode_clerk_token(token)
-        user_id = int(payload.get("sub"))
+        user = get_user_from_token(token, db)
+        user_id = user.id
     except Exception:
+        db.close()
         await websocket.close(code=4401, reason="Invalid or expired token")
         return
+    finally:
+        db.close()
 
     await manager.connect(websocket, user_id)
     try:
@@ -129,4 +133,3 @@ async def websocket_notifications(websocket: WebSocket):
         manager.disconnect(websocket, user_id)
     except Exception:
         manager.disconnect(websocket, user_id)
-
