@@ -14,6 +14,7 @@ An AI-powered shared mobility optimization platform. It groups nearby passengers
 - [Environment Variables](#environment-variables)
 - [Running the Backend](#running-the-backend)
 - [Running the Frontend](#running-the-frontend)
+- [Maps](#maps)
 - [Training the Demand Model](#training-the-demand-model)
 - [Seeding Demo Data](#seeding-demo-data)
 - [API Overview](#api-overview)
@@ -41,7 +42,7 @@ An AI-powered shared mobility optimization platform. It groups nearby passengers
 
 **Backend**
 - Python 3.10+, FastAPI, SQLAlchemy 2.0, Pydantic v2
-- PostgreSQL + PostGIS (production) / SQLite (dev fallback)
+- Supabase PostgreSQL + PostGIS (SQLite only when explicitly configured)
 - WebSockets via Starlette
 
 **AI / Optimization**
@@ -54,7 +55,8 @@ An AI-powered shared mobility optimization platform. It groups nearby passengers
 - scikit-learn-extra — K-Medoids for virtual stop placement
 
 **Frontend**
-- React + Vite, React Leaflet, Tailwind CSS
+- React + Vite, React Leaflet, Leaflet, Material UI
+- OpenStreetMap/CARTO tiles — no Google Maps API key is required
 
 ---
 
@@ -82,7 +84,7 @@ finalyr_project/
 │
 ├── backend/
 │   ├── main.py                    # FastAPI app, CORS, lifespan
-│   ├── config.py                  # Env config — fails fast if SECRET_KEY missing
+│   ├── config.py                  # Environment and Clerk configuration
 │   ├── database.py                # SQLAlchemy engine, session, PortableGeometry type
 │   │
 │   ├── models/                    # SQLAlchemy ORM models (12 tables)
@@ -148,7 +150,7 @@ finalyr_project/
 │   │       └── feature_engineering.py # Feature building and H3 encoding
 │   │
 │   └── utils/
-│       ├── auth_utils.py          # bcrypt hashing, JWT create/decode, FastAPI deps
+│       ├── auth_utils.py          # Clerk JWT verification and FastAPI auth deps
 │       └── geo.py                 # Shared haversine_meters utility
 │
 ├── frontend/
@@ -164,8 +166,6 @@ finalyr_project/
 └── scripts/
     ├── seed_db.py                         # Populate DB with realistic demo data
     ├── train_demand_model_synthetic.py    # Train XGBoost on synthetic demand data
-    ├── test_auth.py
-    ├── test_rides.py
     └── test_models_schemas.py
 ```
 
@@ -177,7 +177,7 @@ finalyr_project/
 
 - Python 3.10+
 - Node.js 18+
-- PostgreSQL 14+ with PostGIS (or use the SQLite dev fallback)
+- PostgreSQL 14+ with PostGIS (Supabase recommended)
 
 ### Clone and install
 
@@ -199,15 +199,8 @@ cp .env.example .env
 ```
 
 ```env
-# PostgreSQL connection (app falls back to SQLite if this fails)
+# PostgreSQL connection
 DATABASE_URL=postgresql://postgres:password@localhost:5432/smartrouteai
-
-# Required — generate with: python -c "import secrets; print(secrets.token_hex(32))"
-# Server will refuse to start if this is empty
-SECRET_KEY=replace-with-a-strong-random-secret
-
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=60
 
 # Comma-separated allowed frontend origins for CORS
 ALLOWED_ORIGINS=http://localhost:5173
@@ -218,8 +211,12 @@ ALLOWED_ORIGINS=http://localhost:5173
 ## Running the Backend
 
 ```bash
-uvicorn backend.main:app --reload
+uvicorn main:app --reload
 ```
+
+Run this command from the project root. The root `main.py` entry point loads
+the FastAPI application from `backend` and configures its current top-level
+imports.
 
 The API will be at `http://localhost:8000`  
 Interactive docs at `http://localhost:8000/docs`
@@ -240,6 +237,21 @@ npm run dev
 ```
 
 Frontend runs at `http://localhost:5173`
+
+### Maps
+
+The frontend uses Leaflet with OpenStreetMap/CARTO tiles. Google Maps is not
+used and no map API key is needed. `InteractiveMap` renders pickup and
+destination markers, routes, vehicles from `/tracking/feed` or the tracking
+WebSocket, and demand circles from `/predict/heatmap`.
+
+The backend's geospatial processing uses OpenStreetMap data through OSMnx for
+road snapping and route preparation. Address search in the ride form uses the
+Nominatim OpenStreetMap geocoder.
+
+If map tiles or geocoding are unavailable, the ride request still requires
+valid latitude/longitude coordinates; users can enter coordinates directly or
+use browser GPS.
 
 ---
 
@@ -274,13 +286,9 @@ python scripts/seed_db.py --reset
 # Available cities: bengaluru, new_york, london
 ```
 
-Default accounts created:
-
-| Role | Email | Password |
-|---|---|---|
-| Admin | admin@smartrouteai.local | admin1234 |
-| Driver | driver1@smartrouteai.local | driver1234 |
-| Passenger | passenger1@smartrouteai.local | passenger1234 |
+The seed script creates demo profile and fleet rows. Authentication is handled
+by Clerk; create users in Clerk and promote their application role through the
+admin workflow.
 
 ---
 
@@ -291,9 +299,6 @@ All protected routes require `Authorization: Bearer <token>`.
 ### Auth `/auth`
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/auth/register` | Register — role limited to `passenger` or `driver` |
-| POST | `/auth/login` | Login, returns JWT |
-| POST | `/auth/token` | Swagger UI form login |
 | GET | `/auth/me` | Get own profile |
 | PATCH | `/auth/me` | Update name, email, phone |
 | PATCH | `/auth/users/{id}/role` | Change user role (admin only) |

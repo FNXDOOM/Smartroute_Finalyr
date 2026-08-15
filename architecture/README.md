@@ -14,6 +14,7 @@ This folder contains detailed technical documentation for every layer of the Sma
 | [algorithms.md](./algorithms.md) | How each AI/optimization algorithm works and where it fits in the pipeline |
 | [background-jobs.md](./background-jobs.md) | The 4 background workers — what they do, when they run, what they write |
 | [websockets.md](./websockets.md) | Real-time WebSocket channels — connection, authentication, message formats |
+| [supabase.md](./supabase.md) | Supabase setup, PostgreSQL migration, Auth, RLS, environment variables, and deployment |
 
 ---
 
@@ -34,7 +35,7 @@ Passenger App / Driver App / Admin Dashboard
     │  XGBoost Demand Predictor   │  forecasts future ride demand by zone
     └─────────────────────────────┘
               ↓
-    PostgreSQL + PostGIS  (SQLite in dev)
+    Supabase PostgreSQL + PostGIS  (SQLite only for local development)
 ```
 
 ---
@@ -46,9 +47,9 @@ Passenger App / Driver App / Admin Dashboard
 | API framework | FastAPI 0.104 |
 | ORM | SQLAlchemy 2.0 |
 | Schema validation | Pydantic v2 |
-| Database (prod) | PostgreSQL 14+ + PostGIS |
-| Database (dev) | SQLite (auto fallback) |
-| Auth | JWT via PyJWT + bcrypt |
+| Database (prod) | Supabase PostgreSQL + PostGIS |
+| Database (dev) | SQLite only when explicitly configured |
+| Auth | Clerk session JWTs verified by FastAPI |
 | Spatial indexing | H3 (Uber) resolution 9 |
 | Clustering | HDBSCAN |
 | Stop placement | scikit-learn-extra K-Medoids |
@@ -58,3 +59,5 @@ Passenger App / Driver App / Admin Dashboard
 | Demand prediction | XGBoost regressor |
 | Real-time | WebSockets via Starlette |
 | Frontend | React + Vite + Leaflet + Tailwind |
+| Map tiles | OpenStreetMap/CARTO via React Leaflet (no Google Maps key) |
+| Address geocoding | Nominatim OpenStreetMap service |

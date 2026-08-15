@@ -1,6 +1,6 @@
 # WebSocket Channels
 
-Two real-time WebSocket endpoints. Both require JWT authentication via query parameter.
+Two real-time WebSocket endpoints. Both require a Clerk session JWT via query parameter.
 
 ---
 
@@ -9,13 +9,13 @@ Two real-time WebSocket endpoints. Both require JWT authentication via query par
 WebSocket connections cannot send HTTP headers, so the JWT is passed as a query parameter:
 
 ```
-ws://localhost:8000/tracking/ws?token=<jwt>
-ws://localhost:8000/notifications/ws?token=<jwt>
+ws://localhost:8000/tracking/ws?token=<clerk-session-jwt>
+ws://localhost:8000/notifications/ws?token=<clerk-session-jwt>
 ```
 
 On connection:
 1. Server reads `websocket.query_params.get("token")`
-2. Calls `decode_access_token(token)` — validates signature and expiry
+2. Calls `decode_clerk_token(token)` — validates Clerk signature, issuer, and expiry
 3. If missing or invalid → `websocket.close(code=4401, reason="...")` and returns
 4. If valid → connection accepted, added to the broadcast pool
 

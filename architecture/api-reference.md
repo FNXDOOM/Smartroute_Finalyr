@@ -7,7 +7,8 @@ All protected routes require the header:
 Authorization: Bearer <jwt_token>
 ```
 
-Get a token via `POST /auth/login` or `POST /auth/token`.
+Obtain a session token from Clerk and send it as the Bearer token. FastAPI
+validates the Clerk signature, issuer, and optional audience.
 
 ---
 
@@ -15,75 +16,8 @@ Get a token via `POST /auth/login` or `POST /auth/token`.
 
 ---
 
-### `POST /auth/register`
-Register a new user. Role is limited to `passenger` or `driver` — `admin` cannot be self-assigned.
-
-**Auth required:** No
-
-**Request body:**
-```json
-{
-  "name": "Ali Hassan",
-  "email": "ali@example.com",
-  "password": "securepassword",
-  "phone": "0501234567",
-  "role": "passenger"
-}
-```
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| name | string | yes | |
-| email | string | yes | Must be unique |
-| password | string | yes | Hashed with bcrypt |
-| phone | string | no | Defaults to `""` |
-| role | string | no | `passenger` or `driver` only. Defaults to `passenger` |
-
-**Responses:**
-- `201` — User created
-```json
-{ "id": 1, "name": "Ali Hassan", "email": "ali@example.com", "phone": "0501234567", "role": "passenger", "created_at": "2026-08-07T10:00:00" }
-```
-- `400` — Email already registered or invalid role
-
----
-
-### `POST /auth/login`
-Authenticate with email and password. Returns a JWT.
-
-**Auth required:** No
-
-**Request body:**
-```json
-{ "email": "ali@example.com", "password": "securepassword" }
-```
-
-**Responses:**
-- `200` — Login successful
-```json
-{
-  "access_token": "eyJhbGci...",
-  "token_type": "bearer",
-  "user": { "id": 1, "name": "Ali Hassan", "email": "ali@example.com", "role": "passenger", ... }
-}
-```
-- `401` — Invalid email or password
-
----
-
-### `POST /auth/token`
-Same as login but accepts `application/x-www-form-urlencoded` (Swagger UI compatible).
-
-**Auth required:** No
-
-**Form fields:** `username`, `password`
-
-**Responses:** Same as `/auth/login`
-
----
-
 ### `GET /auth/me`
-Get the currently authenticated user's profile.
+Get the application profile for the currently authenticated Clerk user.
 
 **Auth required:** Yes (any role)
 

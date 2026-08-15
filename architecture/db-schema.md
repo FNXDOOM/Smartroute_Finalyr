@@ -1,6 +1,6 @@
 # Database Schema
 
-12 tables. PostgreSQL + PostGIS in production, SQLite in development (auto fallback).
+12 tables. Supabase PostgreSQL + PostGIS in production, SQLite only when explicitly configured for local development.
 
 ---
 
@@ -44,7 +44,7 @@ Stores all user accounts — passengers, drivers, and admins.
 | `name` | VARCHAR | NOT NULL | Display name |
 | `email` | VARCHAR | NOT NULL, UNIQUE, index | Login identifier |
 | `phone` | VARCHAR | default `""` | Optional contact |
-| `password_hash` | VARCHAR | NOT NULL | bcrypt hash |
+| `password_hash` | VARCHAR | NOT NULL | Legacy seed placeholder; user passwords are managed by Clerk |
 | `role` | VARCHAR | NOT NULL, default `"passenger"` | `passenger` / `driver` / `admin` |
 | `created_at` | TIMESTAMPTZ | server default NOW() | |
 

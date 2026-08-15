@@ -41,11 +41,25 @@
 └────────────────────────────┬─────────────────────────────────┘
                              │
               ┌──────────────▼──────────────┐
-              │   PostgreSQL + PostGIS       │
-              │   (SQLite in dev mode)       │
+              │ Supabase PostgreSQL + PostGIS │
+              │ (SQLite only if configured)   │
               │   12 tables                 │
               └─────────────────────────────┘
 ```
+
+## Frontend Mapping
+
+The web application uses React Leaflet with OpenStreetMap/CARTO tiles. There
+is no Google Maps dependency or frontend map key.
+
+Map data flows through the FastAPI backend:
+
+- `/tracking/feed` supplies vehicle locations and recent tracking events.
+- `/tracking/ws?token=<jwt>` supplies live vehicle snapshots to authorized
+  driver and admin dashboards.
+- `/predict/heatmap` supplies demand cells rendered as map circles.
+- Ride pickup and destination coordinates are rendered as markers and a route
+  line after the ride form resolves addresses through Nominatim.
 
 ---
 
@@ -203,21 +217,18 @@ Background job (every 300s) or POST /jobs/run/rebalance
 ## Authentication Flow
 
 ```
-POST /auth/register or POST /auth/login
+Clerk sign-in/sign-up
         │
         ▼
-   bcrypt password hash (72-byte limit)
-        │
-        ▼
-   JWT created: { sub: user_id, email, role, exp }
-   Signed with SECRET_KEY (HS256)
+   Clerk session JWT
         │
         ▼
    Client sends: Authorization: Bearer <token>
         │
         ▼
    get_current_user dependency:
-     decode JWT → extract user_id
+     verify Clerk JWT → extract clerk_user_id
+     load application profile and role
      query users table → return User ORM object
      if not found or expired → 401
 ```
@@ -268,7 +279,7 @@ services/
     feature_engineering.py → h3_partitioner.py
 
 utils/
-  auth_utils.py → PyJWT, bcrypt, config.py
+   auth_utils.py → Clerk JWKS, PyJWT, config.py
   geo.py        → math (no external deps)
 ```
 
@@ -279,7 +290,7 @@ utils/
 - `ALLOWED_ORIGINS` env var controls which frontend origins are permitted
 - Credentials (`Authorization` headers) are allowed only for listed origins
 - Wildcard `*` with credentials is intentionally blocked (browser would reject it)
-- JWT tokens expire after `ACCESS_TOKEN_EXPIRE_MINUTES` (default 60)
-- `SECRET_KEY` is required at startup — server refuses to start if missing
-- Passwords are hashed with bcrypt (work factor from bcrypt default)
+- Clerk controls session expiration and token rotation
+- FastAPI validates Clerk issuer, signature, and optional audience
+- Passwords are managed by Clerk; FastAPI verifies Clerk session JWTs
 - Admin role cannot be self-assigned at registration — requires promotion by existing admin via `PATCH /auth/users/{id}/role`
