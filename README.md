@@ -1,234 +1,36 @@
-# SmartRouteAI
+# SmartRoute AI
 
-An AI-powered shared mobility optimization platform. It groups nearby passengers into clusters, generates virtual pickup stops on real road networks, solves vehicle routing problems, predicts zone-level demand, and streams live vehicle positions — all through a single FastAPI backend with a React frontend.
-
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Algorithms](#algorithms)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Environment Variables](#environment-variables)
-- [Running the Backend](#running-the-backend)
-- [Running the Frontend](#running-the-frontend)
-- [Maps](#maps)
-- [Training the Demand Model](#training-the-demand-model)
-- [Seeding Demo Data](#seeding-demo-data)
-- [API Overview](#api-overview)
-- [Background Jobs](#background-jobs)
-- [Database Tables](#database-tables)
-- [WebSocket Endpoints](#websocket-endpoints)
-
----
-
-## Features
-
-- **Passenger clustering** — H3 spatial partitioning + HDBSCAN groups nearby ride requests into shared trips
-- **Virtual stop generation** — K-Medoids picks representative pickup points, snapped to real road nodes via OSMnx
-- **Route optimization** — Capacitated VRP solved with Google OR-Tools assigns stop sequences to vehicles
-- **Vehicle assignment** — Hungarian algorithm optimally matches idle vehicles to routes by distance
-- **Demand prediction** — XGBoost model forecasts ride demand per H3 zone per hour
-- **Real-time tracking** — WebSocket feed broadcasts vehicle GPS positions every 2 seconds
-- **Notifications** — Every ride, route, and tracking event fires a real-time push notification
-- **Analytics** — Aggregated stats and per-day breakdowns across rides, routes, and vehicles
-- **Background scheduler** — Auto-runs clustering (60s), demand refresh (300s), rebalancing (300s), and ride lifecycle simulation (5s)
+An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HDBSCAN clustering, OR-Tools VRP optimization, and Hungarian assignment to pre-compute optimized multi-passenger routes before dispatch.
 
 ---
 
 ## Tech Stack
 
-**Backend**
-- Python 3.10+, FastAPI, SQLAlchemy 2.0, Pydantic v2
-- Supabase PostgreSQL + PostGIS (SQLite only when explicitly configured)
-- WebSockets via Starlette
-
-**AI / Optimization**
-- H3 — hexagonal spatial indexing
-- HDBSCAN — density-based passenger clustering
-- OR-Tools — Google's capacitated VRP solver
-- XGBoost — gradient boosting demand forecaster
-- OSMnx + NetworkX — OpenStreetMap road graph and snapping
-- SciPy — Hungarian algorithm for vehicle assignment
-- scikit-learn-extra — K-Medoids for virtual stop placement
-
-**Frontend**
-- React + Vite, React Leaflet, Leaflet, Material UI
-- OpenStreetMap/CARTO tiles — no Google Maps API key is required
-
----
-
-## Algorithms
-
-| Problem | Algorithm |
+| Layer | Technology |
 |---|---|
-| Spatial partitioning | H3 hexagonal indexing (resolution 9) |
-| Passenger clustering | HDBSCAN with haversine metric |
-| Virtual stop placement | K-Medoids (falls back to centroid) |
-| Road snapping | OSMnx nearest-node lookup |
-| Route optimization | OR-Tools CVRP solver |
-| Vehicle assignment | Hungarian algorithm (scipy) |
-| Demand forecasting | XGBoost regressor |
-| Shortest path | A* via NetworkX |
+| Frontend | React 19 + TypeScript, Vite, Leaflet / react-leaflet, Clerk (auth) |
+| Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (Supabase) |
+| Auth | Clerk (JWT RS256 via JWKS) |
+| Algorithms | HDBSCAN clustering, OR-Tools CVRP, Hungarian algorithm (scipy), H3 spatial indexing |
+| ML | XGBoost demand model (heuristic fallback if model file absent) |
+| Maps | OpenStreetMap tiles via Leaflet, OSMnx road graph for stop snapping |
+| Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications |
 
 ---
 
-## Project Structure
+## Running the Project
 
-```
-finalyr_project/
-├── .env.example                   # Environment variable template
-├── requirements.txt               # Python dependencies
-│
-├── backend/
-│   ├── main.py                    # FastAPI app, CORS, lifespan
-│   ├── config.py                  # Environment and Clerk configuration
-│   ├── database.py                # SQLAlchemy engine, session, PortableGeometry type
-│   │
-│   ├── models/                    # SQLAlchemy ORM models (12 tables)
-│   │   ├── user.py
-│   │   ├── ride_request.py
-│   │   ├── vehicle.py
-│   │   ├── virtual_stop.py
-│   │   ├── cluster_run.py
-│   │   ├── route_plan.py
-│   │   ├── route_waypoint.py
-│   │   ├── tracking_event.py
-│   │   ├── notification.py
-│   │   ├── job_run.py
-│   │   ├── demand_snapshot.py
-│   │   └── vehicle_rebalance_suggestion.py
-│   │
-│   ├── schemas/                   # Pydantic v2 request/response schemas
-│   │   ├── user.py
-│   │   ├── ride_request.py
-│   │   ├── vehicle.py
-│   │   ├── cluster.py
-│   │   ├── route.py
-│   │   ├── tracking.py
-│   │   ├── notification.py
-│   │   ├── analytics.py
-│   │   ├── predict.py
-│   │   ├── jobs.py
-│   │   └── virtual_stop.py
-│   │
-│   ├── routers/                   # API route handlers
-│   │   ├── auth.py                # Register, login, profile, role management
-│   │   ├── rides.py               # Ride request CRUD
-│   │   ├── cluster.py             # Trigger clustering, view history
-│   │   ├── route.py               # VRP optimization, route history
-│   │   ├── vehicle.py             # Vehicle CRUD, assignment
-│   │   ├── tracking.py            # GPS updates, live feed, WebSocket
-│   │   ├── notifications.py       # Notification list, mark read, WebSocket
-│   │   ├── analytics.py           # Overview and daily stats
-│   │   ├── predict.py             # Demand prediction, heatmap
-│   │   └── jobs.py                # Background job status and manual triggers
-│   │
-│   ├── services/
-│   │   ├── background_jobs.py     # Async scheduler — clustering, demand, rebalance, dispatch sim
-│   │   ├── notifications.py       # Notification creation + WebSocket broadcast
-│   │   │
-│   │   ├── clustering/
-│   │   │   ├── h3_partitioner.py      # H3 spatial bucketing
-│   │   │   └── hdbscan_clusterer.py   # HDBSCAN grouping
-│   │   │
-│   │   ├── stops/
-│   │   │   ├── virtual_stop_generator.py  # K-Medoids stop selection
-│   │   │   └── road_snapper.py            # OSMnx road snapping
-│   │   │
-│   │   ├── routing/
-│   │   │   ├── vrp_solver.py          # OR-Tools CVRP
-│   │   │   └── astar_router.py        # A* path finding
-│   │   │
-│   │   ├── assignment/
-│   │   │   └── hungarian_assigner.py  # Vehicle-to-route matching
-│   │   │
-│   │   └── prediction/
-│   │       ├── demand_model.py        # XGBoost load + predict + fallback heuristic
-│   │       └── feature_engineering.py # Feature building and H3 encoding
-│   │
-│   └── utils/
-│       ├── auth_utils.py          # Clerk JWT verification and FastAPI auth deps
-│       └── geo.py                 # Shared haversine_meters utility
-│
-├── frontend/
-│   ├── package.json
-│   └── src/
-│       ├── App.jsx
-│       └── ...
-│
-├── ml/
-│   └── models/
-│       └── demand_model.pkl       # Trained XGBoost model (generated by train script)
-│
-└── scripts/
-    ├── seed_db.py                         # Populate DB with realistic demo data
-    ├── train_demand_model_synthetic.py    # Train XGBoost on synthetic demand data
-    └── test_models_schemas.py
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+
-- PostgreSQL 14+ with PostGIS (Supabase recommended)
-
-### Clone and install
+### Backend
 
 ```bash
-git clone https://github.com/FNXDOOM/Smartroute_Finalyr.git
-cd Smartroute_Finalyr
-
+cd backend
 pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
 ```
 
----
+Requires a `.env` file at the project root — see `.env.example`.
 
-## Environment Variables
-
-Copy the template and fill in your values:
-
-```bash
-cp .env.example .env
-```
-
-```env
-# PostgreSQL connection
-DATABASE_URL=postgresql://postgres:password@localhost:5432/smartrouteai
-
-# Comma-separated allowed frontend origins for CORS
-ALLOWED_ORIGINS=http://localhost:5173
-```
-
----
-
-## Running the Backend
-
-```bash
-uvicorn main:app --reload
-```
-
-Run this command from the project root. The root `main.py` entry point loads
-the FastAPI application from `backend` and configures its current top-level
-imports.
-
-The API will be at `http://localhost:8000`  
-Interactive docs at `http://localhost:8000/docs`
-
-On startup the app:
-1. Creates all DB tables (`CREATE TABLE IF NOT EXISTS`)
-2. Starts the WebSocket live-tracking broadcast loop
-3. Launches 4 background job workers
-
----
-
-## Running the Frontend
+### Frontend
 
 ```bash
 cd frontend
@@ -236,191 +38,192 @@ npm install
 npm run dev
 ```
 
-Frontend runs at `http://localhost:5173`
-
-### Maps
-
-The frontend uses Leaflet with OpenStreetMap/CARTO tiles. Google Maps is not
-used and no map API key is needed. `InteractiveMap` renders pickup and
-destination markers, routes, vehicles from `/tracking/feed` or the tracking
-WebSocket, and demand circles from `/predict/heatmap`.
-
-The backend's geospatial processing uses OpenStreetMap data through OSMnx for
-road snapping and route preparation. Address search in the ride form uses the
-Nominatim OpenStreetMap geocoder.
-
-If map tiles or geocoding are unavailable, the ride request still requires
-valid latitude/longitude coordinates; users can enter coordinates directly or
-use browser GPS.
-
----
-
-## Training the Demand Model
-
-The demand prediction endpoints work out of the box using a heuristic fallback. To use the trained XGBoost model instead:
-
-```bash
-python scripts/train_demand_model_synthetic.py
+Requires `frontend/.env` with:
+```
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-This generates 172,800 rows of realistic synthetic demand data (rush hours, weekends, spatial hotspots), trains an XGBoost regressor, and saves the model to `ml/models/demand_model.pkl`.
-
-The backend loads the model automatically on the first prediction request — no restart needed.
-
----
-
-## Seeding Demo Data
-
-Populate the database with users, vehicles, ride requests, clusters, routes, and tracking events:
+### Seed the database (first run)
 
 ```bash
-# Seed with Dubai coordinates (default)
-python scripts/seed_db.py
-
-# Seed a different city
-python scripts/seed_db.py --city bengaluru
-
-# Drop all tables and re-seed fresh
-python scripts/seed_db.py --reset
-
-# Available cities: bengaluru, new_york, london
+cd backend
+python seed.py          # insert demo data
+python seed.py --reset  # wipe and re-seed
 ```
 
-The seed script creates demo profile and fleet rows. Authentication is handled
-by Clerk; create users in Clerk and promote their application role through the
-admin workflow.
+---
+
+## What Works Right Now ✅
+
+### Authentication
+- Clerk sign-up / sign-in with JWT verification on every backend request
+- Auto-provisions a DB user on first login (role = `passenger` by default)
+- Role-based access control: `passenger`, `driver`, `admin`
+- WebSocket auth via `?token=<jwt>` query param
+
+### Passenger
+- Book a ride — creates a `RideRequest` in DB, fires notification
+- Select ride tier (SwiftX, SwiftXL, Lux Black, Moto) with flat fare display
+- Cancel pending/clustered rides
+- Trip history with status badges
+- Live tracking map — polls vehicle GPS every 5 seconds
+- Trip detail view showing assigned vehicle, cluster ID, H3 cell
+
+### Driver
+- Dashboard with fleet stats pulled from real DB
+- Live fleet map — WebSocket connection to `/tracking/ws`, updates every 2 seconds
+- Push own GPS location to backend (uses device geolocation, falls back to simulated coords)
+- View and manage assigned rides — Start / Arriving / Complete buttons
+- Route waypoint detail with map overlay showing optimized stops
+
+### Admin (8 panels)
+- **Overview** — real-time stats: total rides, vehicles, clusters, routes, utilisation %
+- **Rides** — list all rides with status filter, manually advance any ride through the pipeline
+- **Fleet** — create vehicles, set idle/active/offline, view GPS positions
+- **Cluster** — run HDBSCAN clustering on pending rides, view run history with summaries
+- **Routes** — run OR-Tools VRP optimization, view waypoint maps for each route
+- **Analytics** — daily bar chart + table (7/14/30 day), overview metrics
+- **Jobs** — scheduler status, manual trigger for clustering/demand/rebalance jobs, run history
+- **Heatmap** — demand prediction heatmap on a Leaflet map using H3 cells
+
+### Background Jobs (auto-run on backend startup)
+- Clustering every 60 seconds — groups `pending` rides into virtual stops via HDBSCAN
+- Demand refresh every 300 seconds — updates DemandSnapshot table with XGBoost/heuristic predictions
+- Fleet rebalance every 300 seconds — generates VehicleRebalanceSuggestion records
+- **Ride simulation every 5 seconds** — automatically advances active rides through the status pipeline (`pending → assigned → arriving → in_progress → completed`) and pushes WebSocket notifications — this is what makes the live tracking feel real
 
 ---
 
-## API Overview
+## What Still Needs to Be Built 🚧
 
-All protected routes require `Authorization: Bearer <token>`.
+### High Priority (breaks the Uber-like flow)
 
-### Auth `/auth`
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/auth/me` | Get own profile |
-| PATCH | `/auth/me` | Update name, email, phone |
-| PATCH | `/auth/users/{id}/role` | Change user role (admin only) |
+- [ ] **Geocode pickup/destination from user input**
+  - Currently both coordinates are hardcoded to fixed Bengaluru points regardless of what the user types
+  - Need to call a geocoding API (Nominatim, Google Maps, or MapBox) to convert the typed address into lat/lng
+  - File: `frontend/src/views/PassengerView.tsx` — `handleBook()` function
 
-### Rides `/rides`
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/rides/request` | Submit a ride request |
-| GET | `/rides/my-rides` | My ride history |
-| GET | `/rides/{id}` | Get ride by ID |
-| GET | `/rides/` | List all rides (admin/driver) |
-| PATCH | `/rides/{id}/status` | Update ride status |
-| DELETE | `/rides/{id}` | Cancel a ride |
+- [ ] **Show live vehicles on the passenger booking map**
+  - The booking screen map always passes `vehicles={[]}` — the fleet never appears
+  - Need to load `vehiclesApi.list()` or subscribe to the tracking WebSocket on the passenger home screen
+  - File: `frontend/src/views/PassengerView.tsx` — bottom of `PassengerView` export
 
-### Clustering `/cluster`
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/cluster/run` | Trigger HDBSCAN clustering on pending rides |
-| GET | `/cluster/history` | List past cluster runs |
-| GET | `/cluster/history/{id}` | Get cluster run detail |
+- [ ] **Connect Notifications WebSocket in Passenger and Admin views**
+  - `createNotificationsWS` is defined in `api.js` but only the Driver view connects to it
+  - Passengers should get real-time push notifications (ride status changes, vehicle assigned) without having to navigate to the Inbox
+  - File: `frontend/src/SwiftApp.tsx` — add WS connection similar to how DriverView does it for tracking
 
-### Route Optimization `/route`
-| Method | Endpoint | Description |
-|---|---|---|
-| POST | `/route/optimize` | Run CVRP on virtual stops |
-| GET | `/route/history` | List route plans |
-| GET | `/route/history/{route_id}` | Get route plan + waypoints |
+- [ ] **Auto-dispatch pipeline on ride booking**
+  - Currently a passenger books a ride → it stays `pending` until the 60-second cluster job runs, then waits for an admin to run route optimization
+  - Need a trigger in `POST /rides/request` that immediately queues clustering + routing for new rides
+  - File: `backend/routers/rides.py` → `create_ride_request()`
 
-### Vehicles `/vehicle`
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/vehicle/` | List all vehicles |
-| GET | `/vehicle/idle` | List idle vehicles |
-| POST | `/vehicle/` | Create vehicle (admin) |
-| PATCH | `/vehicle/{id}` | Update vehicle status/location |
-| POST | `/vehicle/assign` | Hungarian assignment of vehicles to routes |
+### Medium Priority (important features that are partially done)
 
-### Tracking `/tracking`
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/tracking/feed` | Vehicle snapshot + recent events |
-| GET | `/tracking/events` | Raw tracking event list |
-| POST | `/tracking/vehicles/{id}/location` | Push GPS update, broadcasts to WebSocket |
+- [ ] **Act on vehicle rebalance suggestions**
+  - Suggestions are generated and stored but never acted on
+  - Add a "Move Vehicle" button in Admin → Jobs panel that updates the vehicle's lat/lng to the suggested target
+  - Or add a driver-facing "Suggested Move" card in the Driver dashboard
 
-### Notifications `/notifications`
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/notifications/` | List notifications |
-| GET | `/notifications/unread-count` | Count unread |
-| PATCH | `/notifications/{id}/read` | Mark one as read |
-| PATCH | `/notifications/read-all` | Mark all as read |
+- [ ] **Wire A\* router into VRP solver for real road distances**
+  - `services/routing/astar_router.py` exists but is dead code — VRP uses straight haversine distance
+  - Replace the haversine distance matrix in `vrp_solver.py` with actual road distances from OSMnx
+  - Warning: this is slow for large route sets — consider caching the road graph
 
-### Demand Prediction `/predict`
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/predict/demand` | Predict demand for a lat/lng point |
-| GET | `/predict/heatmap` | Demand heatmap for a bounding box |
+- [ ] **Role management UI**
+  - `PATCH /auth/users/{user_id}/role` endpoint exists (admin only)
+  - No frontend UI to promote a user to `driver` or `admin`
+  - Add a User Management page in Admin panel that lists users and lets you change their role
 
-### Analytics `/analytics`
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/analytics/overview` | System-wide aggregated stats |
-| GET | `/analytics/daily` | Per-day breakdown (up to 90 days) |
+- [ ] **Driver assignment to vehicle**
+  - Currently any driver sees the entire fleet
+  - Need a way to assign a specific vehicle to a specific driver (either in the DB or via Clerk `publicMetadata`)
+  - Then DriverView should only show that driver's vehicle and its assigned rides
 
-### Background Jobs `/jobs`
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/jobs/status` | Scheduler state and last run times |
-| GET | `/jobs/runs` | Job execution history |
-| GET | `/jobs/demand-snapshots` | Demand prediction snapshots |
-| GET | `/jobs/rebalance-suggestions` | Vehicle rebalancing suggestions |
-| POST | `/jobs/run/clustering` | Trigger cluster job manually |
-| POST | `/jobs/run/demand` | Trigger demand job manually |
-| POST | `/jobs/run/rebalance` | Trigger rebalance job manually |
+- [ ] **Rating system**
+  - `RatingView` component was in the old code (removed)
+  - No `ratings` table in the DB
+  - Add a rating model, POST endpoint, and a post-trip rating screen for passengers
 
----
+- [ ] **Payment flow**
+  - Fare amounts are display-only strings (`₹12–15`) — no payment processing
+  - Need a `payments` table, Razorpay/Stripe integration, and a checkout screen
+  - `PaymentView` view exists in the nav but renders nothing
 
-## Background Jobs
+- [ ] **Train and deploy the XGBoost demand model**
+  - `backend/services/prediction/demand_model.py` loads from `ml/models/demand_model.pkl`
+  - The file doesn't exist — prediction silently falls back to a time-of-day heuristic
+  - Create a training script in `ml/` that trains on historical `ride_requests` data
 
-Four jobs run automatically on startup:
+### Low Priority (polish and production-readiness)
 
-| Job | Interval | What it does |
-|---|---|---|
-| `cluster_pending_rides` | every 60s | HDBSCAN clusters all pending rides |
-| `refresh_demand_snapshots` | every 300s | Predicts demand per active H3 zone |
-| `rebalance_idle_vehicles` | every 300s | Suggests idle vehicle repositioning |
-| `simulate_ride_dispatch` | every 5s | Advances ride lifecycle for demo |
+- [ ] **Passenger notification WebSocket badge counter**
+  - The sidebar notification badge updates on load but doesn't auto-increment when new notifications arrive via WebSocket
+  - Need to connect the notifications WS in `SwiftApp.tsx` and update `unreadCount` state on new messages
 
-All jobs write to `job_runs` for audit, and can be triggered manually via `/jobs/run/*`.
+- [ ] **Refresh notifications and trips automatically**
+  - After booking a ride, the "Recent Rides" list doesn't update until the user navigates away and back
+  - Add a polling mechanism or WebSocket trigger to refresh the ride list when status changes
 
----
+- [ ] **Driver can only see their own assigned rides**
+  - Currently the driver panel loads all rides with `status=assigned`
+  - Should filter by `vehicle.assigned_route_id` matching the driver's vehicle
 
-## Database Tables
+- [ ] **Map: show route polyline on passenger tracking screen**
+  - The passenger tracking map shows the vehicle marker and pickup/destination pins
+  - Once a route is assigned, load the route waypoints and draw the VRP polyline
 
-| Table | Purpose |
-|---|---|
-| `users` | Accounts (passenger, driver, admin) |
-| `ride_requests` | Individual ride requests with GPS + status |
-| `virtual_stops` | Clustered pickup points snapped to roads |
-| `cluster_runs` | HDBSCAN run history and summaries |
-| `route_plans` | Optimized vehicle routes |
-| `route_waypoints` | Ordered stop sequence per route |
-| `vehicles` | Fleet — location, capacity, status |
-| `tracking_events` | GPS event log per vehicle |
-| `notifications` | Per-user push notification inbox |
-| `job_runs` | Background job audit log |
-| `demand_snapshots` | Predicted demand per H3 zone |
-| `vehicle_rebalance_suggestions` | Recommended repositioning targets |
+- [ ] **Responsive / mobile layout**
+  - The sidebar + main panel layout breaks on screens narrower than ~800px
+  - No mobile-specific ride booking flow (Uber's core UX is mobile-first)
+
+- [ ] **Error boundaries**
+  - The React app crashes completely on unhandled component errors
+  - Add `<ErrorBoundary>` wrappers around each view
+
+- [ ] **Backend tests**
+  - `scripts/test_models_schemas.py` exists but is incomplete
+  - No pytest tests for the routers or services
+  - Key areas to cover: auth token validation, ride status transitions, VRP solver output
+
+- [ ] **Production deployment**
+  - No Dockerfile or docker-compose
+  - No environment separation (dev / staging / prod)
+  - `SECRET_KEY` in `.env` should be rotated before any public deployment
 
 ---
 
-## WebSocket Endpoints
+## Architecture Overview
 
-Both require `?token=<jwt>` query parameter for authentication.
-
-| Endpoint | Broadcast |
-|---|---|
-| `ws://localhost:8000/tracking/ws?token=<jwt>` | Vehicle positions + events every 2s |
-| `ws://localhost:8000/notifications/ws?token=<jwt>` | Real-time notification push |
+```
+Passenger books ride
+        ↓
+POST /rides/request  ──→  RideRequest (status=pending)
+        ↓  [background job every 60s]
+HDBSCAN clustering   ──→  VirtualStop + ClusterRun (status=clustered)
+        ↓  [admin triggers or background job]
+OR-Tools VRP         ──→  RoutePlan + RouteWaypoints (status=assigned)
+        ↓  [Hungarian algorithm]
+Vehicle assignment   ──→  Vehicle.assigned_route_id set
+        ↓  [simulation job every 5s]
+Status progression   ──→  arriving → in_progress → completed
+        ↓  [WebSocket broadcast every 2s]
+Passenger tracking   ──→  Live map updates in browser
+```
 
 ---
 
-## License
+## API Reference
 
-Apache 2.0 — free to use, modify, and distribute.
+Full interactive docs available at `http://localhost:8000/docs` when backend is running.
+
+Key endpoint groups:
+- `POST /rides/request` — book a ride
+- `GET /rides/my-rides` — passenger trip history
+- `POST /cluster/run` — run HDBSCAN clustering (admin/driver)
+- `POST /route/optimize` — run VRP route optimization (admin/driver)
+- `WS /tracking/ws?token=` — live vehicle tracking stream
+- `WS /notifications/ws?token=` — per-user notification stream
+- `GET /analytics/overview` — fleet-wide statistics
+- `GET /predict/heatmap` — demand prediction over a bounding box
