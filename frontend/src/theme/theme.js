@@ -89,6 +89,10 @@ export const getCustomTheme = (mode = 'dark') => {
         styleOverrides: {
           body: {
             backgroundColor: isDark ? BRAND_COLORS.darkBg : BRAND_COLORS.lightBg,
+            backgroundImage: isDark
+              ? 'radial-gradient(circle at 10% 0%, rgba(30,136,229,.16), transparent 28%), radial-gradient(circle at 90% 10%, rgba(0,212,255,.10), transparent 24%)'
+              : 'radial-gradient(circle at 10% 0%, rgba(30,136,229,.08), transparent 30%), radial-gradient(circle at 90% 10%, rgba(0,212,255,.07), transparent 26%)',
+            backgroundAttachment: 'fixed',
             color: isDark ? BRAND_COLORS.textPrimaryDark : BRAND_COLORS.textPrimaryLight,
             overflowX: 'hidden',
             scrollBehavior: 'smooth',
@@ -140,6 +144,26 @@ export const getCustomTheme = (mode = 'dark') => {
             background: isDark ? GRADIENTS.glassDark : GRADIENTS.glassLight,
             border: isDark ? '1px solid rgba(255, 255, 255, 0.1)' : '1px solid rgba(226, 232, 240, 0.8)',
             transition: 'transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease',
+          },
+        },
+      },
+      MuiPaper: {
+        styleOverrides: {
+          root: {
+            backgroundImage: 'none',
+          },
+        },
+      },
+      MuiTableCell: {
+        styleOverrides: {
+          root: {
+            borderColor: isDark ? 'rgba(255,255,255,.08)' : 'rgba(15,23,42,.08)',
+          },
+          head: {
+            color: isDark ? '#94A3B8' : '#475569',
+            fontSize: '.75rem',
+            letterSpacing: '.06em',
+            textTransform: 'uppercase',
           },
         },
       },

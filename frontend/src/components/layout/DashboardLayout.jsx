@@ -210,7 +210,9 @@ export const DashboardLayout = ({ children, title = 'Dashboard' }) => {
         sx={{
           width: { lg: `calc(100% - ${DRAWER_WIDTH}px)` },
           ml: { lg: `${DRAWER_WIDTH}px` },
-          backgroundColor: isDark ? 'rgba(18, 18, 18, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+          background: isDark
+            ? 'linear-gradient(90deg, rgba(11,31,58,.94), rgba(18,18,18,.84))'
+            : 'rgba(255,255,255,.88)',
           backdropFilter: 'blur(16px)',
           borderBottom: '1px solid',
           borderColor: 'divider',
@@ -233,7 +235,7 @@ export const DashboardLayout = ({ children, title = 'Dashboard' }) => {
               {isDark ? <Sun size={20} color="#F59E0B" /> : <Moon size={20} color="#1E88E5" />}
             </IconButton>
 
-            <IconButton color="inherit" component={RouterLink} to="/rider-dashboard/notifications">
+            <IconButton color="inherit" component={RouterLink} to={role === 'admin' ? '/admin-dashboard' : role === 'driver' ? '/driver-dashboard' : '/rider-dashboard/notifications'}>
               <Badge badgeContent={3} color="primary">
                 <Bell size={20} />
               </Badge>
@@ -258,7 +260,7 @@ export const DashboardLayout = ({ children, title = 'Dashboard' }) => {
                 },
               }}
             >
-              <MenuItem component={RouterLink} to="/rider-dashboard/profile" onClick={handleMenuClose}>
+              <MenuItem component={RouterLink} to={role === 'admin' ? '/admin-dashboard/users' : role === 'driver' ? '/driver-dashboard/performance' : '/rider-dashboard/profile'} onClick={handleMenuClose}>
                 <ListItemIcon><User size={18} /></ListItemIcon> Profile Settings
               </MenuItem>
               <Divider />

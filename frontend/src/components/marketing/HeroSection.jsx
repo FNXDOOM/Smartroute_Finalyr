@@ -64,7 +64,7 @@ export const HeroSection = () => {
             >
               <Chip
                 icon={<Zap size={16} color="#00D4FF" />}
-                label="NEXT-GEN SHARED MOBILITY PLATFORM"
+                label="AI-POWERED CITY RIDES · BENGALURU"
                 sx={{
                   backgroundColor: 'rgba(0, 212, 255, 0.12)',
                   borderColor: 'rgba(0, 212, 255, 0.4)',
@@ -87,15 +87,15 @@ export const HeroSection = () => {
                   mb: 2.5,
                 }}
               >
-                Smarter, Fairer,{' '}
+                Your city ride,{' '}
                 <span style={{
                   background: 'linear-gradient(90deg, #1E88E5 0%, #00D4FF 100%)',
                   WebkitBackgroundClip: 'text',
                   WebkitTextFillColor: 'transparent',
                 }}>
-                  AI-Optimized
+                  intelligently shared
                 </span>{' '}
-                Rides.
+                .
               </Typography>
 
               <Typography
@@ -108,7 +108,7 @@ export const HeroSection = () => {
                   maxWidth: 540,
                 }}
               >
-                Zero surge pricing. Pre-dispatch route calculation and AI passenger grouping cut wait times by 40% while preserving eco-friendly flat fares.
+                Get where you’re going with transparent fares, electric vehicles, and pickup points designed around your day.
               </Typography>
             </motion.div>
 
@@ -119,14 +119,15 @@ export const HeroSection = () => {
               transition={{ duration: 0.8, delay: 0.2 }}
               sx={{ p: 3, borderRadius: 4, border: '1px solid rgba(0, 212, 255, 0.3)' }}
             >
-              <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <Zap size={20} color="#00D4FF" /> Reserve Your AI-Grouped Ride
+              <Typography variant="h5" sx={{ fontWeight: 800, mb: 0.5 }}>
+                Where are you going?
               </Typography>
+              <Typography variant="body2" sx={{ color: 'text.secondary', mb: 2.5 }}>Book in seconds. Know your fare before you ride.</Typography>
 
               <Stack spacing={2} sx={{ mb: 2.5 }}>
                 <TextField
                   fullWidth
-                  placeholder="Enter pickup location"
+                  placeholder="Pickup location"
                   value={pickup}
                   onChange={(e) => setPickup(e.target.value)}
                   InputProps={{
@@ -139,7 +140,7 @@ export const HeroSection = () => {
                 />
                 <TextField
                   fullWidth
-                  placeholder="Enter destination"
+                  placeholder="Where to?"
                   value={destination}
                   onChange={(e) => setDestination(e.target.value)}
                   InputProps={{
@@ -160,8 +161,13 @@ export const HeroSection = () => {
                 endIcon={<ArrowRight size={20} />}
                 sx={{ py: 1.6, fontSize: '1.05rem' }}
               >
-                Book AI Flat-Fare Ride
+                Find my ride
               </Button>
+              <Stack direction="row" spacing={1} sx={{ mt: 2, flexWrap: 'wrap' }}>
+                <Chip size="small" icon={<ShieldCheck size={14} />} label="Verified drivers" variant="outlined" />
+                <Chip size="small" icon={<Clock size={14} />} label="No surge pricing" variant="outlined" />
+                <Chip size="small" icon={<Leaf size={14} />} label="100% electric fleet" variant="outlined" />
+              </Stack>
             </GlassCard>
           </Grid>
 
@@ -231,7 +237,9 @@ export const HeroSection = () => {
               </GlassCard>
 
               {/* Map Preview */}
-              <InteractiveMap height={480} />
+              <Box sx={{ borderRadius: 5, overflow: 'hidden', border: '1px solid rgba(0,212,255,.25)', boxShadow: '0 24px 70px rgba(0,0,0,.35)' }}>
+                <InteractiveMap height={480} />
+              </Box>
             </motion.div>
           </Grid>
         </Grid>
