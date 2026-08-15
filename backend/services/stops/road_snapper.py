@@ -1,6 +1,7 @@
+import functools
 from typing import Tuple
 
-from utils.geo import haversine_meters as _haversine_meters  # noqa: F401 — kept for any future internal use
+from utils.geo import haversine_meters as _haversine_meters  # noqa: F401
 
 
 def snap_to_road(graph, lat: float, lng: float) -> Tuple[float, float, str]:
@@ -21,14 +22,25 @@ def snap_to_road(graph, lat: float, lng: float) -> Tuple[float, float, str]:
         return lat, lng, "none"
 
 
-def build_road_graph(lat: float, lng: float, dist: int = 3000):
-    """
-    Download a drivable road graph centred on lat/lng within `dist` metres.
-    Returns networkx MultiDiGraph or None on failure.
-    """
+# Cache road graphs by rounded centre coordinate (0.05° ≈ 5 km grid).
+# This avoids downloading a fresh graph for every cluster centroid — a
+# huge win both for memory and for clustering job speed.
+@functools.lru_cache(maxsize=16)
+def _cached_road_graph(grid_lat: float, grid_lng: float, dist: int):
     try:
         import osmnx as ox
-        G = ox.graph_from_point((lat, lng), dist=dist, network_type="drive")
-        return G
+        return ox.graph_from_point((grid_lat, grid_lng), dist=dist, network_type="drive")
     except Exception:
         return None
+
+
+def build_road_graph(lat: float, lng: float, dist: int = 3000):
+    """
+    Return a cached drivable road graph for the grid cell containing lat/lng.
+    Snaps to a 0.05° grid (~5 km) so nearby centroids reuse the same graph.
+    Returns networkx MultiDiGraph or None on failure.
+    """
+    # Round to nearest 0.05° to create a coarse grid key
+    grid_lat = round(round(lat / 0.05) * 0.05, 6)
+    grid_lng = round(round(lng / 0.05) * 0.05, 6)
+    return _cached_road_graph(grid_lat, grid_lng, dist)
