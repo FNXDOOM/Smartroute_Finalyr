@@ -10,15 +10,6 @@ class UserBase(BaseModel):
     role: Optional[str] = "passenger"
 
 
-class UserCreate(UserBase):
-    password: str
-
-
-class UserLogin(BaseModel):
-    email: str
-    password: str
-
-
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
@@ -29,15 +20,3 @@ class UserResponse(UserBase):
     created_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: Optional[UserResponse] = None
-
-
-class TokenData(BaseModel):
-    user_id: Optional[int] = None
-    email: Optional[str] = None
-    role: Optional[str] = None

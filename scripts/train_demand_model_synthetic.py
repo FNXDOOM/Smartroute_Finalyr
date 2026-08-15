@@ -23,7 +23,6 @@ import random
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-os.environ.setdefault("SECRET_KEY", "train-script-placeholder-key")
 
 import numpy as np
 import pandas as pd

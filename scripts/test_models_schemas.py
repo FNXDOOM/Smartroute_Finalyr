@@ -1,10 +1,13 @@
 import sys
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Add project and backend roots to path. Backend modules currently use
+# top-level imports such as `database` and `schemas`.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "backend"))
 
-from backend.schemas.user import UserCreate, UserResponse, UserLogin, Token
+from backend.schemas.user import UserResponse
 from backend.schemas.ride_request import RideRequestCreate, RideRequestResponse
 from backend.schemas.vehicle import VehicleCreate, VehicleResponse
 from backend.schemas.virtual_stop import VirtualStopCreate, VirtualStopResponse
@@ -20,8 +23,7 @@ def test_models_and_schemas():
     print("Testing Pydantic Schemas...")
     
     # 1. User
-    user_in = UserCreate(name="Alice", email="alice@example.com", password="secretpassword", role="passenger")
-    print(f"[OK] UserCreate Schema: {user_in.model_dump()}")
+    print("[OK] Clerk-backed user profile schema is available")
     
     # 2. Ride Request
     ride_in = RideRequestCreate(pickup_lat=12.9716, pickup_lng=77.5946, dest_lat=12.9352, dest_lng=77.6245)

@@ -209,6 +209,14 @@ def update_ride_request_status(
             detail="Not authorized to update this ride status",
         )
 
+    # Passengers may cancel their own request, but operational state changes
+    # must come from dispatch/admin workflows or the driver.
+    if ride.user_id == current_user.id and current_user.role == "passenger" and status_update.status != "cancelled":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Passengers may only cancel their own ride requests",
+        )
+
     old_status = ride.status
     if status_update.status not in VALID_RIDE_STATUSES:
         raise HTTPException(

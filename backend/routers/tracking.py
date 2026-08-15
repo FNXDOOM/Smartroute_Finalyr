@@ -19,7 +19,7 @@ from schemas.tracking import (
     VehicleTelemetryUpdate,
 )
 from services.notifications import create_notification, create_notifications_for_users
-from utils.auth_utils import get_current_user, decode_access_token
+from utils.auth_utils import get_current_user, decode_clerk_token
 
 router = APIRouter()
 
@@ -254,7 +254,7 @@ async def websocket_endpoint(websocket: WebSocket):
         return
 
     try:
-        decode_access_token(token)
+        decode_clerk_token(token)
     except Exception:
         await websocket.close(code=4401, reason="Invalid or expired token")
         return

@@ -14,7 +14,7 @@ from schemas.notification import (
     NotificationResponse,
 )
 from services.notifications import manager
-from utils.auth_utils import get_current_user, decode_access_token
+from utils.auth_utils import get_current_user, decode_clerk_token
 
 router = APIRouter()
 
@@ -115,7 +115,7 @@ async def websocket_notifications(websocket: WebSocket):
         return
 
     try:
-        payload = decode_access_token(token)
+        payload = decode_clerk_token(token)
         user_id = int(payload.get("sub"))
     except Exception:
         await websocket.close(code=4401, reason="Invalid or expired token")

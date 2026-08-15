@@ -12,6 +12,7 @@ sqlalchemy
 geoalchemy2
 alembic
 python-jose[cryptography]
+PyJWT[crypto]
 passlib[bcrypt]
 python-dotenv
 pydantic[email]

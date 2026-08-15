@@ -1,89 +1,68 @@
 import bcrypt
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+import secrets
+
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
-from config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from config import AUTH_PROVIDER, CLERK_AUDIENCE, CLERK_ISSUER, CLERK_JWKS_URL
 from database import get_db
 from models.user import User
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="")
+clerk_jwks_client = jwt.PyJWKClient(CLERK_JWKS_URL)
 
 
 def hash_password(password: str) -> str:
-    """Hash raw password using bcrypt with 72-byte max length limit"""
-    pwd_bytes = password.encode("utf-8")[:72]
-    salt = bcrypt.gensalt()
-    return bcrypt.hashpw(pwd_bytes, salt).decode("utf-8")
+    """Hash a seed-only placeholder password for legacy fixture data."""
+    return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify plain password against hashed password"""
-    plain_bytes = plain_password.encode("utf-8")[:72]
-    hashed_bytes = hashed_password.encode("utf-8")
-    return bcrypt.checkpw(plain_bytes, hashed_bytes)
+def decode_clerk_token(token: str) -> dict:
+    """Verify a Clerk session JWT using Clerk's published JWKS keys."""
+    if AUTH_PROVIDER != "clerk":
+        raise HTTPException(status_code=500, detail="Clerk authentication is not enabled")
 
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """Generate JWT access token"""
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
-    else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-
-def decode_access_token(token: str) -> dict:
-    """Decode and validate JWT access token"""
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        signing_key = clerk_jwks_client.get_signing_key_from_jwt(token)
+        options = {"verify_aud": bool(CLERK_AUDIENCE)}
+        kwargs = {"issuer": CLERK_ISSUER, "options": options}
+        if CLERK_AUDIENCE:
+            kwargs["audience"] = CLERK_AUDIENCE
+        return jwt.decode(token, signing_key.key, algorithms=["RS256"], **kwargs)
+    except jwt.ExpiredSignatureError as exc:
+        raise HTTPException(status_code=401, detail="Clerk token has expired", headers={"WWW-Authenticate": "Bearer"}) from exc
+    except (jwt.InvalidTokenError, jwt.PyJWKClientError) as exc:
+        raise HTTPException(status_code=401, detail="Invalid Clerk authentication token", headers={"WWW-Authenticate": "Bearer"}) from exc
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """FastAPI dependency to extract current user from JWT token"""
-    payload = decode_access_token(token)
-    user_id = payload.get("sub")
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token missing subject claim",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    """Verify the Clerk token and return the mapped application profile."""
+    payload = decode_clerk_token(token)
+    clerk_user_id = payload.get("sub")
+    if not clerk_user_id:
+        raise HTTPException(status_code=401, detail="Clerk token missing subject claim", headers={"WWW-Authenticate": "Bearer"})
+
+    user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
+        email = payload.get("email") or payload.get("email_address") or f"{clerk_user_id}@clerk.local"
+        name = payload.get("name") or payload.get("first_name") or "Clerk User"
+        user = User(
+            name=name,
+            email=email,
+            password_hash=secrets.token_urlsafe(32),
+            clerk_user_id=clerk_user_id,
+            role="passenger",
         )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
     return user
 
 
 def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    """FastAPI dependency to restrict access to admin users"""
+    """Restrict access to admin users."""
     if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin privileges required",
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
     return current_user

@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.types import TypeDecorator, String
+from sqlalchemy.types import String
+from sqlalchemy import inspect, text
 from geoalchemy2 import Geometry
 from config import DATABASE_URL
 
@@ -8,25 +9,24 @@ connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite")
 
 try:
     engine = create_engine(DATABASE_URL, connect_args=connect_args)
-except Exception:
-    # Fallback to local SQLite if PostgreSQL connection fails during local standalone testing
-    fallback_url = "sqlite:///./smartrouteai.db"
-    engine = create_engine(fallback_url, connect_args={"check_same_thread": False})
+except Exception as exc:
+    if DATABASE_URL.startswith("sqlite"):
+        raise
+    raise RuntimeError(
+        "Could not initialize the configured PostgreSQL database. "
+        "Check DATABASE_URL and install psycopg2-binary. "
+        "SQLite fallback is only available when DATABASE_URL explicitly starts with sqlite:///."
+    ) from exc
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-class PortableGeometry(TypeDecorator):
-    """Geometry column type that uses PostGIS Geometry on PostgreSQL and degrades gracefully to String on SQLite"""
-
-    impl = String
-    cache_ok = True
-
-    def load_dialect_impl(self, dialect):
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(Geometry("POINT", srid=4326))
-        return dialect.type_descriptor(String())
+PortableGeometry = (
+    Geometry("POINT", srid=4326)
+    if DATABASE_URL.startswith("postgresql")
+    else String()
+)
 
 
 
@@ -45,7 +45,7 @@ def drop_db_tables(bind_engine=None):
 
 
 def create_db_tables(bind_engine=None):
-    """Safely create database tables for PostgreSQL+PostGIS or SQLite development fallback"""
+    """Create database tables for the explicitly configured database."""
     target_engine = bind_engine or engine
     try:
         Base.metadata.create_all(bind=target_engine)
@@ -58,6 +58,29 @@ def create_db_tables(bind_engine=None):
                     pass
         else:
             raise e
+
+    # create_all() does not add columns to an existing table. Keep this small
+    # compatibility migration here until the project has a full Alembic
+    # migration history.
+    if target_engine.dialect.name == "postgresql":
+        with target_engine.begin() as connection:
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR"
+            ))
+            connection.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
+                "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
+            ))
+    elif target_engine.dialect.name == "sqlite":
+        columns = {column[1] for column in inspect(target_engine).get_columns("users")}
+        if "clerk_user_id" not in columns:
+            with target_engine.begin() as connection:
+                connection.execute(text("ALTER TABLE users ADD COLUMN clerk_user_id VARCHAR"))
+            with target_engine.begin() as connection:
+                connection.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
+                    "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
+                ))
 
 
 
