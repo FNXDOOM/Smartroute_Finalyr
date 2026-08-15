@@ -1,38 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Grid, Typography, Button, Card, Avatar, Chip, Stack, Badge, Divider } from '@mui/material';
 import { Car, Navigation, Check, X, Shield, Clock, Battery, Users, DollarSign, Award } from 'lucide-react';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { GlassCard } from '../../components/common/GlassCard';
 import { InteractiveMap } from '../../components/maps/InteractiveMap';
-import { MOCK_VEHICLES } from '../../services/mockData';
+import { ridesApi, trackingApi } from '../../services/api';
 
 export const DriverOverview = () => {
-  const driverVehicle = MOCK_VEHICLES[0];
+  const [vehicle, setVehicle] = useState(null);
   const [activeTrip, setActiveTrip] = useState(null);
-  const [requests, setRequests] = useState([
-    {
-      id: 'req_101',
-      pickup: 'Smart Hub #2 — Indiranagar Metro',
-      destination: 'Embassy TechVillage, ORR',
-      passengers: 2,
-      fare: 280,
-      eta: '3 mins away',
-      aiMatchScore: 98,
-      reason: 'AI Optimal Route: Fits current direction with 0 detour mins',
-    },
-    {
-      id: 'req_102',
-      pickup: 'Smart Hub #4 — Koramangala 80ft Rd',
-      destination: 'MG Road Metro Station',
-      passengers: 1,
-      fare: 140,
-      eta: '5 mins away',
-      aiMatchScore: 92,
-      reason: 'High AI suitability ranking along CBD corridor',
-    },
-  ]);
+  const [requests, setRequests] = useState([]);
+  useEffect(() => { Promise.all([trackingApi.getLiveFeed(), ridesApi.getAllRides({ status: 'pending' })]).then(([feed, rides]) => { setVehicle((feed.vehicles || [])[0] || null); setRequests((rides.rides || []).map((r) => ({ ...r, pickup: r.pickup_label || 'Pickup coordinates', destination: r.destination_label || 'Destination coordinates', fare: r.ride_option_price || 0, passengers: 1 }))); }).catch(() => {}); }, []);
 
-  const handleAccept = (req) => {
+  const handleAccept = async (req) => {
+    await ridesApi.updateStatus(req.id, 'assigned');
     setActiveTrip(req);
     setRequests(requests.filter((r) => r.id !== req.id));
   };
@@ -69,8 +50,8 @@ export const DriverOverview = () => {
         <Grid item xs={12} sm={6} md={3}>
           <GlassCard sx={{ py: 2 }}>
             <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>EV FLEET BATTERY</Typography>
-            <Typography variant="h4" sx={{ fontWeight: 800, color: '#10B981', mt: 0.5 }}>88%</Typography>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Tata Nexon EV</Typography>
+            <Typography variant="h4" sx={{ fontWeight: 800, color: '#10B981', mt: 0.5 }}>{vehicle?.battery == null ? '—' : `${vehicle.battery}%`}</Typography>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>{vehicle?.license_plate || 'Vehicle not assigned'}</Typography>
           </GlassCard>
         </Grid>
 

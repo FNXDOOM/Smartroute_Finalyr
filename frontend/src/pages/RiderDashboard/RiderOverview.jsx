@@ -34,17 +34,21 @@ import { GlassCard } from '../../components/common/GlassCard';
 import { InteractiveMap } from '../../components/maps/InteractiveMap';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { ToastNotification } from '../../components/common/ToastNotification';
-import { MOCK_RIDE_OPTIONS, MOCK_SMART_PICKUP_POINTS, MOCK_VEHICLES } from '../../services/mockData';
 import { ridesApi } from '../../services/api';
 import { AuthContext } from '../../context/AuthContext';
+
+const RIDE_OPTIONS = [
+  { id: 'smart_pool', name: 'Smart Pool', tagline: 'Share your ride and save', eta: '5–8 min', price: 120, originalPrice: 180, recommended: true },
+  { id: 'standard_ev', name: 'Standard EV', tagline: 'Private electric ride', eta: '3–5 min', price: 180, originalPrice: 180 },
+];
 
 export const RiderOverview = () => {
   const { user } = useContext(AuthContext);
   const [pickup, setPickup] = useState('Indiranagar Metro Station Exit 2, Bengaluru');
   const [destination, setDestination] = useState('Embassy TechVillage, Outer Ring Road');
-  const [selectedOption, setSelectedOption] = useState('opt_smart_pool');
+  const [selectedOption, setSelectedOption] = useState('smart_pool');
   const [bookingState, setBookingState] = useState('idle'); // idle | searching | confirmed | in_progress | completed
-  const [assignedDriver, setAssignedDriver] = useState(MOCK_VEHICLES[0]);
+  const [ride, setRide] = useState(null);
   const [toast, setToast] = useState({ open: false, title: '', message: '', severity: 'info' });
   const [etaTimer, setEtaTimer] = useState(4);
 
@@ -61,10 +65,10 @@ export const RiderOverview = () => {
 
   const handleBookRide = async () => {
     setBookingState('searching');
-    const option = MOCK_RIDE_OPTIONS.find((o) => o.id === selectedOption);
+    const option = RIDE_OPTIONS.find((o) => o.id === selectedOption) || RIDE_OPTIONS[0];
 
     try {
-      await ridesApi.createRideRequest({
+      const response = await ridesApi.createRideRequest({
         pickup_lat: 12.9784,
         pickup_lng: 77.6408,
         dest_lat: 12.9352,
@@ -75,17 +79,18 @@ export const RiderOverview = () => {
         ride_option_name: option.name,
         ride_option_price: option.price,
       });
-    } catch (err) {}
-
-    setTimeout(() => {
+      setRide(response.ride || response);
       setBookingState('confirmed');
       setToast({
         open: true,
-        title: 'Ride Confirmed by AI!',
-        message: `Matched with ${assignedDriver.driver_name} (${assignedDriver.vehicle_model}). EV arriving in 4 mins at Smart Pickup Hub.`,
+        title: 'Ride request submitted',
+        message: 'Your request is now pending dispatch. Driver and vehicle details will appear after assignment.',
         severity: 'success',
       });
-    }, 2000);
+    } catch (err) {
+      setBookingState('idle');
+      setToast({ open: true, title: 'Ride request failed', message: err.response?.data?.detail || 'Unable to create ride request.', severity: 'error' });
+    }
   };
 
   const handleStartTrip = () => {
@@ -170,7 +175,7 @@ export const RiderOverview = () => {
                 Select Vehicle Tier (Flat Fare Guaranteed):
               </Typography>
               <Stack spacing={1.5} sx={{ mb: 3 }}>
-                {MOCK_RIDE_OPTIONS.map((option) => {
+                {RIDE_OPTIONS.map((option) => {
                   const selected = selectedOption === option.id;
                   return (
                     <Box
@@ -235,8 +240,8 @@ export const RiderOverview = () => {
             <GlassCard sx={{ p: 3 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
                 <Chip
-                  label={bookingState === 'confirmed' ? 'EV ARRIVING AT SMART HUB' : 'TRIP IN PROGRESS'}
-                  color={bookingState === 'confirmed' ? 'warning' : 'success'}
+                  label={bookingState === 'confirmed' ? 'REQUEST PENDING DISPATCH' : 'TRIP IN PROGRESS'}
+                  color={bookingState === 'confirmed' ? 'info' : 'success'}
                   sx={{ fontWeight: 800 }}
                 />
                 <Button size="small" color="error" startIcon={<AlertTriangle size={16} />} onClick={handleSOS}>
@@ -248,17 +253,17 @@ export const RiderOverview = () => {
               <Box sx={{ p: 2, borderRadius: 3, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', mb: 3 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
                   <Avatar sx={{ bgcolor: '#1E88E5', width: 50, height: 50, fontWeight: 700 }}>
-                    {assignedDriver.driver_name[0]}
+                  {ride?.driver_name?.[0] || '?'}
                   </Avatar>
                   <Box sx={{ flexGrow: 1 }}>
                     <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
-                      {assignedDriver.driver_name}
+                      {ride?.driver_name || 'Waiting for driver assignment'}
                     </Typography>
                     <Typography variant="caption" sx={{ color: '#00D4FF', fontWeight: 600 }}>
-                      {assignedDriver.vehicle_model} • {assignedDriver.license_plate}
+                      {ride?.vehicle_model || 'Vehicle details pending'} {ride?.license_plate ? `• ${ride.license_plate}` : ''}
                     </Typography>
                   </Box>
-                  <Chip label={`${assignedDriver.driver_rating}★`} size="small" color="primary" />
+                  <Chip label={ride?.driver_rating ? `${ride.driver_rating}★` : 'Pending'} size="small" color="primary" />
                 </Box>
 
                 <Stack direction="row" spacing={1}>
@@ -274,19 +279,19 @@ export const RiderOverview = () => {
               {/* Smart Pickup Point Hub instructions */}
               <Card sx={{ p: 2, mb: 3, background: 'rgba(0, 212, 255, 0.06)', border: '1px border #00D4FF' }}>
                 <Typography variant="caption" sx={{ fontWeight: 700, color: '#00D4FF', display: 'block', mb: 0.5 }}>
-                  AI SUGGESTED SMART PICKUP HUB:
+                  PICKUP DETAILS:
                 </Typography>
                 <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                  {MOCK_SMART_PICKUP_POINTS[0].name}
+                  {ride?.pickup_label || pickup}
                 </Typography>
                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                  {MOCK_SMART_PICKUP_POINTS[0].walkingTime} • Safety Score: 98/100
+                  Dispatch will confirm the pickup point after matching.
                 </Typography>
               </Card>
 
               {bookingState === 'confirmed' ? (
-                <Button fullWidth variant="contained" color="success" size="large" onClick={handleStartTrip} sx={{ py: 1.4 }}>
-                  Board Vehicle & Start Trip
+                <Button fullWidth variant="contained" color="primary" size="large" disabled sx={{ py: 1.4 }}>
+                  Waiting for vehicle assignment
                 </Button>
               ) : (
                 <Button

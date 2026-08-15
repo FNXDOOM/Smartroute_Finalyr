@@ -85,10 +85,12 @@ const RideBooking = ({ onRideRequested, onLocationFound }) => {
       }
 
       const payload = {
-        pickup_location: `POINT(${pickupCoords.lon} ${pickupCoords.lat})`,
-        destination_location: `POINT(${destCoords.lon} ${destCoords.lat})`,
-        pickupCoords: { lat: pickupCoords.lat, lng: pickupCoords.lon },
-        destCoords: { lat: destCoords.lat, lng: destCoords.lon },
+        pickup_lat: pickupCoords.lat,
+        pickup_lng: pickupCoords.lon,
+        dest_lat: destCoords.lat,
+        dest_lng: destCoords.lon,
+        pickup_label: pickup,
+        destination_label: destination,
       };
 
       onRideRequested(payload);

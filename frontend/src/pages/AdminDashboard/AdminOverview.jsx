@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Grid, Typography, Card, Chip, Stack, Alert } from '@mui/material';
 import { Car, Users, DollarSign, Leaf, Zap, Activity, Cpu, ArrowUpRight } from 'lucide-react';
 import { DashboardLayout } from '../../components/layout/DashboardLayout';
 import { GlassCard } from '../../components/common/GlassCard';
 import { InteractiveMap } from '../../components/maps/InteractiveMap';
-import { MOCK_ADMIN_METRICS, MOCK_DEMAND_HEATMAP_CELLS } from '../../services/mockData';
+import { analyticsApi, predictApi } from '../../services/api';
 
 export const AdminOverview = () => {
   const [heatmapEnabled, setHeatmapEnabled] = useState(true);
+  const [metrics, setMetrics] = useState({});
+  const [cells, setCells] = useState([]);
+  useEffect(() => { analyticsApi.getOverview().then(setMetrics).catch(() => {}); predictApi.getDemandHeatmap().then((d) => setCells(d.cells || [])).catch(() => {}); }, []);
 
   return (
     <DashboardLayout title="Admin Control Center">
@@ -19,8 +22,8 @@ export const AdminOverview = () => {
               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>TOTAL SYSTEM RIDES</Typography>
               <Car size={20} color="#00D4FF" />
             </Box>
-            <Typography variant="h4" sx={{ fontWeight: 800, color: '#00D4FF' }}>{MOCK_ADMIN_METRICS.totalRides.toLocaleString()}</Typography>
-            <Typography variant="caption" sx={{ color: '#10B981', fontWeight: 700 }}>+14% vs last week</Typography>
+            <Typography variant="h4" sx={{ fontWeight: 800, color: '#00D4FF' }}>{(metrics.total_rides || 0).toLocaleString()}</Typography>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>From backend analytics</Typography>
           </GlassCard>
         </Grid>
 
@@ -30,8 +33,8 @@ export const AdminOverview = () => {
               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>ACTIVE EV FLEET</Typography>
               <Activity size={20} color="#10B981" />
             </Box>
-            <Typography variant="h4" sx={{ fontWeight: 800 }}>{MOCK_ADMIN_METRICS.activeDrivers} Vehicles</Typography>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>84.6% Fleet Utilization</Typography>
+            <Typography variant="h4" sx={{ fontWeight: 800 }}>{metrics.active_vehicles || 0} Vehicles</Typography>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>{metrics.route_utilization_percent || 0}% route utilization</Typography>
           </GlassCard>
         </Grid>
 
@@ -41,8 +44,8 @@ export const AdminOverview = () => {
               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>ACTIVE RIDERS</Typography>
               <Users size={20} color="#1E88E5" />
             </Box>
-            <Typography variant="h4" sx={{ fontWeight: 800 }}>{MOCK_ADMIN_METRICS.activeRiders.toLocaleString()}</Typography>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Online on App</Typography>
+            <Typography variant="h4" sx={{ fontWeight: 800 }}>{metrics.total_virtual_stops || 0}</Typography>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Virtual stops configured</Typography>
           </GlassCard>
         </Grid>
 
@@ -52,8 +55,8 @@ export const AdminOverview = () => {
               <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>TOTAL REVENUE TODAY</Typography>
               <DollarSign size={20} color="#F59E0B" />
             </Box>
-            <Typography variant="h4" sx={{ fontWeight: 800, color: '#10B981' }}>₹ 1,84,500</Typography>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Flat-fare guaranteed</Typography>
+            <Typography variant="h4" sx={{ fontWeight: 800, color: '#10B981' }}>{metrics.total_tracking_events || 0}</Typography>
+            <Typography variant="caption" sx={{ color: 'text.secondary' }}>Tracking events recorded</Typography>
           </GlassCard>
         </Grid>
       </Grid>
@@ -105,7 +108,7 @@ export const AdminOverview = () => {
 
         {/* Right Demand Heatmap & Live Fleet Map */}
         <Grid item xs={12} md={8}>
-          <InteractiveMap heatmapMode={true} heatmapCells={MOCK_DEMAND_HEATMAP_CELLS} height={560} />
+          <InteractiveMap heatmapMode={heatmapEnabled} heatmapCells={cells} height={560} />
         </Grid>
       </Grid>
     </DashboardLayout>

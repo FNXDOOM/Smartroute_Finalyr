@@ -1,8 +1,6 @@
-import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ColorModeProvider } from './context/ColorModeContext';
 import { AuthProvider } from './context/AuthContext';
-import { RoleGuard } from './components/common/RoleGuard';
 
 // Public Pages
 import { Home } from './pages/Home';
@@ -15,8 +13,6 @@ import { Contact } from './pages/Contact';
 // Auth Pages
 import { Login } from './pages/auth/Login';
 import { SignUp } from './pages/auth/SignUp';
-import { OTPVerification } from './pages/auth/OTPVerification';
-import { ForgotPassword } from './pages/auth/ForgotPassword';
 
 // Rider Dashboard
 import { RiderOverview } from './pages/RiderDashboard/RiderOverview';
@@ -35,6 +31,7 @@ import { AdminOverview } from './pages/AdminDashboard/AdminOverview';
 import { FleetMap } from './pages/AdminDashboard/FleetMap';
 import { Analytics } from './pages/AdminDashboard/Analytics';
 import { UserManagement } from './pages/AdminDashboard/UserManagement';
+import { RoleGuard } from './components/common/RoleGuard';
 
 import './theme/glassmorphism.css';
 
@@ -55,26 +52,24 @@ export default function App() {
             {/* Auth Routes */}
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<SignUp />} />
-            <Route path="/otp-verify" element={<OTPVerification />} />
-            <Route path="/forgot-password" element={<ForgotPassword />} />
 
             {/* Rider Dashboard Routes */}
-            <Route path="/rider-dashboard" element={<RiderOverview />} />
-            <Route path="/rider-dashboard/history" element={<TripHistory />} />
-            <Route path="/rider-dashboard/payments" element={<PaymentMethods />} />
-            <Route path="/rider-dashboard/notifications" element={<Notifications />} />
-            <Route path="/rider-dashboard/profile" element={<ProfileSettings />} />
+            <Route path="/rider-dashboard" element={<RoleGuard allowedRoles={['passenger']}><RiderOverview /></RoleGuard>} />
+            <Route path="/rider-dashboard/history" element={<RoleGuard allowedRoles={['passenger']}><TripHistory /></RoleGuard>} />
+            <Route path="/rider-dashboard/payments" element={<RoleGuard allowedRoles={['passenger']}><PaymentMethods /></RoleGuard>} />
+            <Route path="/rider-dashboard/notifications" element={<RoleGuard allowedRoles={['passenger']}><Notifications /></RoleGuard>} />
+            <Route path="/rider-dashboard/profile" element={<RoleGuard allowedRoles={['passenger']}><ProfileSettings /></RoleGuard>} />
 
             {/* Driver Dashboard Routes */}
-            <Route path="/driver-dashboard" element={<DriverOverview />} />
-            <Route path="/driver-dashboard/earnings" element={<Earnings />} />
-            <Route path="/driver-dashboard/performance" element={<Performance />} />
+            <Route path="/driver-dashboard" element={<RoleGuard allowedRoles={['driver']}><DriverOverview /></RoleGuard>} />
+            <Route path="/driver-dashboard/earnings" element={<RoleGuard allowedRoles={['driver']}><Earnings /></RoleGuard>} />
+            <Route path="/driver-dashboard/performance" element={<RoleGuard allowedRoles={['driver']}><Performance /></RoleGuard>} />
 
             {/* Admin Dashboard Routes */}
-            <Route path="/admin-dashboard" element={<AdminOverview />} />
-            <Route path="/admin-dashboard/fleet" element={<FleetMap />} />
-            <Route path="/admin-dashboard/analytics" element={<Analytics />} />
-            <Route path="/admin-dashboard/users" element={<UserManagement />} />
+            <Route path="/admin-dashboard" element={<RoleGuard allowedRoles={['admin']}><AdminOverview /></RoleGuard>} />
+            <Route path="/admin-dashboard/fleet" element={<RoleGuard allowedRoles={['admin']}><FleetMap /></RoleGuard>} />
+            <Route path="/admin-dashboard/analytics" element={<RoleGuard allowedRoles={['admin']}><Analytics /></RoleGuard>} />
+            <Route path="/admin-dashboard/users" element={<RoleGuard allowedRoles={['admin']}><UserManagement /></RoleGuard>} />
 
             {/* Fallback */}
             <Route path="*" element={<Navigate to="/" replace />} />

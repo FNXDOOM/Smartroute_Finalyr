@@ -23,8 +23,8 @@ const Dashboard = () => {
 
   const handleRideRequested = (payload) => {
     console.log("Ride requested", payload);
-    setUserLocation([payload.pickupCoords.lat, payload.pickupCoords.lng]);
-    setDestinationLocation([payload.destCoords.lat, payload.destCoords.lng]);
+    setUserLocation([payload.pickup_lat, payload.pickup_lng]);
+    setDestinationLocation([payload.dest_lat, payload.dest_lng]);
   };
 
   const triggerOptimization = async () => {
