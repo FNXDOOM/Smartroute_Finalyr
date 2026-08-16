@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/clerk-react'
 import {
   loadAppBootstrap, clearAppBootstrap, setAuthTokenGetter,
-  ridesApi, notificationsApi, authApi,
+  ridesApi, notificationsApi, authApi, createNotificationsWS,
 } from './services/api.js'
 import PassengerView from './views/PassengerView'
 import DriverView from './views/DriverView'
@@ -45,7 +45,7 @@ function ToastBar({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id:string)=>
   return (
     <div style={s({ position:'fixed', top:20, right:20, zIndex:9999, display:'flex', flexDirection:'column', gap:8, width:320, pointerEvents:'none' })}>
       {toasts.map(t => (
-        <div key={t.id} className="toast-in" style={s({ pointerEvents:'all', display:'flex', gap:12, alignItems:'flex-start', background:'rgba(13,17,23,0.97)', backdropFilter:'blur(20px)', border:`1px solid ${C.border2}`, borderRadius:14, padding:'11px 13px', boxShadow:'0 8px 32px rgba(0,0,0,0.6)', borderLeft:`3px solid ${colors[t.type]}` })}>
+        <div key={t.id} className="toast-in" style={s({ pointerEvents:'all', display:'flex', gap:12, alignItems:'flex-start', background:C.surface, border:`1px solid ${C.border2}`, borderRadius:10, padding:'11px 13px', boxShadow:'0 8px 24px rgba(0,0,0,0.12)', borderLeft:`3px solid ${colors[t.type]}` })}>
           <div style={s({ width:22, height:22, borderRadius:6, background:colors[t.type]+'22', display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:800, color:colors[t.type], flexShrink:0 })}>{icons[t.type]}</div>
           <div style={{ flex:1, minWidth:0 }}>
             <p style={s({ color:C.text, fontSize:12, fontWeight:700, lineHeight:1.3 })}>{t.title}</p>
@@ -70,7 +70,7 @@ function AuthScreen({ view, onToggle }: { view:'login'|'register'; onToggle:()=>
       <div style={s({ width:'100%', maxWidth:440 })}>
         <div style={s({ textAlign:'center', marginBottom:32 })}>
           <div style={s({ display:'inline-flex', alignItems:'center', gap:10, marginBottom:8 })}>
-            <div style={s({ width:38, height:38, borderRadius:12, background:C.accent, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 })}>🚀</div>
+            <div style={s({ width:38, height:38, borderRadius:10, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontWeight:800 })}>S</div>
             <span style={s({ fontFamily:'Bricolage Grotesque,sans-serif', fontSize:22, fontWeight:800, color:C.text, letterSpacing:'-0.03em' })}>SmartRoute AI</span>
           </div>
           <p style={s({ color:C.muted2, fontSize:13 })}>{view==='login' ? 'Sign in to your account' : 'Create a new account'}</p>
@@ -197,6 +197,23 @@ export default function App() {
     }
   }, [isLoaded, isSignedIn, clerkUserId, toast])
 
+  // Keep the inbox and toast state in sync with ride lifecycle events.
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !user) return
+    let ws: WebSocket | null = null
+    let cancelled = false
+    getTokenRef.current().then(token => {
+      if (!token || cancelled) return
+      ws = createNotificationsWS(token, (message:any) => {
+        const notification = message?.notification
+        if (!notification) return
+        setNotifications(prev => [notification, ...prev.filter(n => n.id !== notification.id)].slice(0, 50))
+        toast('info', notification.title, notification.message)
+      })
+    }).catch(() => {})
+    return () => { cancelled = true; ws?.close() }
+  }, [isLoaded, isSignedIn, user?.id, toast])
+
   const isBootstrapping = isLoaded && isSignedIn && !user
   const isAuthView      = view === 'login' || view === 'register'
   const unreadCount     = notifications.filter((n:any) => !n.is_read).length
@@ -241,37 +258,37 @@ interface ShellProps {
 
 function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast }: ShellProps) {
   const passengerNav = [
-    { v:'home',     icon:'🏠', label:'Home' },
-    { v:'trips',    icon:'🧾', label:'My Trips' },
-    { v:'inbox',    icon:'🔔', label:'Inbox',   badge:true },
-    { v:'profile',  icon:'👤', label:'Profile' },
+    { v:'home',     icon:'⌂', label:'Home' },
+    { v:'trips',    icon:'▤', label:'My Trips' },
+    { v:'inbox',    icon:'◉', label:'Inbox',   badge:true },
+    { v:'profile',  icon:'○', label:'Profile' },
   ]
   const driverNav = [
-    { v:'driver-home',   icon:'🚗', label:'Dashboard' },
-    { v:'driver-map',    icon:'🗺️', label:'Live Map' },
-    { v:'driver-routes', icon:'📍', label:'My Routes' },
-    { v:'inbox',         icon:'🔔', label:'Inbox', badge:true },
-    { v:'profile',       icon:'👤', label:'Profile' },
+    { v:'driver-home',   icon:'▣', label:'Dashboard' },
+    { v:'driver-map',    icon:'⌁', label:'Live Map' },
+    { v:'driver-routes', icon:'›', label:'My Routes' },
+    { v:'inbox',         icon:'◉', label:'Inbox', badge:true },
+    { v:'profile',       icon:'○', label:'Profile' },
   ]
   const adminNav = [
-    { v:'admin-overview',   icon:'📊', label:'Overview' },
-    { v:'admin-rides',      icon:'🛻', label:'Rides' },
-    { v:'admin-vehicles',   icon:'🚙', label:'Fleet' },
-    { v:'admin-cluster',    icon:'🔬', label:'Cluster' },
-    { v:'admin-routes',     icon:'🗺️', label:'Routes' },
-    { v:'admin-analytics',  icon:'📈', label:'Analytics' },
-    { v:'admin-jobs',       icon:'⚙️', label:'Jobs' },
-    { v:'admin-heatmap',    icon:'🔥', label:'Heatmap' },
+    { v:'admin-overview',   icon:'▦', label:'Overview' },
+    { v:'admin-rides',      icon:'▤', label:'Rides' },
+    { v:'admin-vehicles',   icon:'□', label:'Fleet' },
+    { v:'admin-cluster',    icon:'⌘', label:'Cluster' },
+    { v:'admin-routes',     icon:'⌁', label:'Routes' },
+    { v:'admin-analytics',  icon:'↗', label:'Analytics' },
+    { v:'admin-jobs',       icon:'⚙', label:'Jobs' },
+    { v:'admin-heatmap',    icon:'◌', label:'Heatmap' },
   ]
   const nav = user.role==='admin' ? adminNav : user.role==='driver' ? driverNav : passengerNav
 
   return (
-    <div style={s({ display:'flex', width:'100%', height:'100%' })}>
+    <div className="app-shell" style={s({ display:'flex', width:'100%', height:'100%' })}>
       {/* Sidebar */}
-      <aside style={s({ width:220, flexShrink:0, background:C.bg2, borderRight:`1px solid ${C.border}`, display:'flex', flexDirection:'column', padding:'20px 12px' })}>
-        <div style={s({ display:'flex', alignItems:'center', gap:10, marginBottom:28, paddingLeft:4 })}>
-          <div style={s({ width:34, height:34, borderRadius:10, background:C.accent, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 })}>🚀</div>
-          <div>
+      <aside className="app-sidebar" style={s({ width:220, flexShrink:0, background:C.bg2, borderRight:`1px solid ${C.border}`, display:'flex', flexDirection:'column', padding:'20px 12px' })}>
+        <div className="brand" style={s({ display:'flex', alignItems:'center', gap:10, marginBottom:28, paddingLeft:4 })}>
+          <div style={s({ width:34, height:34, borderRadius:9, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:800 })}>S</div>
+          <div className="brand-copy">
             <p style={s({ color:C.text, fontSize:14, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif' })}>SmartRoute</p>
             <p style={s({ color:C.muted, fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em' })}>{user.role}</p>
           </div>
@@ -280,9 +297,9 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
           {nav.map(item => {
             const active = view === item.v
             return (
-              <button key={item.v} onClick={() => setView(item.v as View)} style={s({ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderRadius:9, border:'none', cursor:'pointer', background:active?`${C.accent}18`:'transparent', color:active?C.accent:C.muted2, fontSize:13, fontWeight:active?700:500, textAlign:'left', transition:'all 0.15s', position:'relative' })}>
+              <button className="nav-item" key={item.v} onClick={() => setView(item.v as View)} style={s({ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderRadius:9, border:'none', cursor:'pointer', background:active?`${C.accent}18`:'transparent', color:active?C.accent:C.muted2, fontSize:13, fontWeight:active?700:500, textAlign:'left', position:'relative' })}>
                 <span style={{ fontSize:15 }}>{item.icon}</span>
-                {item.label}
+                <span className="nav-label">{item.label}</span>
                 {(item as any).badge && unreadCount > 0 && (
                   <span style={s({ position:'absolute', right:10, background:C.danger, color:'#fff', fontSize:10, fontWeight:800, borderRadius:10, padding:'1px 5px', minWidth:18, textAlign:'center' })}>{unreadCount}</span>
                 )}
@@ -291,19 +308,19 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
           })}
         </nav>
         <div style={s({ borderTop:`1px solid ${C.border}`, paddingTop:12 })}>
-          <div style={s({ display:'flex', alignItems:'center', gap:9, padding:'8px 12px', marginBottom:6 })}>
+          <div className="user-row" style={s({ display:'flex', alignItems:'center', gap:9, padding:'8px 12px', marginBottom:6 })}>
             <div style={s({ width:30, height:30, borderRadius:'50%', background:C.surface3, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13, fontWeight:700, color:C.accent })}>{user.name.charAt(0).toUpperCase()}</div>
-            <div style={{ minWidth:0 }}>
+            <div className="user-copy" style={{ minWidth:0 }}>
               <p style={s({ color:C.text, fontSize:12, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' })}>{user.name}</p>
               <p style={s({ color:C.muted, fontSize:10, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' })}>{user.email}</p>
             </div>
           </div>
-          <button onClick={onLogout} style={s({ width:'100%', padding:'8px 12px', background:'transparent', border:`1px solid ${C.border}`, borderRadius:8, color:C.muted2, fontSize:12, cursor:'pointer', textAlign:'left' })}>← Sign out</button>
+          <button onClick={onLogout} style={s({ width:'100%', padding:'8px 12px', background:'transparent', border:`1px solid ${C.border}`, borderRadius:8, color:C.muted2, fontSize:12, cursor:'pointer', textAlign:'left' })}><span className="sign-out-label">← Sign out</span><span className="sign-out-icon">←</span></button>
         </div>
       </aside>
 
       {/* Main — full height flex column so map views can fill all space */}
-      <main style={s({ flex:1, overflow:'hidden', background:C.bg, display:'flex', flexDirection:'column', minHeight:0 })}>
+      <main className="app-main" style={s({ flex:1, overflow:'hidden', background:C.bg, display:'flex', flexDirection:'column', minHeight:0 })}>
         <RoleRouter user={user} view={view} setView={setView} notifications={notifications} setNotifications={setNotifications} toast={toast} />
       </main>
     </div>

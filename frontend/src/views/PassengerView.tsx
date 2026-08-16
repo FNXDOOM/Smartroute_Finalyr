@@ -1,15 +1,17 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useAuth } from '@clerk/clerk-react'
 import { C, s, AppUser, View, Toast } from '../SwiftApp'
-import { ridesApi } from '../services/api.js'
+import { ridesApi, vehiclesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
+import { useWebSocket } from '../hooks/useWebSocket.js'
 import AppMap from '../components/AppMap'
 
 interface Props { user:AppUser; view:View; setView:(v:View)=>void; toast:(t:Toast['type'],title:string,body?:string)=>void }
 
 const RIDE_TIERS = [
-  { id:'swift-x',   name:'SwiftX',    desc:'Affordable shared ride', eta:'3 min', price:'₹12–15', icon:'🚗', seats:4 },
-  { id:'swift-xl',  name:'SwiftXL',   desc:'Extra space, small group', eta:'6 min', price:'₹18–22', icon:'🚙', seats:6 },
-  { id:'swift-lux', name:'Lux Black', desc:'Premium, top-rated driver', eta:'8 min', price:'₹32–40', icon:'🖤', seats:4 },
-  { id:'swift-moto',name:'Moto',      desc:'Fast, budget solo',        eta:'2 min', price:'₹6–9',   icon:'🏍️', seats:1 },
+  { id:'swift-x',   name:'SwiftX',    desc:'Affordable shared ride', eta:'3 min', price:'₹12–15', icon:'S', seats:4 },
+  { id:'swift-xl',  name:'SwiftXL',   desc:'Extra space, small group', eta:'6 min', price:'₹18–22', icon:'X', seats:6 },
+  { id:'swift-lux', name:'Lux Black', desc:'Premium, top-rated driver', eta:'8 min', price:'₹32–40', icon:'L', seats:4 },
+  { id:'swift-moto',name:'Moto',      desc:'Fast, budget solo',        eta:'2 min', price:'₹6–9',   icon:'M', seats:1 },
 ]
 
 export default function PassengerView({ user, view, setView, toast }: Props) {
@@ -21,7 +23,122 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
   const [booking,  setBooking]  = useState(false)
   const [activeRide, setActiveRide] = useState<any>(null)
   const [rideVehicle, setRideVehicle] = useState<any>(null)
+  const [vehicles, setVehicles] = useState<any[]>([])
+  const [pickupPoint, setPickupPoint] = useState({ lat:12.9784, lng:77.6408, label:'Current location' })
+  const [destinationPoint, setDestinationPoint] = useState<any>(null)
+  const [routeGeometry, setRouteGeometry] = useState<[number,number][]>([])
+  const [routeEstimate, setRouteEstimate] = useState<any>(null)
+  const [suggestions, setSuggestions] = useState<any[]>([])
+  const [suggestionField, setSuggestionField] = useState<'pickup'|'destination'|null>(null)
+  const [pickupConfirmed, setPickupConfirmed] = useState(false)
+  const [destinationConfirmed, setDestinationConfirmed] = useState(false)
+  const [locationError, setLocationError] = useState('')
+  const [geocoding, setGeocoding] = useState(false)
+  const [gpsActive, setGpsActive] = useState(false)
+  const [gpsLoading, setGpsLoading] = useState(false)
   const pollRef = useRef<any>(null)
+  const gpsWatchRef = useRef<number | null>(null)
+  const gpsReverseDoneRef = useRef(false)
+  const { getToken } = useAuth()
+  const [trackingToken, setTrackingToken] = useState<string|null>(null)
+
+  useEffect(() => {
+    getToken().then(token => setTrackingToken(token)).catch(() => {})
+    vehiclesApi.list().then(data => setVehicles(Array.isArray(data) ? data : [])).catch(() => {})
+  }, [getToken])
+
+  const handleTrackingMessage = useCallback((message:any) => {
+    if (message.type === 'tracking_snapshot') {
+      setVehicles(Array.isArray(message.vehicles) ? message.vehicles : [])
+    } else if (message.type === 'vehicle_location_update' && message.vehicle) {
+      setVehicles(prev => prev.some(v => v.id === message.vehicle.id)
+        ? prev.map(v => v.id === message.vehicle.id ? { ...v, ...message.vehicle } : v)
+        : [...prev, message.vehicle])
+      if (rideVehicle?.id === message.vehicle.id) setRideVehicle((prev:any) => ({ ...prev, ...message.vehicle }))
+    }
+  }, [rideVehicle?.id])
+
+  useWebSocket(createTrackingWS, trackingToken, handleTrackingMessage, true)
+
+  useEffect(() => () => {
+    if (gpsWatchRef.current !== null) navigator.geolocation?.clearWatch(gpsWatchRef.current)
+  }, [])
+
+  useEffect(() => {
+    const query = suggestionField === 'pickup' ? pickup : dest
+    if (!suggestionField || query.trim().length < 3) {
+      setSuggestions([])
+      return
+    }
+    const timer = window.setTimeout(() => {
+      geocodeApi.suggest(query.trim(), gpsActive ? pickupPoint : undefined)
+        .then(results => setSuggestions(results))
+        .catch(() => setSuggestions([]))
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [pickup, dest, suggestionField, gpsActive, pickupPoint.lat, pickupPoint.lng])
+
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationError('GPS is not available in this browser.')
+      return
+    }
+    setGpsLoading(true)
+    setLocationError('')
+    gpsReverseDoneRef.current = false
+    const onPosition = (position: GeolocationPosition) => {
+      const { latitude, longitude } = position.coords
+      setPickupPoint({ lat: latitude, lng: longitude, label:'Current location' })
+      if (!gpsReverseDoneRef.current) {
+        gpsReverseDoneRef.current = true
+        geocodeApi.reverse(latitude, longitude).then(point => {
+          setPickupPoint(point)
+          setPickup(point.label)
+        }).catch(() => {
+          setGpsActive(false)
+          setLocationError('SmartRoute currently operates only in India.')
+        })
+      }
+      setPickup('Current location')
+      setGpsActive(true)
+      setPickupConfirmed(true)
+      setSuggestionField(null)
+      setGpsLoading(false)
+    }
+    const onError = (error: GeolocationPositionError) => {
+      setGpsLoading(false)
+      setGpsActive(false)
+      setLocationError(error.code === error.PERMISSION_DENIED
+        ? 'Location permission is blocked. Allow location access and try again.'
+        : 'Unable to get your location. Try again outdoors or check GPS settings.')
+    }
+    navigator.geolocation.getCurrentPosition(onPosition, onError, {
+      enableHighAccuracy: true,
+      maximumAge: 10000,
+      timeout: 12000,
+    })
+    if (gpsWatchRef.current !== null) navigator.geolocation.clearWatch(gpsWatchRef.current)
+    gpsWatchRef.current = navigator.geolocation.watchPosition(onPosition, onError, {
+      enableHighAccuracy: true,
+      maximumAge: 5000,
+      timeout: 15000,
+    })
+  }
+
+  const chooseSuggestion = (field:'pickup'|'destination', point:any) => {
+    if (field === 'pickup') {
+      setPickup(point.label)
+      setPickupPoint(point)
+      setPickupConfirmed(true)
+      setGpsActive(false)
+    } else {
+      setDest(point.label)
+      setDestinationPoint(point)
+      setDestinationConfirmed(true)
+    }
+    setSuggestions([])
+    setSuggestionField(null)
+  }
 
   useEffect(() => {
     ridesApi.getMyRides()
@@ -48,22 +165,35 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
 
   const handleBook = async () => {
     if (!dest.trim()) { toast('warning','Enter a destination'); return }
+    if (!pickupConfirmed) { toast('warning','Choose a pickup suggestion or use GPS'); return }
+    if (!destinationConfirmed || !destinationPoint) { toast('warning','Choose a destination suggestion'); return }
     setBooking(true)
     const tier = RIDE_TIERS.find(t=>t.id===selected)!
     try {
+      setGeocoding(true)
+      const resolvedPickup = pickupPoint
+      const resolvedDestination = destinationPoint
+      const route = await routingApi.route(resolvedPickup, resolvedDestination)
+      setRouteEstimate(route)
+      if (route?.geometry?.length > 1) {
+        setRouteGeometry(route.geometry.map(([lng, lat]:[number,number]) => [lat, lng] as [number,number]))
+      }
+      setLocationError('')
       const ride = await ridesApi.create({
-        pickup_lat: 12.9784, pickup_lng: 77.6408,
-        dest_lat: 12.9352,   dest_lng: 77.6245,
-        pickup_label: pickup || 'Current location',
-        destination_label: dest,
+        pickup_lat: resolvedPickup.lat, pickup_lng: resolvedPickup.lng,
+        dest_lat: resolvedDestination.lat, dest_lng: resolvedDestination.lng,
+        pickup_label: resolvedPickup.label || pickup || 'Current location',
+        destination_label: resolvedDestination.label || dest,
         ride_option_id: tier.id, ride_option_name: tier.name, ride_option_price: tier.price,
       })
       setActiveRide(ride)
       setTrips(prev => [ride, ...prev])
       toast('success','Ride requested!','Waiting for dispatch…')
     } catch(e:any) {
-      toast('error','Failed to book ride', e?.response?.data?.detail || 'Try again')
-    } finally { setBooking(false) }
+      const message = e?.response?.data?.detail || e?.message || 'Try again'
+      setLocationError(message.includes('route') || message.includes('Route') ? 'No drivable route found for these locations.' : '')
+      toast('error','Failed to book ride', message)
+    } finally { setGeocoding(false); setBooking(false) }
   }
 
   const handleCancel = async () => {
@@ -81,21 +211,23 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
   if (view === 'tracking') return <TrackingView ride={activeRide} vehicle={rideVehicle} onBack={()=>setView('home')} />
 
   // Home / Booking — split layout: form left, live map right
-  const pickupCoords  = { lat:12.9784, lng:77.6408, label: pickup||'Current location' }
-  const destCoords    = dest ? { lat:12.9352, lng:77.6245, label:dest } : null
-  const mapCenter:[number,number] = [12.9568, 77.6305]
+  const pickupCoords  = { lat:pickupPoint.lat, lng:pickupPoint.lng, label: pickup||'Current location' }
+  const destCoords    = destinationPoint || null
+  const mapCenter:[number,number] = destinationPoint
+    ? [(pickupPoint.lat + destinationPoint.lat) / 2, (pickupPoint.lng + destinationPoint.lng) / 2]
+    : (gpsActive || !!pickup.trim()) ? [pickupPoint.lat, pickupPoint.lng] : [12.9568, 77.6305]
 
   return (
     <div style={{ display:'flex', flex:1, minHeight:0, overflow:'hidden' }}>
 
       {/* ── Left panel ── */}
-      <div style={{ width:340, flexShrink:0, overflowY:'auto', padding:24, background:'var(--bg)', borderRight:'1px solid var(--border)' }}>
+      <div className="booking-panel" style={{ width:340, flexShrink:0, overflowY:'auto', padding:24, background:'var(--bg)', borderRight:'1px solid var(--border)' }}>
         <h1 style={s({ color:C.text, fontSize:20, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif', marginBottom:4 })}>Book a Ride</h1>
         <p style={s({ color:C.muted, fontSize:12, marginBottom:18 })}>Smart shared dispatch · flat fares</p>
 
         {/* Active ride banner */}
         {activeRide && (
-          <div style={s({ background:`${C.accent}12`, border:`1px solid ${C.accent}40`, borderRadius:10, padding:'12px 14px', marginBottom:16 })}>
+          <div className="ride-active" style={s({ background:`${C.accent}12`, border:`1px solid ${C.accent}40`, borderRadius:10, padding:'12px 14px', marginBottom:16 })}>
             <p style={s({ color:C.accent, fontSize:12, fontWeight:700 })}>Ride active — {activeRide.status.replace('_',' ')}</p>
             <p style={s({ color:C.muted2, fontSize:11, marginTop:2 })}>→ {activeRide.destination_label}</p>
             <button onClick={()=>setView('trip-detail')} style={s({ marginTop:8, background:C.accent, color:C.bg, border:'none', borderRadius:7, padding:'5px 12px', fontSize:11, fontWeight:700, cursor:'pointer' })}>Track →</button>
@@ -103,23 +235,40 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
         )}
 
         {/* Inputs */}
-        <div style={s({ display:'flex', flexDirection:'column', gap:8, marginBottom:14 })}>
+          <div style={s({ display:'flex', flexDirection:'column', gap:8, marginBottom:14 })}>
           <div style={s({ display:'flex', alignItems:'center', gap:8, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:'9px 11px' })}>
             <span>📍</span>
-            <input value={pickup} onChange={e=>setPickup(e.target.value)} placeholder="Pickup location" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
+            <input value={pickup} onFocus={()=>setSuggestionField('pickup')} onChange={e=>{ setPickup(e.target.value); setPickupConfirmed(false); setGpsActive(false) }} placeholder="Pickup location" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
+            <button onClick={useCurrentLocation} disabled={gpsLoading} title="Use current GPS location" style={s({ border:'none', background:'none', color:gpsActive?C.accent:C.muted2, cursor:gpsLoading?'wait':'pointer', fontSize:11, fontWeight:700, whiteSpace:'nowrap' })}>
+              {gpsLoading ? 'Locating…' : gpsActive ? 'GPS on' : 'Use GPS'}
+            </button>
           </div>
+          {suggestionField === 'pickup' && suggestions.length > 0 && (
+            <SuggestionList items={suggestions} onChoose={point=>chooseSuggestion('pickup', point)} />
+          )}
+        {locationError && <p style={s({ color:C.danger, fontSize:11, marginTop:-6, marginBottom:10 })}>{locationError}</p>}
           <div style={s({ display:'flex', alignItems:'center', gap:8, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:'9px 11px' })}>
             <span>🎯</span>
-            <input value={dest} onChange={e=>setDest(e.target.value)} placeholder="Destination" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
+            <input value={dest} onFocus={()=>setSuggestionField('destination')} onChange={e=>{ setDest(e.target.value); setDestinationConfirmed(false); setDestinationPoint(null); setRouteGeometry([]); setRouteEstimate(null) }} placeholder="Destination" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
           </div>
+        {suggestionField === 'destination' && suggestions.length > 0 && (
+            <SuggestionList items={suggestions} onChoose={point=>chooseSuggestion('destination', point)} />
+          )}
         </div>
+
+        {routeEstimate && (
+          <div style={s({ display:'flex', justifyContent:'space-between', padding:'9px 11px', marginBottom:14, background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8, color:C.muted2, fontSize:11 })}>
+            <span>Route estimate</span>
+            <strong style={s({ color:C.text })}>{(routeEstimate.distanceMeters / 1000).toFixed(1)} km · {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</strong>
+          </div>
+        )}
 
         {/* Ride tiers */}
         <div style={s({ display:'flex', flexDirection:'column', gap:6, marginBottom:14 })}>
           {RIDE_TIERS.map(tier => {
             const active = selected === tier.id
             return (
-              <div key={tier.id} onClick={()=>setSelected(tier.id)} style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 11px', borderRadius:8, border:`1px solid ${active?C.accent:C.border}`, background:active?`${C.accent}10`:'transparent', cursor:'pointer' })}>
+              <div className="ride-tier" key={tier.id} onClick={()=>setSelected(tier.id)} style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 11px', borderRadius:8, border:`1px solid ${active?C.accent:C.border}`, background:active?`${C.accent}10`:'transparent', cursor:'pointer' })}>
                 <div style={s({ display:'flex', alignItems:'center', gap:8 })}>
                   <span style={{ fontSize:18 }}>{tier.icon}</span>
                   <div>
@@ -133,8 +282,8 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
           })}
         </div>
 
-        <button onClick={handleBook} disabled={booking||!!activeRide} style={s({ width:'100%', padding:'11px', background:C.accent, color:C.bg, border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:booking||activeRide?'not-allowed':'pointer', opacity:booking||activeRide?0.6:1, marginBottom:20 })}>
-          {booking ? 'Booking…' : activeRide ? 'Ride in progress' : 'Request Ride'}
+        <button className="primary-action" onClick={handleBook} disabled={booking||!!activeRide} style={s({ width:'100%', padding:'11px', background:C.accent, color:C.bg, border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:booking||activeRide?'not-allowed':'pointer', opacity:booking||activeRide?0.6:1, marginBottom:20 })}>
+          {geocoding ? 'Finding locations…' : booking ? 'Booking…' : activeRide ? 'Ride in progress' : 'Request Ride'}
         </button>
 
         {/* Recent */}
@@ -149,7 +298,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
       </div>
 
       {/* ── Right map ── */}
-      <div style={{ flex:1, position:'relative', minWidth:0, minHeight:0 }}>
+      <div className="map-surface" style={{ flex:1, position:'relative', minWidth:0, minHeight:0 }}>
         <div style={{ position:'absolute', inset:0 }}>
           <AppMap
             center={mapCenter}
@@ -157,12 +306,13 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
             height="100%"
             pickup={pickupCoords}
             destination={destCoords}
-            vehicles={[]}
+            routeGeometry={routeGeometry}
+            vehicles={vehicles.filter(v => v.status !== 'offline')}
           />
         </div>
         {/* Tip overlay */}
-        <div style={{ position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', background:'rgba(7,9,15,0.85)', backdropFilter:'blur(8px)', border:`1px solid var(--border2)`, borderRadius:20, padding:'6px 14px', pointerEvents:'none', zIndex:500 }}>
-          <p style={{ color:'var(--muted2)', fontSize:11 }}>📍 Bengaluru · AI-dispatched rides</p>
+        <div style={{ position:'absolute', top:12, left:'50%', transform:'translateX(-50%)', background:'rgba(255,255,255,0.94)', border:`1px solid var(--border)`, boxShadow:'0 2px 10px rgba(0,0,0,0.12)', borderRadius:20, padding:'7px 14px', pointerEvents:'none', zIndex:500 }}>
+          <p style={{ color:'var(--muted2)', fontSize:11 }}>India · Smart shared rides</p>
         </div>
       </div>
     </div>
@@ -297,6 +447,19 @@ function InfoCard({ label, value, mono=false }: { label:string; value:string; mo
     <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8 })}>
       <p style={s({ color:C.muted2, fontSize:12 })}>{label}</p>
       <p style={s({ color:C.text, fontSize:13, fontWeight:600, fontFamily:mono?'monospace':'inherit' })}>{value}</p>
+    </div>
+  )
+}
+
+function SuggestionList({ items, onChoose }: { items:any[]; onChoose:(item:any)=>void }) {
+  return (
+    <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, boxShadow:'0 8px 20px rgba(0,0,0,.12)', overflow:'hidden', marginTop:-2, marginBottom:2, position:'relative', zIndex:20 })}>
+      {items.map((item, index) => (
+        <button key={`${item.lat}-${item.lng}-${index}`} onMouseDown={event=>event.preventDefault()} onClick={()=>onChoose(item)} style={s({ display:'block', width:'100%', textAlign:'left', border:'none', borderBottom:index < items.length-1 ? `1px solid ${C.border}` : 'none', background:C.surface, color:C.text, padding:'10px 12px', cursor:'pointer', fontSize:11 })}>
+          <span style={s({ display:'block', fontWeight:700 })}>{item.label.split(',')[0]}</span>
+          <span style={s({ display:'block', color:C.muted, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' })}>{item.label}</span>
+        </button>
+      ))}
     </div>
   )
 }

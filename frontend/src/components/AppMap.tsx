@@ -64,6 +64,49 @@ function ClickHandler({ onMapClick }: { onMapClick?: (lat:number,lng:number)=>vo
   return null
 }
 
+// Interpolate GPS updates so a vehicle glides between server snapshots instead
+// of jumping to its next coordinate every two seconds.
+function AnimatedVehicleMarker({ vehicle }: { vehicle:any }) {
+  const markerRef = useRef<L.Marker | null>(null)
+  const frameRef = useRef<number | null>(null)
+  const firstPosition: [number, number] = [vehicle.lat, vehicle.lng]
+
+  useEffect(() => {
+    const marker = markerRef.current
+    if (!marker || vehicle.lat == null || vehicle.lng == null) return
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
+
+    const from = marker.getLatLng()
+    const to = L.latLng(vehicle.lat, vehicle.lng)
+    const startedAt = performance.now()
+    const duration = 1800
+
+    const animate = (now:number) => {
+      const progress = Math.min(1, (now - startedAt) / duration)
+      // Smoothstep easing gives the marker a natural ease-in/ease-out motion.
+      const eased = progress * progress * (3 - 2 * progress)
+      marker.setLatLng([
+        from.lat + (to.lat - from.lat) * eased,
+        from.lng + (to.lng - from.lng) * eased,
+      ])
+      if (progress < 1) frameRef.current = requestAnimationFrame(animate)
+      else frameRef.current = null
+    }
+    frameRef.current = requestAnimationFrame(animate)
+    return () => { if (frameRef.current !== null) cancelAnimationFrame(frameRef.current) }
+  }, [vehicle.lat, vehicle.lng])
+
+  return (
+    <Marker ref={markerRef} position={firstPosition} icon={ICONS.vehicle(vehicle.status)}>
+      <Popup>
+        <b>{vehicle.license_plate}</b><br/>
+        Status: {vehicle.status}<br/>
+        {vehicle.assigned_route_id && `Route: ${vehicle.assigned_route_id.slice(0,18)}…`}
+      </Popup>
+    </Marker>
+  )
+}
+
 // ─── Status colour for heat cells ────────────────────────────────────────────
 function demandColour(intensity: number) {
   const r = Math.round(244 * intensity)
@@ -80,6 +123,7 @@ interface AppMapProps {
   vehicles?:     any[]
   pickup?:       { lat:number; lng:number; label?:string } | null
   destination?:  { lat:number; lng:number; label?:string } | null
+  routeGeometry?: [number,number][]
   waypoints?:    any[]
   heatCells?:    any[]
   onMapClick?:   (lat:number,lng:number) => void
@@ -93,6 +137,7 @@ export default function AppMap({
   vehicles     = [],
   pickup,
   destination,
+  routeGeometry = [],
   waypoints    = [],
   heatCells    = [],
   onMapClick,
@@ -103,6 +148,7 @@ export default function AppMap({
     .filter(w => w.lat && w.lng)
     .sort((a,b) => (a.sequence??0) - (b.sequence??0))
     .map(w => [w.lat, w.lng])
+  const displayedRoute = routeGeometry.length > 1 ? routeGeometry : routePoints
 
   const maxDemand = Math.max(1, ...heatCells.map(c => c.predicted_demand || c.historical_request_count || 0))
 
@@ -144,9 +190,9 @@ export default function AppMap({
         })}
 
         {/* ── Route polyline ── */}
-        {routePoints.length > 1 && (
+        {displayedRoute.length > 1 && (
           <Polyline
-            positions={routePoints}
+            positions={displayedRoute}
             pathOptions={{ color:'#00c9a7', weight:4, opacity:0.85, dashArray:'8 4' }}
           />
         )}
@@ -168,17 +214,7 @@ export default function AppMap({
 
         {/* ── Vehicle markers ── */}
         {vehicles.filter(v => v.lat && v.lng).map(v => (
-          <Marker
-            key={`v-${v.id}`}
-            position={[v.lat, v.lng]}
-            icon={ICONS.vehicle(v.status)}
-          >
-            <Popup>
-              <b>{v.license_plate}</b><br/>
-              Status: {v.status}<br/>
-              {v.assigned_route_id && `Route: ${v.assigned_route_id.slice(0,18)}…`}
-            </Popup>
-          </Marker>
+          <AnimatedVehicleMarker key={`v-${v.id}`} vehicle={v} />
         ))}
 
         {/* ── Pickup marker ── */}
