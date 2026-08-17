@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@clerk/clerk-react'
-import { C, s, AppUser, View, Toast } from '../SwiftApp'
-import { ridesApi, vehiclesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
+import { C, s } from '../SwiftApp'
+import { ridesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
 import { useWebSocket } from '../hooks/useWebSocket.js'
 import AppMap from '../components/AppMap'
-
-interface Props { user:AppUser; view:View; setView:(v:View)=>void; toast:(t:Toast['type'],title:string,body?:string)=>void }
 
 const RIDE_TIERS = [
   { id:'swift-x',   name:'SwiftX',    desc:'Affordable shared ride', eta:'3 min', price:'₹12–15', icon:'S', seats:4 },
@@ -14,47 +12,46 @@ const RIDE_TIERS = [
   { id:'swift-moto',name:'Moto',      desc:'Fast, budget solo',        eta:'2 min', price:'₹6–9',   icon:'M', seats:1 },
 ]
 
-export default function PassengerView({ user, view, setView, toast }: Props) {
-  const [trips,    setTrips]    = useState<any[]>([])
+export default function PassengerView({ view, setView, toast }) {
+  const [trips,    setTrips]    = useState([])
   const [loading,  setLoading]  = useState(true)
-  const [selected, setSelected] = useState<string>('swift-x')
+  const [selected, setSelected] = useState('swift-x')
   const [pickup,   setPickup]   = useState('')
   const [dest,     setDest]     = useState('')
   const [booking,  setBooking]  = useState(false)
-  const [activeRide, setActiveRide] = useState<any>(null)
-  const [rideVehicle, setRideVehicle] = useState<any>(null)
-  const [vehicles, setVehicles] = useState<any[]>([])
+  const [activeRide, setActiveRide] = useState(null)
+  const [rideVehicle, setRideVehicle] = useState(null)
+  const [vehicles, setVehicles] = useState([])
   const [pickupPoint, setPickupPoint] = useState({ lat:12.9784, lng:77.6408, label:'Current location' })
-  const [destinationPoint, setDestinationPoint] = useState<any>(null)
-  const [routeGeometry, setRouteGeometry] = useState<[number,number][]>([])
-  const [routeEstimate, setRouteEstimate] = useState<any>(null)
-  const [suggestions, setSuggestions] = useState<any[]>([])
-  const [suggestionField, setSuggestionField] = useState<'pickup'|'destination'|null>(null)
+  const [destinationPoint, setDestinationPoint] = useState(null)
+  const [routeGeometry, setRouteGeometry] = useState([])
+  const [routeEstimate, setRouteEstimate] = useState(null)
+  const [suggestions, setSuggestions] = useState([])
+  const [suggestionField, setSuggestionField] = useState(null)
   const [pickupConfirmed, setPickupConfirmed] = useState(false)
   const [destinationConfirmed, setDestinationConfirmed] = useState(false)
   const [locationError, setLocationError] = useState('')
   const [geocoding, setGeocoding] = useState(false)
   const [gpsActive, setGpsActive] = useState(false)
   const [gpsLoading, setGpsLoading] = useState(false)
-  const pollRef = useRef<any>(null)
-  const gpsWatchRef = useRef<number | null>(null)
+  const pollRef = useRef(null)
+  const gpsWatchRef = useRef(null)
   const gpsReverseDoneRef = useRef(false)
   const { getToken } = useAuth()
-  const [trackingToken, setTrackingToken] = useState<string|null>(null)
+  const [trackingToken, setTrackingToken] = useState(null)
 
   useEffect(() => {
-    getToken().then(token => setTrackingToken(token)).catch(() => {})
-    vehiclesApi.list().then(data => setVehicles(Array.isArray(data) ? data : [])).catch(() => {})
+    getToken().then(token => setTrackingToken(token)).catch((error) => { void error })
   }, [getToken])
 
-  const handleTrackingMessage = useCallback((message:any) => {
+  const handleTrackingMessage = useCallback((message) => {
     if (message.type === 'tracking_snapshot') {
       setVehicles(Array.isArray(message.vehicles) ? message.vehicles : [])
     } else if (message.type === 'vehicle_location_update' && message.vehicle) {
       setVehicles(prev => prev.some(v => v.id === message.vehicle.id)
         ? prev.map(v => v.id === message.vehicle.id ? { ...v, ...message.vehicle } : v)
         : [...prev, message.vehicle])
-      if (rideVehicle?.id === message.vehicle.id) setRideVehicle((prev:any) => ({ ...prev, ...message.vehicle }))
+      if (rideVehicle?.id === message.vehicle.id) setRideVehicle((prev) => ({ ...prev, ...message.vehicle }))
     }
   }, [rideVehicle?.id])
 
@@ -67,7 +64,6 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
   useEffect(() => {
     const query = suggestionField === 'pickup' ? pickup : dest
     if (!suggestionField || query.trim().length < 3) {
-      setSuggestions([])
       return
     }
     const timer = window.setTimeout(() => {
@@ -86,7 +82,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
     setGpsLoading(true)
     setLocationError('')
     gpsReverseDoneRef.current = false
-    const onPosition = (position: GeolocationPosition) => {
+    const onPosition = (position) => {
       const { latitude, longitude } = position.coords
       setPickupPoint({ lat: latitude, lng: longitude, label:'Current location' })
       if (!gpsReverseDoneRef.current) {
@@ -105,7 +101,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
       setSuggestionField(null)
       setGpsLoading(false)
     }
-    const onError = (error: GeolocationPositionError) => {
+    const onError = (error) => {
       setGpsLoading(false)
       setGpsActive(false)
       setLocationError(error.code === error.PERMISSION_DENIED
@@ -125,7 +121,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
     })
   }
 
-  const chooseSuggestion = (field:'pickup'|'destination', point:any) => {
+  const chooseSuggestion = (field, point) => {
     if (field === 'pickup') {
       setPickup(point.label)
       setPickupPoint(point)
@@ -156,7 +152,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
         const r = await ridesApi.getById(activeRide.id)
         setActiveRide(r)
         if (r.status === 'completed') { clearInterval(pollRef.current); toast('success','Ride completed!') }
-      } catch {}
+      } catch (error) { void error }
     }
     poll()
     pollRef.current = setInterval(poll, 5000)
@@ -168,7 +164,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
     if (!pickupConfirmed) { toast('warning','Choose a pickup suggestion or use GPS'); return }
     if (!destinationConfirmed || !destinationPoint) { toast('warning','Choose a destination suggestion'); return }
     setBooking(true)
-    const tier = RIDE_TIERS.find(t=>t.id===selected)!
+    const tier = RIDE_TIERS.find(t=>t.id===selected)
     try {
       setGeocoding(true)
       const resolvedPickup = pickupPoint
@@ -176,7 +172,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
       const route = await routingApi.route(resolvedPickup, resolvedDestination)
       setRouteEstimate(route)
       if (route?.geometry?.length > 1) {
-        setRouteGeometry(route.geometry.map(([lng, lat]:[number,number]) => [lat, lng] as [number,number]))
+        setRouteGeometry(route.geometry.map(([lng, lat]) => [lat, lng]))
       }
       setLocationError('')
       const ride = await ridesApi.create({
@@ -189,7 +185,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
       setActiveRide(ride)
       setTrips(prev => [ride, ...prev])
       toast('success','Ride requested!','Waiting for dispatch…')
-    } catch(e:any) {
+    } catch(e) {
       const message = e?.response?.data?.detail || e?.message || 'Try again'
       setLocationError(message.includes('route') || message.includes('Route') ? 'No drivable route found for these locations.' : '')
       toast('error','Failed to book ride', message)
@@ -203,7 +199,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
       setActiveRide(null); setRideVehicle(null)
       setTrips(prev => prev.map(t => t.id===activeRide.id?{...t,status:'cancelled'}:t))
       toast('info','Ride cancelled')
-    } catch(e:any) { toast('error','Cannot cancel', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Cannot cancel', e?.response?.data?.detail||'') }
   }
 
   if (view === 'trips') return <TripsView trips={trips} loading={loading} setView={setView} setActiveRide={setActiveRide} />
@@ -213,7 +209,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
   // Home / Booking — split layout: form left, live map right
   const pickupCoords  = { lat:pickupPoint.lat, lng:pickupPoint.lng, label: pickup||'Current location' }
   const destCoords    = destinationPoint || null
-  const mapCenter:[number,number] = destinationPoint
+  const mapCenter = destinationPoint
     ? [(pickupPoint.lat + destinationPoint.lat) / 2, (pickupPoint.lng + destinationPoint.lng) / 2]
     : (gpsActive || !!pickup.trim()) ? [pickupPoint.lat, pickupPoint.lng] : [12.9568, 77.6305]
 
@@ -238,7 +234,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
           <div style={s({ display:'flex', flexDirection:'column', gap:8, marginBottom:14 })}>
           <div style={s({ display:'flex', alignItems:'center', gap:8, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:'9px 11px' })}>
             <span>📍</span>
-            <input value={pickup} onFocus={()=>setSuggestionField('pickup')} onChange={e=>{ setPickup(e.target.value); setPickupConfirmed(false); setGpsActive(false) }} placeholder="Pickup location" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
+            <input value={pickup} onFocus={()=>setSuggestionField('pickup')} onChange={e=>{ setPickup(e.target.value); setSuggestions([]); setPickupConfirmed(false); setGpsActive(false) }} placeholder="Pickup location" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
             <button onClick={useCurrentLocation} disabled={gpsLoading} title="Use current GPS location" style={s({ border:'none', background:'none', color:gpsActive?C.accent:C.muted2, cursor:gpsLoading?'wait':'pointer', fontSize:11, fontWeight:700, whiteSpace:'nowrap' })}>
               {gpsLoading ? 'Locating…' : gpsActive ? 'GPS on' : 'Use GPS'}
             </button>
@@ -249,7 +245,7 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
         {locationError && <p style={s({ color:C.danger, fontSize:11, marginTop:-6, marginBottom:10 })}>{locationError}</p>}
           <div style={s({ display:'flex', alignItems:'center', gap:8, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:'9px 11px' })}>
             <span>🎯</span>
-            <input value={dest} onFocus={()=>setSuggestionField('destination')} onChange={e=>{ setDest(e.target.value); setDestinationConfirmed(false); setDestinationPoint(null); setRouteGeometry([]); setRouteEstimate(null) }} placeholder="Destination" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
+            <input value={dest} onFocus={()=>setSuggestionField('destination')} onChange={e=>{ setDest(e.target.value); setSuggestions([]); setDestinationConfirmed(false); setDestinationPoint(null); setRouteGeometry([]); setRouteEstimate(null) }} placeholder="Destination" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
           </div>
         {suggestionField === 'destination' && suggestions.length > 0 && (
             <SuggestionList items={suggestions} onChoose={point=>chooseSuggestion('destination', point)} />
@@ -320,17 +316,17 @@ export default function PassengerView({ user, view, setView, toast }: Props) {
 }
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
-const STATUS_COLOR: Record<string,string> = {
+const STATUS_COLOR = {
   pending:'#f59e0b', clustered:'#a78bfa', assigned:'#60a5fa',
   arriving:'#00c9a7', in_progress:'#00c9a7', completed:'#22c55e', cancelled:'#f43f5e',
 }
-function StatusBadge({ status }: { status:string }) {
+function StatusBadge({ status }) {
   const col = STATUS_COLOR[status] || '#7a90b0'
   return <span style={s({ fontSize:11, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.07em', color:col, background:col+'22', padding:'2px 8px', borderRadius:6 })}>{status.replace('_',' ')}</span>
 }
 
 // ─── Trip Card ────────────────────────────────────────────────────────────────
-function TripCard({ trip, onClick }: { trip:any; onClick:()=>void }) {
+function TripCard({ trip, onClick }) {
   return (
     <div onClick={onClick} style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'10px 12px', background:C.surface2, border:`1px solid ${C.border}`, borderRadius:9, cursor:'pointer', marginBottom:6, transition:'border-color 0.15s' })}>
       <div style={{ minWidth:0 }}>
@@ -343,7 +339,7 @@ function TripCard({ trip, onClick }: { trip:any; onClick:()=>void }) {
 }
 
 // ─── Trips View ───────────────────────────────────────────────────────────────
-function TripsView({ trips, loading, setView, setActiveRide }: { trips:any[]; loading:boolean; setView:(v:any)=>void; setActiveRide:(r:any)=>void }) {
+function TripsView({ trips, loading, setView, setActiveRide }) {
   return (
     <div style={s({ padding:28, maxWidth:720 })}>
       <div style={s({ display:'flex', alignItems:'center', gap:12, marginBottom:20 })}>
@@ -372,7 +368,7 @@ function TripsView({ trips, loading, setView, setActiveRide }: { trips:any[]; lo
 }
 
 // ─── Trip Detail ──────────────────────────────────────────────────────────────
-function TripDetail({ ride, vehicle, onCancel, onBack }: { ride:any; vehicle:any; onCancel:()=>void; onBack:()=>void }) {
+function TripDetail({ ride, vehicle, onCancel, onBack }) {
   const canCancel = ['pending','clustered'].includes(ride.status)
   return (
     <div style={s({ padding:28, maxWidth:580 })}>
@@ -414,11 +410,11 @@ function TripDetail({ ride, vehicle, onCancel, onBack }: { ride:any; vehicle:any
 }
 
 // ─── Live Tracking View ───────────────────────────────────────────────────────
-function TrackingView({ ride, vehicle, onBack }: { ride:any; vehicle:any; onBack:()=>void }) {
+function TrackingView({ ride, vehicle, onBack }) {
   const pickupCoords = ride ? { lat:ride.pickup_lat, lng:ride.pickup_lng, label:ride.pickup_label } : null
   const destCoords   = ride ? { lat:ride.dest_lat,   lng:ride.dest_lng,   label:ride.destination_label } : null
   const vList        = vehicle?.lat ? [vehicle] : []
-  const center:[number,number] = vehicle?.lat ? [vehicle.lat, vehicle.lng] : ride ? [ride.pickup_lat, ride.pickup_lng] : [12.9784, 77.6408]
+  const center = vehicle?.lat ? [vehicle.lat, vehicle.lng] : ride ? [ride.pickup_lat, ride.pickup_lng] : [12.9784, 77.6408]
 
   return (
     <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
@@ -442,7 +438,7 @@ function TrackingView({ ride, vehicle, onBack }: { ride:any; vehicle:any; onBack
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function InfoCard({ label, value, mono=false }: { label:string; value:string; mono?:boolean }) {
+function InfoCard({ label, value, mono=false }) {
   return (
     <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8 })}>
       <p style={s({ color:C.muted2, fontSize:12 })}>{label}</p>
@@ -451,7 +447,7 @@ function InfoCard({ label, value, mono=false }: { label:string; value:string; mo
   )
 }
 
-function SuggestionList({ items, onChoose }: { items:any[]; onChoose:(item:any)=>void }) {
+function SuggestionList({ items, onChoose }) {
   return (
     <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, boxShadow:'0 8px 20px rgba(0,0,0,.12)', overflow:'hidden', marginTop:-2, marginBottom:2, position:'relative', zIndex:20 })}>
       {items.map((item, index) => (

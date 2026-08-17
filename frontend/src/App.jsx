@@ -1,4 +1,4 @@
-import SwiftApp from './SwiftApp.tsx';
+import SwiftApp from './SwiftApp.jsx';
 import './swift.css';
 
 export default function App() {

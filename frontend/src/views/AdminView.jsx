@@ -1,28 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
-import { C, s, AppUser, View, Toast } from '../SwiftApp'
+import { C, s } from '../SwiftApp'
 import {
   ridesApi, vehiclesApi, clusterApi, routeApi,
-  analyticsApi, jobsApi, predictApi, trackingApi,
+  analyticsApi, jobsApi, predictApi,
 } from '../services/api.js'
 import AppMap from '../components/AppMap'
 
-interface Props { user:AppUser; view:View; setView:(v:View)=>void; toast:(t:Toast['type'],title:string,body?:string)=>void }
-
 // ─── Shared helpers ───────────────────────────────────────────────────────────
-const STATUS_COLOR: Record<string,string> = {
+const STATUS_COLOR = {
   pending:'#f59e0b', clustered:'#a78bfa', assigned:'#60a5fa', arriving:'#00c9a7',
   in_progress:'#00c9a7', completed:'#22c55e', cancelled:'#f43f5e',
   idle:'#7a90b0', active:'#00c9a7', en_route:'#60a5fa', offline:'#f43f5e',
   solved:'#22c55e', clustered_status:'#a78bfa', no_pending_requests:'#7a90b0',
 }
-function Badge({ val }: { val:string }) {
+function Badge({ val }) {
   const col = STATUS_COLOR[val] || '#7a90b0'
   return <span style={s({ fontSize:10, fontWeight:700, textTransform:'uppercase', color:col, background:col+'22', padding:'2px 7px', borderRadius:5, flexShrink:0, letterSpacing:'0.07em' })}>{val.replace(/_/g,' ')}</span>
 }
-function Btn({ label, color=C.accent, onClick, disabled=false, small=false }: any) {
+function Btn({ label, color=C.accent, onClick, disabled=false, small=false }) {
   return <button onClick={onClick} disabled={disabled} style={s({ padding: small?'6px 12px':'9px 16px', background:`${color}22`, border:`1px solid ${color}55`, color, fontSize:small?11:12, fontWeight:700, borderRadius:7, cursor:disabled?'not-allowed':'pointer', opacity:disabled?0.5:1 })}>{label}</button>
 }
-function StatCard({ label, val, icon, col }: { label:string; val:string|number; icon:string; col:string }) {
+function StatCard({ label, val, icon, col }) {
   return (
     <div style={s({ flex:'1 1 150px', background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'16px 18px' })}>
       <div style={s({ display:'flex', justifyContent:'space-between' })}>
@@ -33,7 +31,7 @@ function StatCard({ label, val, icon, col }: { label:string; val:string|number; 
     </div>
   )
 }
-function PageHeader({ title, back, onBack }: { title:string; back?:string; onBack?:()=>void }) {
+function PageHeader({ title, back, onBack }) {
   return (
     <div style={s({ display:'flex', alignItems:'center', gap:12, marginBottom:24 })}>
       {back && <button onClick={onBack} style={s({ background:'none', border:'none', color:C.muted2, cursor:'pointer', fontSize:13 })}>← {back}</button>}
@@ -43,7 +41,7 @@ function PageHeader({ title, back, onBack }: { title:string; back?:string; onBac
 }
 
 // ─── Root admin router ────────────────────────────────────────────────────────
-export default function AdminView({ user, view, setView, toast }: Props) {
+export default function AdminView({ user, view, setView, toast }) {
   const ctx = { setView, toast }
   if (view === 'admin-rides')     return <RidesPanel     {...ctx} />
   if (view === 'admin-vehicles')  return <VehiclesPanel  {...ctx} />
@@ -56,8 +54,8 @@ export default function AdminView({ user, view, setView, toast }: Props) {
 }
 
 // ─── Overview Panel ───────────────────────────────────────────────────────────
-function OverviewPanel({ user, setView, toast }: any) {
-  const [data, setData] = useState<any>(null)
+function OverviewPanel({ user, setView, toast }) {
+  const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -86,7 +84,7 @@ function OverviewPanel({ user, setView, toast }: any) {
       <div style={s({ display:'flex', gap:16, flexWrap:'wrap', marginBottom:24 })}>
         <div style={s({ flex:'1 1 320px', background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:18 })}>
           <p style={s({ color:C.text, fontSize:13, fontWeight:700, marginBottom:12 })}>Rides by Status</p>
-          {Object.entries(byStatus).map(([st, cnt]:any) => (
+          {Object.entries(byStatus).map(([st, cnt]) => (
             <div key={st} style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 0', borderBottom:`1px solid ${C.border}` })}>
               <Badge val={st} />
               <p style={s({ color:C.text, fontSize:13, fontWeight:700 })}>{cnt}</p>
@@ -112,7 +110,7 @@ function OverviewPanel({ user, setView, toast }: any) {
       </div>
 
       <div style={s({ display:'flex', gap:10, flexWrap:'wrap' })}>
-        {(['admin-rides','admin-vehicles','admin-cluster','admin-routes','admin-analytics','admin-jobs','admin-heatmap'] as const).map(v => (
+        {(['admin-rides','admin-vehicles','admin-cluster','admin-routes','admin-analytics','admin-jobs','admin-heatmap']).map(v => (
           <button key={v} onClick={()=>setView(v)} style={s({ padding:'10px 18px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:9, fontSize:12, fontWeight:600, cursor:'pointer' })}>
             {v.replace('admin-','').charAt(0).toUpperCase()+v.replace('admin-','').slice(1)} →
           </button>
@@ -123,21 +121,21 @@ function OverviewPanel({ user, setView, toast }: any) {
 }
 
 // ─── Rides Panel ──────────────────────────────────────────────────────────────
-function RidesPanel({ setView, toast }: any) {
-  const [rides,   setRides]   = useState<any[]>([])
+function RidesPanel({ setView, toast }) {
+  const [rides,   setRides]   = useState([])
   const [loading, setLoading] = useState(true)
   const [filter,  setFilter]  = useState('')
 
   const load = useCallback(async () => {
     try { const r = await ridesApi.getAll({ limit:50 }); setRides(Array.isArray(r)?r:[]) }
-    catch(e:any) { toast('error','Failed',e?.response?.data?.detail||'') }
+    catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
   useEffect(() => { load() }, [load])
 
-  const updateStatus = async (id:number, status:string) => {
+  const updateStatus = async (id, status) => {
     try { await ridesApi.updateStatus(id, status); setRides(p => p.map(r => r.id===id?{...r,status}:r)); toast('success',`Ride #${id} → ${status}`) }
-    catch(e:any) { toast('error','Failed', e?.response?.data?.detail||'') }
+    catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
   }
 
   const filtered = filter ? rides.filter(r => r.status===filter) : rides
@@ -182,15 +180,15 @@ function RidesPanel({ setView, toast }: any) {
 }
 
 // ─── Vehicles Panel ───────────────────────────────────────────────────────────
-function VehiclesPanel({ setView, toast }: any) {
-  const [vehicles, setVehicles] = useState<any[]>([])
+function VehiclesPanel({ setView, toast }) {
+  const [vehicles, setVehicles] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState({ license_plate:'', capacity:'4', lat:'12.9784', lng:'77.6408' })
 
   const load = useCallback(async () => {
     try { const v = await vehiclesApi.list(); setVehicles(Array.isArray(v)?v:[]) }
-    catch(e:any) { toast('error','Failed',e?.response?.data?.detail||'') }
+    catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
   useEffect(() => { load() }, [load])
@@ -203,13 +201,13 @@ function VehiclesPanel({ setView, toast }: any) {
       toast('success','Vehicle created')
       setForm({ license_plate:'', capacity:'4', lat:'12.9784', lng:'77.6408' })
       load()
-    } catch(e:any) { toast('error','Failed', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
     setCreating(false)
   }
 
-  const updateStatus = async (id:number, status:string) => {
+  const updateStatus = async (id, status) => {
     try { await vehiclesApi.update(id, { status }); setVehicles(p => p.map(v => v.id===id?{...v,status}:v)); toast('success',`Vehicle #${id} → ${status}`) }
-    catch(e:any) { toast('error','Failed', e?.response?.data?.detail||'') }
+    catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
   }
 
   return (
@@ -227,7 +225,7 @@ function VehiclesPanel({ setView, toast }: any) {
           ].map(f => (
             <div key={f.key} style={s({ marginBottom:10 })}>
               <label style={s({ display:'block', color:C.muted2, fontSize:11, fontWeight:700, textTransform:'uppercase', marginBottom:5 })}>{f.label}</label>
-              <input value={(form as any)[f.key]} onChange={e=>setForm(p=>({...p,[f.key]:e.target.value}))} placeholder={f.ph}
+              <input value={form[f.key]} onChange={e=>setForm(p=>({...p,[f.key]:e.target.value}))} placeholder={f.ph}
                 style={s({ width:'100%', padding:'9px 11px', background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, color:C.text, fontSize:13, outline:'none' })} />
             </div>
           ))}
@@ -267,17 +265,17 @@ function VehiclesPanel({ setView, toast }: any) {
 }
 
 // ─── Cluster Panel ────────────────────────────────────────────────────────────
-function ClusterPanel({ setView, toast }: any) {
-  const [history,  setHistory]  = useState<any[]>([])
+function ClusterPanel({ setView, toast }) {
+  const [history,  setHistory]  = useState([])
   const [loading,  setLoading]  = useState(true)
   const [running,  setRunning]  = useState(false)
-  const [selected, setSelected] = useState<any>(null)
+  const [selected, setSelected] = useState(null)
   const [minSize,  setMinSize]  = useState('2')
   const [resolution, setRes]   = useState('9')
 
   const load = useCallback(async () => {
     try { const h = await clusterApi.history(); setHistory(h?.runs||[]) }
-    catch(e:any) { toast('error','Failed',e?.response?.data?.detail||'') }
+    catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
   useEffect(() => { load() }, [load])
@@ -288,7 +286,7 @@ function ClusterPanel({ setView, toast }: any) {
       const res = await clusterApi.run({ resolution:Number(resolution), min_cluster_size:Number(minSize) })
       toast('success',`Clustering done — ${res.clusters_formed} clusters, ${res.total_processed_requests} rides`)
       load()
-    } catch(e:any) { toast('error','Clustering failed', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Clustering failed', e?.response?.data?.detail||'') }
     setRunning(false)
   }
 
@@ -338,7 +336,7 @@ function ClusterPanel({ setView, toast }: any) {
                 {selected?.id===run.id && run.cluster_summary?.length > 0 && (
                   <div style={s({ marginTop:10, borderTop:`1px solid ${C.border}`, paddingTop:10 })}>
                     <p style={s({ color:C.muted2, fontSize:11, fontWeight:700, marginBottom:6 })}>Cluster Summary</p>
-                    {run.cluster_summary.slice(0,5).map((cs:any) => (
+                    {run.cluster_summary.slice(0,5).map((cs) => (
                       <div key={cs.cluster_id} style={s({ padding:'6px 8px', background:C.surface2, borderRadius:6, marginBottom:4 })}>
                         <p style={s({ color:C.text, fontSize:11 })}>Cluster #{cs.cluster_id} · {cs.passenger_count} passengers</p>
                         <p style={s({ color:C.muted, fontSize:10 })}>Stop: {cs.virtual_stop_lat?.toFixed(4)}, {cs.virtual_stop_lng?.toFixed(4)}</p>
@@ -357,13 +355,13 @@ function ClusterPanel({ setView, toast }: any) {
 }
 
 // ─── Routes Panel ─────────────────────────────────────────────────────────────
-function RoutesPanel({ setView, toast }: any) {
-  const [routes,   setRoutes]   = useState<any[]>([])
-  const [vehicles, setVehicles] = useState<any[]>([])
-  const [clusters, setClusters] = useState<any[]>([])
+function RoutesPanel({ setView, toast }) {
+  const [routes,   setRoutes]   = useState([])
+  const [vehicles, setVehicles] = useState([])
+  const [clusters, setClusters] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [running,  setRunning]  = useState(false)
-  const [selected, setSelected] = useState<any>(null)
+  const [selected, setSelected] = useState(null)
   const [depotLat, setDepotLat] = useState('12.9784')
   const [depotLng, setDepotLng] = useState('77.6408')
 
@@ -373,7 +371,7 @@ function RoutesPanel({ setView, toast }: any) {
       setRoutes(ro?.routes||[])
       setVehicles(Array.isArray(ve)?ve:[])
       setClusters(cl?.runs||[])
-    } catch(e:any) { toast('error','Failed',e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
   useEffect(() => { load() }, [load])
@@ -382,12 +380,12 @@ function RoutesPanel({ setView, toast }: any) {
     if (vehicles.length===0) { toast('warning','No idle vehicles available'); return }
     const latestCluster = clusters[0]
     if (!latestCluster?.cluster_summary?.length) { toast('warning','No cluster summary available — run clustering first'); return }
-    const stopIds = latestCluster.cluster_summary.map((c:any) => c.virtual_stop_id).filter(Boolean)
+    const stopIds = latestCluster.cluster_summary.map((c) => c.virtual_stop_id).filter(Boolean)
     if (!stopIds.length) { toast('warning','No virtual stops in latest cluster'); return }
     setRunning(true)
     try {
       const res = await routeApi.optimize({
-        vehicle_ids: vehicles.slice(0,3).map((v:any)=>v.id),
+        vehicle_ids: vehicles.slice(0,3).map((v)=>v.id),
         virtual_stop_ids: stopIds,
         depot_lat: Number(depotLat),
         depot_lng: Number(depotLng),
@@ -395,7 +393,7 @@ function RoutesPanel({ setView, toast }: any) {
       })
       toast('success',`Routes optimized — ${res.routes?.length||0} routes`, `${res.unassigned_stops?.length||0} unassigned stops`)
       load()
-    } catch(e:any) { toast('error','Optimization failed', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Optimization failed', e?.response?.data?.detail||'') }
     setRunning(false)
   }
 
@@ -452,7 +450,7 @@ function RoutesPanel({ setView, toast }: any) {
                         style={{ marginBottom:10 }}
                       />
                     )}
-                    {(r.waypoints||[]).map((wp:any,i:number) => (
+                    {(r.waypoints||[]).map((wp,i) => (
                       <div key={i} style={s({ display:'flex', alignItems:'center', gap:8, padding:'5px 0', borderBottom:`1px solid ${C.border}` })}>
                         <span style={s({ color:C.muted, fontSize:10, width:16, textAlign:'center' })}>{i+1}</span>
                         <span style={s({ fontSize:10, textTransform:'uppercase', color:wp.waypoint_type==='depot'?C.muted:C.accent, fontWeight:700 })}>{wp.waypoint_type}</span>
@@ -473,9 +471,9 @@ function RoutesPanel({ setView, toast }: any) {
 }
 
 // ─── Analytics Panel ──────────────────────────────────────────────────────────
-function AnalyticsPanel({ setView, toast }: any) {
-  const [overview, setOverview] = useState<any>(null)
-  const [daily,    setDaily]    = useState<any[]>([])
+function AnalyticsPanel({ setView, toast }) {
+  const [overview, setOverview] = useState(null)
+  const [daily,    setDaily]    = useState([])
   const [days,     setDays]     = useState(14)
   const [loading,  setLoading]  = useState(true)
 
@@ -485,12 +483,12 @@ function AnalyticsPanel({ setView, toast }: any) {
       const [ov, da] = await Promise.all([analyticsApi.overview(), analyticsApi.daily(days)])
       setOverview(ov)
       setDaily(da?.points||[])
-    } catch(e:any) { toast('error','Failed',e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [days, toast])
   useEffect(() => { load() }, [load])
 
-  const maxRides = Math.max(1, ...daily.map((d:any) => d.ride_requests))
+  const maxRides = Math.max(1, ...daily.map((d) => d.ride_requests))
   return (
     <div style={s({ padding:28, maxWidth:900 })}>
       <PageHeader title="Analytics" back="Overview" onBack={()=>setView('admin-overview')} />
@@ -515,7 +513,7 @@ function AnalyticsPanel({ setView, toast }: any) {
               </div>
             </div>
             <div style={s({ display:'flex', alignItems:'flex-end', gap:4, height:120, padding:'0 4px' })}>
-              {daily.map((d:any) => {
+              {daily.map((d) => {
                 const h = Math.max(4, (d.ride_requests/maxRides)*110)
                 const date = new Date(d.day).toLocaleDateString('en',{month:'short',day:'numeric'})
                 return (
@@ -535,7 +533,7 @@ function AnalyticsPanel({ setView, toast }: any) {
                 <p key={h} style={s({ color:C.muted2, fontSize:11, fontWeight:700 })}>{h}</p>
               ))}
             </div>
-            {daily.slice().reverse().map((d:any) => (
+            {daily.slice().reverse().map((d) => (
               <div key={d.day} style={s({ display:'grid', gridTemplateColumns:'1fr 80px 80px 80px 80px 80px', padding:'9px 16px', borderBottom:`1px solid ${C.border}` })}>
                 <p style={s({ color:C.text, fontSize:12 })}>{new Date(d.day).toLocaleDateString('en',{month:'short',day:'numeric',year:'2-digit'})}</p>
                 <p style={s({ color:C.text, fontSize:12, fontWeight:700 })}>{d.ride_requests}</p>
@@ -553,30 +551,30 @@ function AnalyticsPanel({ setView, toast }: any) {
 }
 
 // ─── Jobs Panel ───────────────────────────────────────────────────────────────
-function JobsPanel({ setView, toast }: any) {
-  const [status,   setStatus]   = useState<any>(null)
-  const [runs,     setRuns]     = useState<any[]>([])
-  const [suggestions, setSuggestions] = useState<any[]>([])
+function JobsPanel({ setView, toast }) {
+  const [status,   setStatus]   = useState(null)
+  const [runs,     setRuns]     = useState([])
+  const [suggestions, setSuggestions] = useState([])
   const [loading,  setLoading]  = useState(true)
-  const [running,  setRunning]  = useState<string|null>(null)
+  const [running,  setRunning]  = useState(null)
 
   const load = useCallback(async () => {
     try {
       const [st, ru, sg] = await Promise.all([jobsApi.status(), jobsApi.runs(), jobsApi.rebalanceSuggestions()])
       setStatus(st); setRuns(ru||[]); setSuggestions(sg||[])
-    } catch(e:any) { toast('error','Failed',e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
   useEffect(() => { load() }, [load])
 
-  const runJob = async (type: 'clustering'|'demand'|'rebalance') => {
+  const runJob = async (type) => {
     setRunning(type)
     try {
       const fn = type==='clustering' ? jobsApi.runClustering : type==='demand' ? jobsApi.runDemand : jobsApi.runRebalance
       const res = await fn()
       toast('success', `${type} job triggered`, res?.message||'')
       setTimeout(load, 1500)
-    } catch(e:any) { toast('error','Job failed', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Job failed', e?.response?.data?.detail||'') }
     setRunning(null)
   }
 
@@ -613,7 +611,7 @@ function JobsPanel({ setView, toast }: any) {
             { key:'clustering', label:'🔬 Run Clustering',  col:C.accent3 },
             { key:'demand',     label:'📊 Refresh Demand',  col:'#60a5fa' },
             { key:'rebalance',  label:'🚗 Rebalance Fleet', col:C.accent2 },
-          ] as const).map(j => (
+          ]).map(j => (
             <button key={j.key} onClick={()=>runJob(j.key)} disabled={!!running} style={s({ padding:'10px 18px', background:`${j.col}22`, border:`1px solid ${j.col}55`, color:j.col, fontSize:12, fontWeight:700, borderRadius:8, cursor:running?'not-allowed':'pointer', opacity:running?0.6:1 })}>
               {running===j.key ? '⏳ Running…' : j.label}
             </button>
@@ -628,7 +626,7 @@ function JobsPanel({ setView, toast }: any) {
           <p style={s({ color:C.text, fontSize:13, fontWeight:700, marginBottom:12 })}>Recent Job Runs</p>
           {loading && <p style={s({ color:C.muted, fontSize:13 })}>Loading…</p>}
           <div style={s({ display:'flex', flexDirection:'column', gap:6 })}>
-            {runs.slice(0,15).map((r:any) => (
+            {runs.slice(0,15).map((r) => (
               <div key={r.id} style={s({ padding:'9px 12px', background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8 })}>
                 <div style={s({ display:'flex', justifyContent:'space-between', marginBottom:3 })}>
                   <p style={s({ color:C.text, fontSize:12, fontWeight:600 })}>{r.job_type?.replace(/_/g,' ')}</p>
@@ -646,7 +644,7 @@ function JobsPanel({ setView, toast }: any) {
         <div style={s({ flex:'1 1 280px', background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:18 })}>
           <p style={s({ color:C.text, fontSize:13, fontWeight:700, marginBottom:12 })}>Rebalance Suggestions</p>
           <div style={s({ display:'flex', flexDirection:'column', gap:6 })}>
-            {suggestions.slice(0,10).map((sg:any) => (
+            {suggestions.slice(0,10).map((sg) => (
               <div key={sg.id} style={s({ padding:'9px 12px', background:C.surface2, borderRadius:8 })}>
                 <p style={s({ color:C.text, fontSize:12, fontWeight:600 })}>Vehicle #{sg.vehicle_id}</p>
                 <p style={s({ color:C.muted2, fontSize:11 })}>→ {sg.target_lat?.toFixed(4)}, {sg.target_lng?.toFixed(4)}</p>
@@ -662,8 +660,8 @@ function JobsPanel({ setView, toast }: any) {
 }
 
 // ─── Heatmap Panel ────────────────────────────────────────────────────────────
-function HeatmapPanel({ setView, toast }: any) {
-  const [cells,    setCells]    = useState<any[]>([])
+function HeatmapPanel({ setView, toast }) {
+  const [cells,    setCells]    = useState([])
   const [loading,  setLoading]  = useState(false)
   const [minLat,   setMinLat]   = useState('12.80')
   const [maxLat,   setMaxLat]   = useState('13.10')
@@ -678,12 +676,12 @@ function HeatmapPanel({ setView, toast }: any) {
       })
       setCells(res?.cells||[])
       if ((res?.cells||[]).length===0) toast('info','No demand data','No rides in this area/timeframe')
-    } catch(e:any) { toast('error','Failed', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
     setLoading(false)
   }
   useEffect(() => { load() }, [])
 
-  const maxDemand = Math.max(1, ...cells.map((c:any) => c.predicted_demand||c.historical_request_count||0))
+  const maxDemand = Math.max(1, ...cells.map((c) => c.predicted_demand||c.historical_request_count||0))
 
   return (
     <div style={s({ padding:28, maxWidth:900 })}>
@@ -739,7 +737,7 @@ function HeatmapPanel({ setView, toast }: any) {
             ))}
           </div>
           <div style={s({ maxHeight:320, overflowY:'auto' })}>
-            {cells.sort((a:any,b:any)=>(b.predicted_demand||0)-(a.predicted_demand||0)).map((c:any) => (
+            {cells.sort((a,b)=>(b.predicted_demand||0)-(a.predicted_demand||0)).map((c) => (
               <div key={c.h3_index} style={s({ display:'grid', gridTemplateColumns:'2fr 80px 80px 80px 80px', padding:'8px 16px', borderBottom:`1px solid ${C.border}` })}>
                 <p style={s({ color:C.text, fontSize:11, fontFamily:'monospace' })}>{c.h3_index}</p>
                 <p style={s({ color:C.muted2, fontSize:11 })}>{c.latitude?.toFixed(3)}</p>

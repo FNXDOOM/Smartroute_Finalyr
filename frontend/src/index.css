@@ -189,27 +189,27 @@ button {
   animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Leaflet Overrides */
-.leaflet-container {
+/* MapLibre Overrides */
+.maplibregl-map {
   font-family: 'Outfit', sans-serif !important;
   background: var(--bg-base) !important;
 }
-.leaflet-bar {
+.maplibregl-ctrl-group {
   border: 1px solid var(--border-color) !important;
   box-shadow: var(--shadow-md) !important;
 }
-.leaflet-bar a {
+.maplibregl-ctrl-group button {
   background-color: var(--bg-surface-solid) !important;
   color: var(--text-primary) !important;
   border-bottom: 1px solid var(--border-color) !important;
 }
-.leaflet-bar a:hover {
+.maplibregl-ctrl-group button:hover {
   background-color: rgba(255, 255, 255, 0.1) !important;
 }
-.leaflet-control-attribution {
+.maplibregl-ctrl-attrib {
   background: rgba(0, 0, 0, 0.5) !important;
   color: var(--text-secondary) !important;
 }
-.leaflet-control-attribution a {
+.maplibregl-ctrl-attrib a {
   color: var(--primary) !important;
 }

@@ -7,8 +7,12 @@ export const setAuthTokenGetter = (getter) => { authTokenGetter = getter; };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
-// Use a self-hosted Photon/Pelias URL in production; this is a development fallback.
+// MapTiler/Stadia are recommended for production; Photon remains a keyless
+// development fallback so the app still works before provider keys are added.
+const GEOCODER_PROVIDER = (import.meta.env.VITE_GEOCODER_PROVIDER || 'photon').toLowerCase();
 const GEOCODER_URL = import.meta.env.VITE_GEOCODER_URL || 'https://photon.komoot.io/api';
+const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY;
+const STADIA_KEY = import.meta.env.VITE_STADIA_API_KEY;
 const ROUTER_URL = import.meta.env.VITE_ROUTER_URL || '';
 const ROUTER_ENGINE = (import.meta.env.VITE_ROUTER_ENGINE || 'osrm').toLowerCase();
 const INDIA_BBOX = '68.1,6.5,97.4,35.7';
@@ -82,6 +86,24 @@ export const geocodeApi = {
   suggest: async (query, bias) => {
     const corrected = normaliseLocationQuery(query);
     const queries = [...new Set([query, corrected, `${corrected}, India`])];
+    if (GEOCODER_PROVIDER === 'maptiler' && MAPTILER_KEY) {
+      const response = await axios.get(`https://api.maptiler.com/geocoding/${encodeURIComponent(corrected)}.json`, {
+        params: { key: MAPTILER_KEY, limit: 8, country: 'IN', ...(bias?.lat != null ? { proximity: `${bias.lng},${bias.lat}` } : {}) }, timeout: 7000,
+      });
+      return (response.data?.features || []).map(feature => {
+        const [lng, lat] = feature.geometry.coordinates;
+        return { lat, lng, label: feature.place_name || feature.text || query, raw: feature };
+      });
+    }
+    if (GEOCODER_PROVIDER === 'stadia' && STADIA_KEY) {
+      const response = await axios.get('https://api.stadiamaps.com/geocoding/v1/autocomplete', {
+        params: { text: corrected, api_key: STADIA_KEY, lang: 'en', focus_point: bias?.lat != null ? `${bias.lng},${bias.lat}` : undefined, boundary_country: 'IN' }, timeout: 7000,
+      });
+      return (response.data?.features || []).map(feature => {
+        const [lng, lat] = feature.geometry.coordinates;
+        return { lat, lng, label: feature.properties?.label || feature.properties?.name || query, raw: feature };
+      });
+    }
     const responses = await Promise.all(queries.map(searchQuery => axios.get(GEOCODER_URL, {
       params: { q: searchQuery, limit: 8, bbox: INDIA_BBOX, ...(bias?.lat != null ? { lat: bias.lat, lon: bias.lng } : {}) },
       timeout: 7000,
@@ -110,6 +132,18 @@ export const geocodeApi = {
     return results[0];
   },
   reverse: async (lat, lng) => {
+    if (GEOCODER_PROVIDER === 'maptiler' && MAPTILER_KEY) {
+      const response = await axios.get(`https://api.maptiler.com/geocoding/${lng},${lat}.json`, { params: { key: MAPTILER_KEY, limit: 1 }, timeout: 7000 });
+      const feature = response.data?.features?.[0];
+      if (!feature) throw new Error('Location not found');
+      return { lat, lng, label: feature.place_name || feature.text || 'Current location' };
+    }
+    if (GEOCODER_PROVIDER === 'stadia' && STADIA_KEY) {
+      const response = await axios.get('https://api.stadiamaps.com/geocoding/v1/reverse', { params: { lat, lon: lng, api_key: STADIA_KEY }, timeout: 7000 });
+      const feature = response.data?.features?.[0];
+      if (!feature) throw new Error('Location not found');
+      return { lat, lng, label: feature.properties?.label || 'Current location' };
+    }
     const response = await axios.get(`${GEOCODER_URL}/reverse`, {
       params: { lat, lon: lng }, timeout: 7000, headers: { Accept: 'application/json' },
     });
@@ -229,15 +263,15 @@ export const clearAppBootstrap = (clerkUserId) => appBootstrapRequests.delete(cl
 
 // ─── WebSocket factory ────────────────────────────────────────────────────────
 export const createTrackingWS = (token, onMessage, onClose) => {
-  const ws = new WebSocket(`${WS_BASE_URL}/tracking/ws?token=${token}`);
-  ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch {} };
+  const ws = new WebSocket(`${WS_BASE_URL}/tracking/ws?token=${encodeURIComponent(token)}`);
+  ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch (error) { void error; } };
   ws.onclose = () => onClose?.();
   ws.onerror = () => ws.close();
   return ws;
 };
 export const createNotificationsWS = (token, onMessage, onClose) => {
-  const ws = new WebSocket(`${WS_BASE_URL}/notifications/ws?token=${token}`);
-  ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch {} };
+  const ws = new WebSocket(`${WS_BASE_URL}/notifications/ws?token=${encodeURIComponent(token)}`);
+  ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch (error) { void error; } };
   ws.onclose = () => onClose?.();
   ws.onerror = () => ws.close();
   return ws;

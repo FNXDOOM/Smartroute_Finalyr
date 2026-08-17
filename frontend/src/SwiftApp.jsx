@@ -2,28 +2,16 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/clerk-react'
 import {
   loadAppBootstrap, clearAppBootstrap, setAuthTokenGetter,
-  ridesApi, notificationsApi, authApi, createNotificationsWS,
+  notificationsApi, authApi, createNotificationsWS,
 } from './services/api.js'
 import PassengerView from './views/PassengerView'
 import DriverView from './views/DriverView'
 import AdminView from './views/AdminView'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-export type Role = 'passenger' | 'driver' | 'admin'
-export type View =
-  | 'login' | 'register'
-  | 'home' | 'book' | 'tracking' | 'trip-detail' | 'trips' | 'inbox' | 'profile' | 'payment'
-  | 'driver-home' | 'driver-map' | 'driver-routes'
-  | 'admin-overview' | 'admin-rides' | 'admin-vehicles' | 'admin-cluster' | 'admin-routes'
-  | 'admin-analytics' | 'admin-jobs' | 'admin-heatmap'
-
-export interface AppUser { id: string; name: string; email: string; phone: string; role: Role }
-export interface Toast  { id: string; type: 'info'|'success'|'warning'|'error'; title: string; body: string }
-
 // ─── Constants ────────────────────────────────────────────────────────────────
 const authInitStartedAt = Date.now()
 
-function initialView(): View {
+function initialView() {
   const p = window.location.pathname
   if (p.startsWith('/sign-up')) return 'register'
   return 'login'
@@ -36,12 +24,12 @@ export const C = {
   accent:'var(--accent)', accent2:'var(--accent2)', accent3:'var(--accent3)',
   text:'var(--text)', muted:'var(--muted)', muted2:'var(--muted2)', danger:'var(--danger)',
 }
-export const s = (o: React.CSSProperties): React.CSSProperties => o
+export const s = (o) => o
 
 // ─── Toast system ─────────────────────────────────────────────────────────────
-function ToastBar({ toasts, dismiss }: { toasts: Toast[]; dismiss: (id:string)=>void }) {
-  const colors: Record<string,string> = { success:C.accent, warning:C.accent2, error:C.danger, info:'#60a5fa' }
-  const icons: Record<string,string>  = { success:'✓', warning:'!', error:'✕', info:'i' }
+function ToastBar({ toasts, dismiss }) {
+  const colors = { success:C.accent, warning:C.accent2, error:C.danger, info:'#60a5fa' }
+  const icons  = { success:'✓', warning:'!', error:'✕', info:'i' }
   return (
     <div style={s({ position:'fixed', top:20, right:20, zIndex:9999, display:'flex', flexDirection:'column', gap:8, width:320, pointerEvents:'none' })}>
       {toasts.map(t => (
@@ -64,7 +52,7 @@ const clerkAppearance = {
   elements: { card:'shadow-none', formButtonPrimary:'font-weight:700', footerAction:'color:#7a90b0' },
 }
 
-function AuthScreen({ view, onToggle }: { view:'login'|'register'; onToggle:()=>void }) {
+function AuthScreen({ view, onToggle }) {
   return (
     <div style={s({ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:24 })}>
       <div style={s({ width:'100%', maxWidth:440 })}>
@@ -91,7 +79,7 @@ function AuthScreen({ view, onToggle }: { view:'login'|'register'; onToggle:()=>
 }
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
-function LoadingScreen({ timeout }: { timeout: boolean }) {
+function LoadingScreen({ timeout }) {
   return (
     <div style={s({ width:'100%', height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, padding:24, textAlign:'center' })}>
       <div style={s({ width:44, height:44, borderRadius:'50%', border:`3px solid ${C.accent}30`, borderTopColor:C.accent, animation:'spin 0.8s linear infinite' })} />
@@ -102,7 +90,7 @@ function LoadingScreen({ timeout }: { timeout: boolean }) {
           <p style={s({ color:C.muted2, fontSize:12, lineHeight:1.5, marginBottom:12 })}>Check that nothing is blocking Clerk's auth scripts (ad-blockers, Brave Shields).</p>
           <div style={s({ display:'flex', gap:8, justifyContent:'center' })}>
             <button onClick={() => window.location.reload()} style={s({ background:C.accent, color:C.bg, border:'none', borderRadius:8, padding:'8px 16px', fontSize:12, fontWeight:700, cursor:'pointer' })}>Reload</button>
-            <button onClick={() => { localStorage.clear(); sessionStorage.clear(); window.location.reload() }} style={s({ background:C.surface2, color:C.text, border:`1px solid ${C.border2}`, borderRadius:8, padding:'8px 16px', fontSize:12, cursor:'pointer' })}>Clear & Reload</button>
+            <button onClick={() => window.location.reload()} style={s({ background:C.surface2, color:C.text, border:`1px solid ${C.border2}`, borderRadius:8, padding:'8px 16px', fontSize:12, cursor:'pointer' })}>Reload</button>
           </div>
         </div>
       )}
@@ -110,13 +98,26 @@ function LoadingScreen({ timeout }: { timeout: boolean }) {
   )
 }
 
+function BootstrapErrorScreen({ onRetry }) {
+  return (
+    <div style={s({ width:'100%', height:'100%', display:'flex', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center' })}>
+      <div style={s({ maxWidth:420, padding:24, background:C.surface, border:`1px solid ${C.border}`, borderRadius:12 })}>
+        <p style={s({ color:C.danger, fontSize:15, fontWeight:800, marginBottom:8 })}>Unable to load your account</p>
+        <p style={s({ color:C.muted2, fontSize:12, lineHeight:1.5, marginBottom:16 })}>The backend could not verify your session or load your profile. Try again after checking that the API is running.</p>
+        <button onClick={onRetry} style={s({ background:C.accent, color:C.bg, border:'none', borderRadius:8, padding:'8px 16px', fontSize:12, fontWeight:700, cursor:'pointer' })}>Retry</button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Root App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [view, setView] = useState<View>(initialView)
-  const [user, setUser] = useState<AppUser|null>(null)
-  const [toasts, setToasts] = useState<Toast[]>([])
-  const [notifications, setNotifications] = useState<any[]>([])
+  const [view, setView] = useState(initialView)
+  const [user, setUser] = useState(null)
+  const [toasts, setToasts] = useState([])
+  const [notifications, setNotifications] = useState([])
   const [authTimeout, setAuthTimeout] = useState(false)
+  const [bootstrapError, setBootstrapError] = useState(false)
 
   const { isLoaded, isSignedIn, getToken } = useAuth()
   const { user: clerkUser } = useUser()
@@ -126,8 +127,8 @@ export default function App() {
   useEffect(() => { getTokenRef.current = getToken })
   const clerkUserId  = clerkUser?.id ?? null
   const clerkUserRef = useRef(clerkUser)
-  clerkUserRef.current = clerkUser
-  const fetchedRef   = useRef<string|null>(null)
+  useEffect(() => { clerkUserRef.current = clerkUser }, [clerkUser])
+  const fetchedRef   = useRef(null)
 
   // Auth timeout indicator
   useEffect(() => {
@@ -137,7 +138,7 @@ export default function App() {
     return () => clearTimeout(t)
   }, [isLoaded])
 
-  const toast = useCallback((type: Toast['type'], title: string, body = '') => {
+  const toast = useCallback((type, title, body = '') => {
     const id = Math.random().toString(36).slice(2)
     setToasts(p => [...p, { id, type, title, body }])
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 4500)
@@ -148,6 +149,7 @@ export default function App() {
     fetchedRef.current = null
     setAuthTokenGetter(null)
     setUser(null)
+    setBootstrapError(false)
     setNotifications([])
     setView('login')
     await signOut()
@@ -159,64 +161,76 @@ export default function App() {
     if (isSignedIn && clerkUserId) {
       if (fetchedRef.current === clerkUserId) return
       fetchedRef.current = clerkUserId
+      setBootstrapError(false)
       setAuthTokenGetter(() => getTokenRef.current());
       (async () => {
-        let token: string|null = null
+        let token = null
         for (let i = 0; i < 3; i++) {
           token = await getTokenRef.current()
           if (token) break
           await new Promise(r => setTimeout(r, 500*(i+1)))
         }
         const cu = clerkUserRef.current
-        const fallbackUser: AppUser = {
+        const fallbackUser = {
           id: cu?.id || '', name: cu?.fullName || cu?.firstName || 'User',
           email: cu?.primaryEmailAddress?.emailAddress || '',
           phone: cu?.primaryPhoneNumber?.phoneNumber || '',
-          role: (cu?.publicMetadata?.role as Role) || 'passenger',
+          role: cu?.publicMetadata?.role || 'passenger',
         }
-        if (!token) { setUser(fallbackUser); setView(roleHome(fallbackUser.role)); return }
+        if (!token) {
+          fetchedRef.current = null
+          setBootstrapError(true)
+          return
+        }
         loadAppBootstrap(clerkUserId)
-          .then(([profile, rides, notifData]: any[]) => {
-            const u: AppUser = {
+          .then(([profile, , notifData]) => {
+            const u = {
               id: cu?.id || '', name: profile.name || fallbackUser.name,
               email: profile.email || fallbackUser.email,
               phone: profile.phone || fallbackUser.phone,
-              role: (profile.role as Role) || fallbackUser.role,
+              role: profile.role || fallbackUser.role,
             }
             setUser(u)
             const notifs = notifData?.notifications || []
             setNotifications(notifs)
             setView(roleHome(u.role))
-            const unread = notifs.filter((n:any) => !n.is_read).length
+            const unread = notifs.filter((n) => !n.is_read).length
             toast('success', `Welcome back, ${u.name.split(' ')[0]}!`, unread > 0 ? `${unread} unread notification${unread===1?'':'s'}` : '')
           })
-          .catch(() => { setUser(fallbackUser); setView(roleHome(fallbackUser.role)) })
+          .catch(() => {
+            fetchedRef.current = null
+            setBootstrapError(true)
+          })
       })()
     } else if (isLoaded && !isSignedIn) {
-      setUser(null); fetchedRef.current = null
+      queueMicrotask(() => {
+        setUser(null)
+        setBootstrapError(false)
+      })
+      fetchedRef.current = null
     }
   }, [isLoaded, isSignedIn, clerkUserId, toast])
 
   // Keep the inbox and toast state in sync with ride lifecycle events.
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !user) return
-    let ws: WebSocket | null = null
+    let ws = null
     let cancelled = false
     getTokenRef.current().then(token => {
       if (!token || cancelled) return
-      ws = createNotificationsWS(token, (message:any) => {
+      ws = createNotificationsWS(token, (message) => {
         const notification = message?.notification
         if (!notification) return
         setNotifications(prev => [notification, ...prev.filter(n => n.id !== notification.id)].slice(0, 50))
         toast('info', notification.title, notification.message)
       })
-    }).catch(() => {})
+    }).catch((error) => { void error })
     return () => { cancelled = true; ws?.close() }
   }, [isLoaded, isSignedIn, user?.id, toast])
 
-  const isBootstrapping = isLoaded && isSignedIn && !user
+  const isBootstrapping = isLoaded && isSignedIn && !user && !bootstrapError
   const isAuthView      = view === 'login' || view === 'register'
-  const unreadCount     = notifications.filter((n:any) => !n.is_read).length
+  const unreadCount     = notifications.filter((n) => !n.is_read).length
 
   return (
     <div style={s({ width:'100vw', height:'100vh', background:C.bg, overflow:'hidden', fontFamily:'Nunito,sans-serif' })}>
@@ -236,27 +250,24 @@ export default function App() {
 
       {(!isLoaded || isBootstrapping)
         ? <LoadingScreen timeout={authTimeout && !isBootstrapping} />
+        : bootstrapError
+          ? <BootstrapErrorScreen onRetry={() => window.location.reload()} />
         : isAuthView
-          ? <AuthScreen view={view as 'login'|'register'} onToggle={() => setView(view==='login'?'register':'login')} />
+          ? <AuthScreen view={view} onToggle={() => setView(view==='login'?'register':'login')} />
           : user && <AppShell user={user} view={view} setView={setView} unreadCount={unreadCount} onLogout={handleLogout} notifications={notifications} setNotifications={setNotifications} toast={toast} />
       }
     </div>
   )
 }
 
-function roleHome(role: Role): View {
+function roleHome(role) {
   if (role === 'admin')  return 'admin-overview'
   if (role === 'driver') return 'driver-home'
   return 'home'
 }
 
 // ─── App Shell ────────────────────────────────────────────────────────────────
-interface ShellProps {
-  user: AppUser; view: View; setView:(v:View)=>void; unreadCount:number
-  onLogout:()=>void; notifications:any[]; setNotifications:(n:any[])=>void; toast:(type:Toast['type'],title:string,body?:string)=>void
-}
-
-function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast }: ShellProps) {
+function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast }) {
   const passengerNav = [
     { v:'home',     icon:'⌂', label:'Home' },
     { v:'trips',    icon:'▤', label:'My Trips' },
@@ -297,10 +308,10 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
           {nav.map(item => {
             const active = view === item.v
             return (
-              <button className="nav-item" key={item.v} onClick={() => setView(item.v as View)} style={s({ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderRadius:9, border:'none', cursor:'pointer', background:active?`${C.accent}18`:'transparent', color:active?C.accent:C.muted2, fontSize:13, fontWeight:active?700:500, textAlign:'left', position:'relative' })}>
+              <button className="nav-item" key={item.v} onClick={() => setView(item.v)} style={s({ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', borderRadius:9, border:'none', cursor:'pointer', background:active?`${C.accent}18`:'transparent', color:active?C.accent:C.muted2, fontSize:13, fontWeight:active?700:500, textAlign:'left', position:'relative' })}>
                 <span style={{ fontSize:15 }}>{item.icon}</span>
                 <span className="nav-label">{item.label}</span>
-                {(item as any).badge && unreadCount > 0 && (
+                {item.badge && unreadCount > 0 && (
                   <span style={s({ position:'absolute', right:10, background:C.danger, color:'#fff', fontSize:10, fontWeight:800, borderRadius:10, padding:'1px 5px', minWidth:18, textAlign:'center' })}>{unreadCount}</span>
                 )}
               </button>
@@ -328,12 +339,10 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
 }
 
 // ─── Role Router ──────────────────────────────────────────────────────────────
-interface RouterProps { user:AppUser; view:View; setView:(v:View)=>void; notifications:any[]; setNotifications:(n:any[])=>void; toast:(t:Toast['type'],title:string,body?:string)=>void }
-
 // Views that need full-height (contain maps)
-const FULLHEIGHT_VIEWS: View[] = ['home','tracking','driver-map','driver-routes']
+const FULLHEIGHT_VIEWS = ['home','tracking','driver-map','driver-routes']
 
-function RoleRouter({ user, view, setView, notifications, setNotifications, toast }: RouterProps) {
+function RoleRouter({ user, view, setView, notifications, setNotifications, toast }) {
   const ctx = { user, view, setView, toast }
   const fullH = FULLHEIGHT_VIEWS.includes(view)
 
@@ -354,23 +363,23 @@ function RoleRouter({ user, view, setView, notifications, setNotifications, toas
 }
 
 // ─── Inbox ────────────────────────────────────────────────────────────────────
-function InboxView({ notifications, setNotifications, toast }: { notifications:any[]; setNotifications:(n:any[])=>void; toast:any }) {
+function InboxView({ notifications, setNotifications, toast }) {
   const markAll = async () => {
-    try { await notificationsApi.markAllRead(); setNotifications(notifications.map((n:any) => ({...n, is_read:true}))); toast('success','All notifications marked as read') } catch {}
+    try { await notificationsApi.markAllRead(); setNotifications(notifications.map((n) => ({...n, is_read:true}))); toast('success','All notifications marked as read') } catch (error) { void error }
   }
-  const markOne = async (id:number) => {
-    try { await notificationsApi.markRead(id); setNotifications(notifications.map((n:any) => n.id===id?{...n,is_read:true}:n)) } catch {}
+  const markOne = async (id) => {
+    try { await notificationsApi.markRead(id); setNotifications(notifications.map((n) => n.id===id?{...n,is_read:true}:n)) } catch (error) { void error }
   }
-  const typeIcon: Record<string,string> = { ride_requested:'🛻', ride_status_updated:'🔄', ride_cancelled:'❌', route_assigned:'📍', vehicle_tracking_update:'📡', system:'🔔' }
+  const typeIcon = { ride_requested:'🛻', ride_status_updated:'🔄', ride_cancelled:'❌', route_assigned:'📍', vehicle_tracking_update:'📡', system:'🔔' }
   return (
     <div style={s({ padding:28, maxWidth:760 })}>
       <div style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 })}>
         <h1 style={s({ color:C.text, fontSize:20, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif' })}>Notifications</h1>
-        {notifications.some((n:any) => !n.is_read) && <button onClick={markAll} style={s({ background:C.surface2, border:`1px solid ${C.border2}`, color:C.accent, fontSize:12, fontWeight:700, borderRadius:8, padding:'7px 14px', cursor:'pointer' })}>Mark all read</button>}
+        {notifications.some((n) => !n.is_read) && <button onClick={markAll} style={s({ background:C.surface2, border:`1px solid ${C.border2}`, color:C.accent, fontSize:12, fontWeight:700, borderRadius:8, padding:'7px 14px', cursor:'pointer' })}>Mark all read</button>}
       </div>
       {notifications.length === 0 && <p style={s({ color:C.muted, fontSize:14 })}>No notifications yet.</p>}
       <div style={s({ display:'flex', flexDirection:'column', gap:8 })}>
-        {notifications.map((n:any) => (
+        {notifications.map((n) => (
           <div key={n.id} onClick={() => !n.is_read && markOne(n.id)} style={s({ display:'flex', gap:12, padding:'12px 14px', background:n.is_read?C.surface:C.surface2, border:`1px solid ${n.is_read?C.border:C.border2}`, borderRadius:10, cursor:n.is_read?'default':'pointer', transition:'background 0.15s' })}>
             <div style={s({ width:36, height:36, borderRadius:10, background:`${C.accent}15`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, flexShrink:0 })}>{typeIcon[n.notification_type] || '🔔'}</div>
             <div style={{ flex:1 }}>
@@ -387,7 +396,7 @@ function InboxView({ notifications, setNotifications, toast }: { notifications:a
 }
 
 // ─── Profile ──────────────────────────────────────────────────────────────────
-function ProfileView({ user }: { user:AppUser }) {
+function ProfileView({ user }) {
   const [saving, setSaving] = useState(false)
   const [name,  setName]  = useState(user.name)
   const [phone, setPhone] = useState(user.phone)
@@ -397,7 +406,7 @@ function ProfileView({ user }: { user:AppUser }) {
     try {
       await authApi.updateProfile({ name, phone })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
-    } catch {} finally { setSaving(false) }
+    } catch (error) { void error } finally { setSaving(false) }
   }
   return (
     <div style={s({ padding:28, maxWidth:520 })}>

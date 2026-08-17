@@ -1,21 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { C, s, AppUser, View, Toast } from '../SwiftApp'
+import { C, s } from '../SwiftApp'
 import { ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
 import { useAuth } from '@clerk/clerk-react'
 import AppMap from '../components/AppMap'
 
-interface Props { user:AppUser; view:View; setView:(v:View)=>void; toast:(t:Toast['type'],title:string,body?:string)=>void }
-
-export default function DriverView({ user, view, setView, toast }: Props) {
+export default function DriverView({ user, view, setView, toast }) {
   const { getToken } = useAuth()
-  const [vehicles,   setVehicles]   = useState<any[]>([])
-  const [rides,      setRides]      = useState<any[]>([])
-  const [routes,     setRoutes]     = useState<any[]>([])
-  const [tracking,   setTracking]   = useState<any>({ vehicles:[], events:[] })
+  const [vehicles,   setVehicles]   = useState([])
+  const [rides,      setRides]      = useState([])
+  const [routes,     setRoutes]     = useState([])
+  const [tracking,   setTracking]   = useState({ vehicles:[], events:[] })
   const [loading,    setLoading]    = useState(true)
-  const [myVehicle,  setMyVehicle]  = useState<any>(null)
+  const [myVehicle,  setMyVehicle]  = useState(null)
   const [updatingLoc,setUpdatingLoc]= useState(false)
-  const wsRef = useRef<WebSocket|null>(null)
+  const wsRef = useRef(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -24,7 +22,7 @@ export default function DriverView({ user, view, setView, toast }: Props) {
       setRides(Array.isArray(r)?r:[])
       setRoutes(ro?.routes || [])
       if (Array.isArray(v) && v.length) setMyVehicle(v[0])
-    } catch(e:any) { toast('error','Failed to load data', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed to load data', e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
 
@@ -37,7 +35,7 @@ export default function DriverView({ user, view, setView, toast }: Props) {
       try {
         const token = await getToken()
         if (!token || dead) return
-        wsRef.current = createTrackingWS(token, (msg:any) => {
+        wsRef.current = createTrackingWS(token, (msg) => {
           if (dead) return
           if (msg.type === 'tracking_snapshot' || msg.type === 'vehicle_location_update') {
             setTracking({ vehicles: msg.vehicles || [], events: msg.events || [] })
@@ -65,23 +63,23 @@ export default function DriverView({ user, view, setView, toast }: Props) {
         toast('success','Location updated (simulated)')
         setUpdatingLoc(false)
       })
-    } catch(e:any) { toast('error','Failed to update',e?.response?.data?.detail||''); setUpdatingLoc(false) }
+    } catch(e) { toast('error','Failed to update',e?.response?.data?.detail||''); setUpdatingLoc(false) }
   }
 
-  const updateRideStatus = async (rideId:number, status:string) => {
+  const updateRideStatus = async (rideId, status) => {
     try {
       await ridesApi.updateStatus(rideId, status)
       setRides(prev => prev.map(r => r.id===rideId ? {...r, status} : r))
       toast('success', `Ride #${rideId} → ${status}`)
-    } catch(e:any) { toast('error','Failed', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
   }
 
   if (view === 'driver-map')    return <LiveMapView tracking={tracking} myVehicle={myVehicle} onBack={()=>setView('driver-home')} onUpdateLoc={updateLocation} updating={updatingLoc} />
   if (view === 'driver-routes') return <RoutesView routes={routes} loading={loading} onBack={()=>setView('driver-home')} />
 
   // Driver dashboard home
-  const activeVehicles = tracking.vehicles.filter((v:any) => v.status !== 'idle').length
-  const pendingRides   = rides.filter((r:any) => r.status === 'assigned').length
+  const activeVehicles = tracking.vehicles.filter((v) => v.status !== 'idle').length
+  const pendingRides   = rides.filter((r) => r.status === 'assigned').length
 
   return (
     <div style={s({ padding:28 })}>
@@ -162,13 +160,13 @@ export default function DriverView({ user, view, setView, toast }: Props) {
 }
 
 // ─── Live Map View ─────────────────────────────────────────────────────────────
-function LiveMapView({ tracking, myVehicle, onBack, onUpdateLoc, updating }: any) {
-  const events: any[] = tracking.events || []
-  const vehicles: any[] = tracking.vehicles || []
-  const mapCenter: [number,number] = myVehicle?.lat
+function LiveMapView({ tracking, myVehicle, onBack, onUpdateLoc, updating }) {
+  const events = tracking.events || []
+  const vehicles = tracking.vehicles || []
+  const mapCenter = myVehicle?.lat
     ? [myVehicle.lat, myVehicle.lng]
-    : vehicles.find((v:any)=>v.lat)
-      ? [vehicles.find((v:any)=>v.lat).lat, vehicles.find((v:any)=>v.lat).lng]
+    : vehicles.find((v)=>v.lat)
+      ? [vehicles.find((v)=>v.lat).lat, vehicles.find((v)=>v.lat).lng]
       : [12.9784, 77.6408]
 
   return (
@@ -177,7 +175,7 @@ function LiveMapView({ tracking, myVehicle, onBack, onUpdateLoc, updating }: any
       <div style={{ padding:'12px 20px', borderBottom:`1px solid var(--border)`, display:'flex', alignItems:'center', gap:12, background:'var(--bg2)', flexShrink:0 }}>
         <button onClick={onBack} style={s({ background:'none', border:'none', color:C.muted2, cursor:'pointer', fontSize:13 })}>← Back</button>
         <p style={s({ color:C.text, fontSize:14, fontWeight:700 })}>Live Fleet Map</p>
-        <span style={s({ color:C.accent, fontSize:12 })}>● {vehicles.filter((v:any)=>v.lat).length} vehicles live</span>
+        <span style={s({ color:C.accent, fontSize:12 })}>● {vehicles.filter((v)=>v.lat).length} vehicles live</span>
         <button onClick={onUpdateLoc} disabled={updating} style={s({ marginLeft:'auto', padding:'7px 14px', background:C.accent, color:C.bg, border:'none', borderRadius:7, fontSize:12, fontWeight:700, cursor:'pointer' })}>
           {updating ? '⏳ Updating…' : '📡 Push My Location'}
         </button>
@@ -194,7 +192,7 @@ function LiveMapView({ tracking, myVehicle, onBack, onUpdateLoc, updating }: any
           <p style={s({ color:C.text, fontSize:12, fontWeight:700, marginBottom:10 })}>📡 Live Events</p>
           {events.length === 0 && <p style={s({ color:C.muted, fontSize:12 })}>Waiting for events…</p>}
           <div style={s({ display:'flex', flexDirection:'column', gap:6 })}>
-            {events.slice(0,20).map((e:any) => (
+            {events.slice(0,20).map((e) => (
               <div key={e.id} style={s({ padding:'8px 10px', background:C.surface, borderRadius:7, borderLeft:`3px solid ${C.accent}40` })}>
                 <p style={s({ color:C.text, fontSize:11, fontWeight:600 })}>{e.event_type?.replace(/_/g,' ')}</p>
                 <p style={s({ color:C.muted2, fontSize:10, marginTop:2 })}>V#{e.vehicle_id} · {e.lat?.toFixed(4)}, {e.lng?.toFixed(4)}</p>
@@ -209,8 +207,8 @@ function LiveMapView({ tracking, myVehicle, onBack, onUpdateLoc, updating }: any
 }
 
 // ─── Routes View ──────────────────────────────────────────────────────────────
-function RoutesView({ routes, loading, onBack }: { routes:any[]; loading:boolean; onBack:()=>void }) {
-  const [selected, setSelected] = useState<any>(null)
+function RoutesView({ routes, loading, onBack }) {
+  const [selected, setSelected] = useState(null)
   return (
     <div style={s({ padding:28, maxWidth:860 })}>
       <div style={s({ display:'flex', alignItems:'center', gap:12, marginBottom:20 })}>
@@ -255,7 +253,7 @@ function RoutesView({ routes, loading, onBack }: { routes:any[]; loading:boolean
             )}
             <p style={s({ color:C.muted2, fontSize:12, fontWeight:700 })}>Waypoints</p>
             <div style={s({ display:'flex', flexDirection:'column', gap:5, maxHeight:200, overflowY:'auto' })}>
-              {(selected.waypoints||[]).map((wp:any, i:number) => (
+              {(selected.waypoints||[]).map((wp, i) => (
                 <div key={i} style={s({ display:'flex', alignItems:'center', gap:10, padding:'7px 10px', background:C.surface2, borderRadius:7 })}>
                   <div style={s({ width:22, height:22, borderRadius:'50%', background:wp.waypoint_type==='depot'?C.surface3:`${C.accent}20`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:11, fontWeight:700, color:wp.waypoint_type==='depot'?C.muted:C.accent, flexShrink:0 })}>{i+1}</div>
                   <div>
@@ -274,19 +272,19 @@ function RoutesView({ routes, loading, onBack }: { routes:any[]; loading:boolean
 }
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
-const STATUS_COLOR: Record<string,string> = {
+const STATUS_COLOR = {
   pending:'#f59e0b', clustered:'#a78bfa', assigned:'#60a5fa',
   arriving:'#00c9a7', in_progress:'#00c9a7', completed:'#22c55e', cancelled:'#f43f5e',
   idle:'#7a90b0', active:'#00c9a7', en_route:'#60a5fa', offline:'#f43f5e', solved:'#22c55e',
 }
-function StatusBadge({ status }: { status:string }) {
+function StatusBadge({ status }) {
   const col = STATUS_COLOR[status] || '#7a90b0'
   return <span style={s({ fontSize:10, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.07em', color:col, background:col+'22', padding:'2px 7px', borderRadius:5, flexShrink:0 })}>{status.replace(/_/g,' ')}</span>
 }
-function ActionBtn({ label, color, onClick }: { label:string; color:string; onClick:()=>void }) {
+function ActionBtn({ label, color, onClick }) {
   return <button onClick={onClick} style={s({ padding:'5px 10px', background:color+'22', border:`1px solid ${color}55`, color, fontSize:11, fontWeight:700, borderRadius:6, cursor:'pointer' })}>{label}</button>
 }
-function InfoRow({ label, val, mono=false }: { label:string; val:string; mono?:boolean }) {
+function InfoRow({ label, val, mono=false }) {
   return (
     <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 10px', background:C.surface2, borderRadius:7 })}>
       <p style={s({ color:C.muted2, fontSize:11 })}>{label}</p>
