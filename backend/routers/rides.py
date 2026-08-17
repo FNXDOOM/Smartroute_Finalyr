@@ -16,6 +16,7 @@ from schemas.ride_request import (
 from schemas.tracking import VehicleSnapshot
 from services.notifications import create_notification
 from utils.auth_utils import get_current_user
+from utils.geo import is_india_location
 from services.clustering.h3_partitioner import get_h3_index
 
 router = APIRouter()
@@ -31,6 +32,17 @@ def create_ride_request(
     current_user: User = Depends(get_current_user),
 ):
     """Submit a new ride request for the authenticated passenger"""
+    if not all(
+        is_india_location(lat, lng)
+        for lat, lng in (
+            (ride_in.pickup_lat, ride_in.pickup_lng),
+            (ride_in.dest_lat, ride_in.dest_lng),
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Pickup and destination must be within the supported India service area",
+        )
     # Calculate Uber H3 spatial cell index
     h3_idx = get_h3_index(ride_in.pickup_lat, ride_in.pickup_lng, resolution=9)
 

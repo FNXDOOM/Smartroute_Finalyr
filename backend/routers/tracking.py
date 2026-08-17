@@ -1,7 +1,7 @@
 import asyncio
 import json
-from datetime import timezone
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from database import SessionLocal, get_db
 from models.tracking_event import TrackingEvent
 from models.route_plan import RoutePlan
+from models.route_waypoint import RouteWaypointRecord
+from models.ride_request import RideRequest
 from models.virtual_stop import VirtualStop
 from models.user import User
 from models.vehicle import Vehicle
@@ -19,32 +21,107 @@ from schemas.tracking import (
     VehicleTelemetryUpdate,
 )
 from services.notifications import create_notification, create_notifications_for_users
-from utils.auth_utils import get_current_user, decode_clerk_token
+from utils.auth_utils import get_current_user, get_user_from_token
+from config import ALLOWED_ORIGINS
 
 router = APIRouter()
 
 
+@dataclass
+class TrackingConnection:
+    websocket: WebSocket
+    user_id: int
+    role: str
+
+
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: List[WebSocket] = []
+        self.active_connections: List[TrackingConnection] = []
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, user_id: int, role: str):
         await websocket.accept()
-        self.active_connections.append(websocket)
+        self.active_connections.append(TrackingConnection(websocket, user_id, role))
 
     def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+        self.active_connections = [entry for entry in self.active_connections if entry.websocket is not websocket]
 
-    async def broadcast(self, message: str):
+    async def broadcast_snapshot(self, db: Session, vehicles: list[Vehicle], events: list[TrackingEvent]):
         dead = []
-        for connection in self.active_connections:
+        for entry in self.active_connections:
             try:
-                await connection.send_text(message)
+                visible_vehicle_ids, visible_ride_ids = _visible_tracking_ids(db, entry)
+                visible_vehicles = vehicles if entry.role == "admin" else [
+                    vehicle for vehicle in vehicles if vehicle.id in visible_vehicle_ids
+                ]
+                visible_events = events if entry.role == "admin" else [
+                    event for event in events
+                    if event.vehicle_id in visible_vehicle_ids or event.ride_request_id in visible_ride_ids
+                ]
+                await entry.websocket.send_text(json.dumps({
+                    "type": "tracking_snapshot",
+                    "vehicles": [_serialize_vehicle(vehicle) for vehicle in visible_vehicles],
+                    "events": [_serialize_event(event) for event in visible_events],
+                }, default=str))
             except Exception:
-                dead.append(connection)
-        for connection in dead:
-            self.disconnect(connection)
+                dead.append(entry.websocket)
+        for websocket in dead:
+            self.disconnect(websocket)
+
+    async def broadcast_vehicle_update(self, vehicle: dict, event: dict):
+        db = SessionLocal()
+        try:
+            dead = []
+            for entry in self.active_connections:
+                try:
+                    visible_vehicle_ids, _ = _visible_tracking_ids(db, entry)
+                    if entry.role != "admin" and vehicle["id"] not in visible_vehicle_ids:
+                        continue
+                    await entry.websocket.send_text(json.dumps({
+                        "type": "vehicle_location_update",
+                        "vehicle": vehicle,
+                        "event": event,
+                    }, default=str))
+                except Exception:
+                    dead.append(entry.websocket)
+            for websocket in dead:
+                self.disconnect(websocket)
+        finally:
+            db.close()
+
+
+def _visible_tracking_ids(db: Session, entry: TrackingConnection) -> tuple[set[int], set[int]]:
+    """Return vehicle and ride IDs visible to a tracking connection."""
+    if entry.role == "admin":
+        return set(), set()
+
+    if entry.role == "driver":
+        vehicle_ids = {
+            vehicle_id for (vehicle_id,) in db.query(Vehicle.id)
+            .filter(Vehicle.driver_user_id == entry.user_id).all()
+        }
+        return vehicle_ids, set()
+
+    rides = db.query(RideRequest).filter(
+        RideRequest.user_id == entry.user_id,
+        RideRequest.status.in_(["pending", "clustered", "assigned", "arriving", "in_progress"]),
+    ).all()
+    ride_ids = {ride.id for ride in rides}
+    if not ride_ids:
+        return set(), set()
+
+    waypoints = db.query(RouteWaypointRecord).filter(RouteWaypointRecord.passenger_ids.isnot(None)).all()
+    route_plan_ids = {
+        waypoint.route_plan_id
+        for waypoint in waypoints
+        if ride_ids.intersection(set(waypoint.passenger_ids or []))
+    }
+    if not route_plan_ids:
+        return set(), ride_ids
+    vehicle_ids = {
+        vehicle_id for (vehicle_id,) in db.query(RoutePlan.vehicle_id)
+        .filter(RoutePlan.id.in_(route_plan_ids)).all()
+    }
+    return vehicle_ids, ride_ids
 
 
 manager = ConnectionManager()
@@ -92,15 +169,7 @@ async def broadcast_live_feed():
         try:
             vehicles = db.query(Vehicle).order_by(Vehicle.id.asc()).all()
             events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(10).all()
-            payload = json.dumps(
-                {
-                    "type": "tracking_snapshot",
-                    "vehicles": [_serialize_vehicle(vehicle) for vehicle in vehicles],
-                    "events": [_serialize_event(event) for event in events],
-                },
-                default=str,
-            )
-            await manager.broadcast(payload)
+            await manager.broadcast_snapshot(db, vehicles, events)
         except Exception:
             pass
         finally:
@@ -127,7 +196,12 @@ def get_tracking_feed(
             detail="Only admin or driver users can view tracking data",
         )
 
-    vehicles, events = _get_snapshot(db, limit=limit)
+    if current_user.role == "admin":
+        vehicles, events = _get_snapshot(db, limit=limit)
+    else:
+        vehicles = db.query(Vehicle).filter(Vehicle.driver_user_id == current_user.id).order_by(Vehicle.id.asc()).all()
+        vehicle_ids = {vehicle.id for vehicle in vehicles}
+        events = db.query(TrackingEvent).filter(TrackingEvent.vehicle_id.in_(vehicle_ids)).order_by(TrackingEvent.created_at.desc()).limit(limit).all() if vehicle_ids else []
     return TrackingFeedResponse(status="ok", vehicles=vehicles, events=events)
 
 
@@ -143,7 +217,11 @@ def list_tracking_events(
             detail="Only admin or driver users can view tracking events",
         )
 
-    events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit).all()
+    if current_user.role == "admin":
+        events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit).all()
+    else:
+        vehicle_ids = [vehicle_id for (vehicle_id,) in db.query(Vehicle.id).filter(Vehicle.driver_user_id == current_user.id).all()]
+        events = db.query(TrackingEvent).filter(TrackingEvent.vehicle_id.in_(vehicle_ids)).order_by(TrackingEvent.created_at.desc()).limit(limit).all() if vehicle_ids else []
     return [TrackingEventResponse.model_validate(event) for event in events]
 
 
@@ -164,6 +242,8 @@ async def update_vehicle_location(
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+    if current_user.role == "driver" and vehicle.driver_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Vehicle is not assigned to this driver")
 
     vehicle.lat = payload.lat
     vehicle.lng = payload.lng
@@ -225,19 +305,9 @@ async def update_vehicle_location(
     db.refresh(vehicle)
     db.refresh(event)
 
-    # Safe to call create_task here because the function is now async
-    asyncio.create_task(
-        manager.broadcast(
-            json.dumps(
-                {
-                    "type": "vehicle_location_update",
-                    "vehicle": _serialize_vehicle(vehicle),
-                    "event": _serialize_event(event),
-                },
-                default=str,
-            )
-        )
-    )
+    # Broadcast through the scoped manager so passengers only receive their
+    # assigned vehicle, while admin/driver connections receive fleet updates.
+    asyncio.create_task(manager.broadcast_vehicle_update(_serialize_vehicle(vehicle), _serialize_event(event)))
 
     return VehicleSnapshot.model_validate(vehicle)
 
@@ -253,13 +323,21 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=4401, reason="Missing authentication token")
         return
 
+    origin = websocket.headers.get("origin")
+    if origin and origin.rstrip("/") not in ALLOWED_ORIGINS:
+        await websocket.close(code=4403, reason="Origin not allowed")
+        return
+
+    db = SessionLocal()
     try:
-        decode_clerk_token(token)
+        user = get_user_from_token(token, db)
     except Exception:
         await websocket.close(code=4401, reason="Invalid or expired token")
         return
+    finally:
+        db.close()
 
-    await manager.connect(websocket)
+    await manager.connect(websocket, user.id, user.role)
     try:
         while True:
             await websocket.receive_text()

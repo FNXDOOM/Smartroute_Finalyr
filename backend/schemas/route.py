@@ -5,17 +5,17 @@ from pydantic import BaseModel, Field, ConfigDict
 
 class RouteWaypoint(BaseModel):
     stop_id: Optional[int] = None
-    lat: float
-    lng: float
-    waypoint_type: str  # pickup | dropoff | depot
-    passenger_ids: List[int] = Field(default_factory=list)
+    lat: float = Field(..., ge=-90, le=90, allow_inf_nan=False)
+    lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False)
+    waypoint_type: str = Field(..., min_length=1, max_length=20)  # pickup | dropoff | depot
+    passenger_ids: List[int] = Field(default_factory=list, max_length=100)
 
 
 class VRPRequest(BaseModel):
-    vehicle_ids: List[int]
-    virtual_stop_ids: List[int]
-    depot_lat: float
-    depot_lng: float
+    vehicle_ids: List[int] = Field(..., min_length=1, max_length=100)
+    virtual_stop_ids: List[int] = Field(..., max_length=500)
+    depot_lat: float = Field(..., ge=-90, le=90, allow_inf_nan=False)
+    depot_lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False)
     source_cluster_run_id: Optional[int] = None
 
 

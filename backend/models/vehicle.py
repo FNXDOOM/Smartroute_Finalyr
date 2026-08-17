@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.sql import func
 from database import Base, PortableGeometry
 
@@ -13,6 +13,7 @@ class Vehicle(Base):
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)
     assigned_route_id = Column(String, nullable=True)
+    driver_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     current_location = Column(PortableGeometry, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

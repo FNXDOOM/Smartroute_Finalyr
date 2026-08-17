@@ -14,7 +14,7 @@ if local_env.exists():
 if not root_env.exists() and not local_env.exists():
     load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/smartrouteai")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
 ALLOWED_ORIGINS = [
     origin.strip().rstrip("/")

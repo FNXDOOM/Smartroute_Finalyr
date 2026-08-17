@@ -5,6 +5,12 @@ from sqlalchemy import inspect, text
 from geoalchemy2 import Geometry
 from config import DATABASE_URL
 
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is required. Configure it in the project-root .env "
+        "before starting the backend."
+    )
+
 connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 try:
@@ -71,6 +77,13 @@ def create_db_tables(bind_engine=None):
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
                 "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
             ))
+            connection.execute(text(
+                "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_user_id INTEGER"
+            ))
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
+                "ON vehicles (driver_user_id)"
+            ))
     elif target_engine.dialect.name == "sqlite":
         columns = {column[1] for column in inspect(target_engine).get_columns("users")}
         if "clerk_user_id" not in columns:
@@ -80,6 +93,15 @@ def create_db_tables(bind_engine=None):
                 connection.execute(text(
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
                     "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
+                ))
+        vehicle_columns = {column[1] for column in inspect(target_engine).get_columns("vehicles")}
+        if "driver_user_id" not in vehicle_columns:
+            with target_engine.begin() as connection:
+                connection.execute(text("ALTER TABLE vehicles ADD COLUMN driver_user_id INTEGER"))
+            with target_engine.begin() as connection:
+                connection.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
+                    "ON vehicles (driver_user_id)"
                 ))
 
 

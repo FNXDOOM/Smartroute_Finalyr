@@ -6,7 +6,7 @@ from schemas.virtual_stop import VirtualStopResponse
 
 class ClusterTriggerRequest(BaseModel):
     resolution: int = Field(default=9, ge=0, le=15, description="H3 spatial resolution")
-    min_cluster_size: int = Field(default=2, ge=1, description="Minimum HDBSCAN cluster size")
+    min_cluster_size: int = Field(default=2, ge=1, le=100, description="Minimum HDBSCAN cluster size")
 
 
 class ClusterGroup(BaseModel):

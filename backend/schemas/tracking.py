@@ -1,14 +1,14 @@
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class VehicleTelemetryUpdate(BaseModel):
-    lat: float = Field(..., ge=-90, le=90)
-    lng: float = Field(..., ge=-180, le=180)
-    status: Optional[str] = None
-    payload: Optional[dict[str, Any]] = None
+    lat: float = Field(..., ge=-90, le=90, allow_inf_nan=False)
+    lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False)
+    status: Optional[Literal["idle", "active", "en_route", "offline"]] = None
+    payload: Optional[dict[str, Any]] = Field(default=None)
 
 
 class TrackingEventResponse(BaseModel):

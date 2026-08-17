@@ -27,7 +27,15 @@ def list_vehicles(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return db.query(Vehicle).order_by(Vehicle.id.asc()).all()
+    if current_user.role not in {"admin", "driver"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin or driver users can view fleet vehicles",
+        )
+    query = db.query(Vehicle)
+    if current_user.role == "driver":
+        query = query.filter(Vehicle.driver_user_id == current_user.id)
+    return query.order_by(Vehicle.id.asc()).all()
 
 
 # NOTE: /idle MUST be declared before /{vehicle_id} so FastAPI does not
@@ -37,9 +45,16 @@ def list_idle_vehicles(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    if current_user.role not in {"admin", "driver"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin or driver users can view fleet vehicles",
+        )
+    query = db.query(Vehicle).filter(Vehicle.status == "idle")
+    if current_user.role == "driver":
+        query = query.filter(Vehicle.driver_user_id == current_user.id)
     return (
-        db.query(Vehicle)
-        .filter(Vehicle.status == "idle")
+        query
         .order_by(Vehicle.id.asc())
         .all()
     )
@@ -58,6 +73,8 @@ def assign_idle_vehicles_to_routes(
         )
 
     vehicle_query = db.query(Vehicle).filter(Vehicle.status == "idle")
+    if current_user.role == "driver":
+        vehicle_query = vehicle_query.filter(Vehicle.driver_user_id == current_user.id)
     if payload.vehicle_ids:
         vehicle_query = vehicle_query.filter(Vehicle.id.in_(payload.vehicle_ids))
     vehicles = vehicle_query.order_by(Vehicle.id.asc()).all()
@@ -164,6 +181,8 @@ def update_vehicle(
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Vehicle not found")
+    if current_user.role == "driver" and vehicle.driver_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Vehicle is not assigned to this driver")
 
     if payload.status is not None:
         vehicle.status = payload.status
@@ -172,7 +191,19 @@ def update_vehicle(
     if payload.lng is not None:
         vehicle.lng = payload.lng
     if payload.assigned_route_id is not None:
+        if current_user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admins can change vehicle route assignments",
+            )
         vehicle.assigned_route_id = payload.assigned_route_id
+    if payload.driver_user_id is not None:
+        if current_user.role != "admin":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can assign drivers")
+        driver = db.query(User).filter(User.id == payload.driver_user_id, User.role == "driver").first()
+        if not driver:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Driver user not found")
+        vehicle.driver_user_id = driver.id
 
     db.commit()
     db.refresh(vehicle)

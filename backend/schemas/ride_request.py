@@ -4,16 +4,16 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class RideRequestBase(BaseModel):
-    pickup_lat: float = Field(..., ge=-90, le=90, description="Pickup latitude")
-    pickup_lng: float = Field(..., ge=-180, le=180, description="Pickup longitude")
-    dest_lat: float = Field(..., ge=-90, le=90, description="Destination latitude")
-    dest_lng: float = Field(..., ge=-180, le=180, description="Destination longitude")
+    pickup_lat: float = Field(..., ge=-90, le=90, allow_inf_nan=False, description="Pickup latitude")
+    pickup_lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False, description="Pickup longitude")
+    dest_lat: float = Field(..., ge=-90, le=90, allow_inf_nan=False, description="Destination latitude")
+    dest_lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False, description="Destination longitude")
     # Optional human-readable labels from the mobile client
-    pickup_label: Optional[str] = None
-    destination_label: Optional[str] = None
-    ride_option_id: Optional[str] = None
-    ride_option_name: Optional[str] = None
-    ride_option_price: Optional[str] = None
+    pickup_label: Optional[str] = Field(None, max_length=200)
+    destination_label: Optional[str] = Field(None, max_length=200)
+    ride_option_id: Optional[str] = Field(None, max_length=40)
+    ride_option_name: Optional[str] = Field(None, max_length=80)
+    ride_option_price: Optional[str] = Field(None, max_length=40)
 
 
 class RideRequestCreate(RideRequestBase):
@@ -21,7 +21,7 @@ class RideRequestCreate(RideRequestBase):
 
 
 class RideRequestStatusUpdate(BaseModel):
-    status: str = Field(..., description="pending | clustered | assigned | in_progress | completed | cancelled")
+    status: str = Field(..., max_length=20, description="pending | clustered | assigned | in_progress | completed | cancelled")
 
 
 class RideRequestResponse(RideRequestBase):
@@ -37,4 +37,4 @@ class RideRequestResponse(RideRequestBase):
 
 
 class RideRequestBatchCreate(BaseModel):
-    requests: List[RideRequestCreate]
+    requests: List[RideRequestCreate] = Field(..., min_length=1, max_length=100)

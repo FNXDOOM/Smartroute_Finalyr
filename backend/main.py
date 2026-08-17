@@ -36,8 +36,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -57,6 +57,11 @@ async def _maybe_add_dev_csp(request: Request, call_next):
         origins = []
 
     is_local_dev = any("localhost" in o or "127.0.0.1" in o for o in origins)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if is_local_dev:
         response.headers["Content-Security-Policy"] = (
             # Allow Clerk's hosted assets and API across all relevant directives.

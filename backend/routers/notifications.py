@@ -15,6 +15,7 @@ from schemas.notification import (
 )
 from services.notifications import manager
 from utils.auth_utils import get_current_user, get_user_from_token
+from config import ALLOWED_ORIGINS
 
 router = APIRouter()
 
@@ -112,6 +113,11 @@ async def websocket_notifications(websocket: WebSocket):
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=4401, reason="Missing authentication token")
+        return
+
+    origin = websocket.headers.get("origin")
+    if origin and origin.rstrip("/") not in ALLOWED_ORIGINS:
+        await websocket.close(code=4403, reason="Origin not allowed")
         return
 
     db = SessionLocal()

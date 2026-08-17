@@ -52,12 +52,10 @@ def optimize_routes(
         if not cluster_run:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster run not found")
 
-    vehicles = (
-        db.query(Vehicle)
-        .filter(Vehicle.id.in_(payload.vehicle_ids))
-        .order_by(Vehicle.id.asc())
-        .all()
-    )
+    vehicle_query = db.query(Vehicle).filter(Vehicle.id.in_(payload.vehicle_ids))
+    if current_user.role == "driver":
+        vehicle_query = vehicle_query.filter(Vehicle.driver_user_id == current_user.id)
+    vehicles = vehicle_query.order_by(Vehicle.id.asc()).all()
     if len(vehicles) != len(payload.vehicle_ids):
         found_ids = {vehicle.id for vehicle in vehicles}
         missing_ids = [vehicle_id for vehicle_id in payload.vehicle_ids if vehicle_id not in found_ids]
