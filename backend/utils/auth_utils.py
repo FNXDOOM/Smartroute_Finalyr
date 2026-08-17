@@ -12,6 +12,7 @@ from config import (
     ALLOWED_ORIGINS,
     AUTH_PROVIDER,
     CLERK_AUDIENCE,
+    CLERK_ALLOW_NATIVE_CLIENTS,
     CLERK_AUTHORIZED_PARTIES,
     CLERK_ISSUER,
     CLERK_JWKS_URL,
@@ -67,7 +68,10 @@ def decode_clerk_token(token: str) -> dict:
             )
         authorized_parties = CLERK_AUTHORIZED_PARTIES or ALLOWED_ORIGINS
         token_azp = payload.get("azp")
-        if authorized_parties and (not token_azp or str(token_azp).rstrip("/") not in authorized_parties):
+        native_client_without_azp = CLERK_ALLOW_NATIVE_CLIENTS and not token_azp
+        if authorized_parties and not native_client_without_azp and (
+            not token_azp or str(token_azp).rstrip("/") not in authorized_parties
+        ):
             raise jwt.InvalidAudienceError("Clerk token authorized party is not allowed")
         return payload
     except jwt.ExpiredSignatureError as exc:

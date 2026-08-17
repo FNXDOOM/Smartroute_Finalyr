@@ -1,23 +1,21 @@
 import sys
 from pathlib import Path
 
-# Add project and backend roots to path. Backend modules currently use
-# top-level imports such as `database` and `schemas`.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "backend"))
+# Add backend directory to sys.path
+BACKEND_ROOT = Path(__file__).resolve().parent.parent / "backend"
+sys.path.insert(0, str(BACKEND_ROOT))
 
-from backend.schemas.user import UserResponse
-from backend.schemas.ride_request import RideRequestCreate, RideRequestResponse
-from backend.schemas.vehicle import VehicleCreate, VehicleResponse
-from backend.schemas.virtual_stop import VirtualStopCreate, VirtualStopResponse
-from backend.schemas.route import VRPRequest, OptimizedRouteResponse
-from backend.schemas.cluster import ClusterTriggerRequest, ClusterResultResponse
+from schemas.user import UserResponse
+from schemas.ride_request import RideRequestCreate, RideRequestResponse
+from schemas.vehicle import VehicleCreate, VehicleResponse
+from schemas.virtual_stop import VirtualStopCreate, VirtualStopResponse
+from schemas.route import VRPRequest, OptimizedRouteResponse
+from schemas.cluster import ClusterTriggerRequest, ClusterResultResponse
 
-from backend.models.user import User
-from backend.models.vehicle import Vehicle
-from backend.models.ride_request import RideRequest
-from backend.models.virtual_stop import VirtualStop
+from models.user import User
+from models.vehicle import Vehicle
+from models.ride_request import RideRequest
+from models.virtual_stop import VirtualStop
 
 def test_models_and_schemas():
     print("Testing Pydantic Schemas...")

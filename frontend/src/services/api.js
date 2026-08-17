@@ -158,10 +158,20 @@ export const routingApi = {
   route: async (from, to) => {
     if (!ROUTER_URL) return null;
     if (ROUTER_ENGINE === 'valhalla') {
-      const response = await axios.post(`${ROUTER_URL.replace(/\/$/, '')}/route`, {
+      // Stadia exposes Valhalla at /route/v1, while a self-hosted Valhalla
+      // server commonly exposes the same request at /route. Keep the URL
+      // complete in VITE_ROUTER_URL so both deployments are supported.
+      const routerUrl = ROUTER_URL.replace(/\/$/, '');
+      const requestConfig = {
+        timeout: 10000,
+        ...(STADIA_KEY && routerUrl.includes('stadiamaps.com')
+          ? { params: { api_key: STADIA_KEY } }
+          : {}),
+      };
+      const response = await axios.post(routerUrl, {
         locations: [{ lat: from.lat, lon: from.lng }, { lat: to.lat, lon: to.lng }],
         costing: 'auto', units: 'kilometers', directions_options: { units: 'kilometers' },
-      }, { timeout: 10000 });
+      }, requestConfig);
       const summary = response.data?.trip?.summary || {};
       const shape = response.data?.trip?.legs?.flatMap(leg => leg.shape ? decodePolyline(leg.shape) : []) || [];
       return { distanceMeters: (summary.length || 0) * 1000, durationSeconds: summary.time || 0, geometry: shape };

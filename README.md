@@ -46,9 +46,14 @@ VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
 VITE_API_BASE_URL=http://127.0.0.1:8000
 VITE_STADIA_API_KEY=your_stadia_key
 VITE_GEOCODER_PROVIDER=stadia
-VITE_ROUTER_URL=http://localhost:8002
+VITE_ROUTER_URL=https://api.stadiamaps.com/route/v1
 VITE_ROUTER_ENGINE=valhalla
 ```
+
+Stadia hosts the Valhalla routing engine, so Valhalla does not need to be
+installed or maintained on the VPS. The frontend sends route validation and
+ETA requests to Stadia using `VITE_STADIA_API_KEY`. Restrict the Stadia key to
+your production domains because `VITE_*` values are visible in the browser.
 
 For local development, the map can also use the Photon geocoder and CARTO
 raster fallback. For production, configure Stadia or MapTiler using

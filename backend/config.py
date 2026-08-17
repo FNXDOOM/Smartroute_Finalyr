@@ -29,6 +29,7 @@ AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "clerk").lower()
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.getenv("CLERK_ISSUER", "")
 CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "")
+CLERK_ALLOW_NATIVE_CLIENTS = os.getenv("CLERK_ALLOW_NATIVE_CLIENTS", "false").lower() == "true"
 _raw_authorized_parties = os.getenv("CLERK_AUTHORIZED_PARTIES", "")
 CLERK_AUTHORIZED_PARTIES = [
     origin.strip().rstrip("/")
