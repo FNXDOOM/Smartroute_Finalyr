@@ -8,12 +8,12 @@ An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HD
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 19 + TypeScript, Vite, Leaflet / react-leaflet, Clerk (auth) |
+| Frontend | React 19 + Vite, MapLibre GL, Clerk (auth) |
 | Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (Supabase) |
 | Auth | Clerk (JWT RS256 via JWKS) |
 | Algorithms | HDBSCAN clustering, OR-Tools CVRP, Hungarian algorithm (scipy), H3 spatial indexing |
 | ML | XGBoost demand model (heuristic fallback if model file absent) |
-| Maps | OpenStreetMap tiles via Leaflet, OSMnx road graph for stop snapping |
+| Maps | Stadia/MapTiler vector maps via MapLibre, CARTO fallback, OSMnx road graph for stop snapping |
 | Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications |
 
 ---
@@ -29,6 +29,8 @@ uvicorn main:app --reload --port 8000
 ```
 
 Requires a `.env` file at the project root — see `.env.example`.
+`DATABASE_URL` is required; the backend no longer uses a built-in database
+credential fallback.
 
 ### Frontend
 
@@ -42,7 +44,15 @@ Requires `frontend/.env` with:
 ```
 VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
 VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_STADIA_API_KEY=your_stadia_key
+VITE_GEOCODER_PROVIDER=stadia
+VITE_ROUTER_URL=http://localhost:8002
+VITE_ROUTER_ENGINE=valhalla
 ```
+
+For local development, the map can also use the Photon geocoder and CARTO
+raster fallback. For production, configure Stadia or MapTiler using
+[`frontend/.env.example`](frontend/.env.example).
 
 ### Seed the database (first run)
 
@@ -72,6 +82,7 @@ python seed.py --reset  # wipe and re-seed
 
 ### Driver
 - Dashboard with fleet stats pulled from real DB
+- Drivers only see and update vehicles assigned to their application user; admins assign a vehicle with `PATCH /vehicle/{id}` and `{ "driver_user_id": <driver-user-id> }`
 - Live fleet map — WebSocket connection to `/tracking/ws`, updates every 2 seconds
 - Push own GPS location to backend (uses device geolocation, falls back to simulated coords)
 - View and manage assigned rides — Start / Arriving / Complete buttons
@@ -85,7 +96,7 @@ python seed.py --reset  # wipe and re-seed
 - **Routes** — run OR-Tools VRP optimization, view waypoint maps for each route
 - **Analytics** — daily bar chart + table (7/14/30 day), overview metrics
 - **Jobs** — scheduler status, manual trigger for clustering/demand/rebalance jobs, run history
-- **Heatmap** — demand prediction heatmap on a Leaflet map using H3 cells
+- **Heatmap** — demand prediction heatmap on a MapLibre map using H3 cells
 
 ### Background Jobs (auto-run on backend startup)
 - Clustering every 60 seconds — groups `pending` rides into virtual stops via HDBSCAN
@@ -99,20 +110,10 @@ python seed.py --reset  # wipe and re-seed
 
 ### High Priority (breaks the Uber-like flow)
 
-- [ ] **Geocode pickup/destination from user input**
-  - Currently both coordinates are hardcoded to fixed Bengaluru points regardless of what the user types
-  - Need to call a geocoding API (Nominatim, Google Maps, or MapBox) to convert the typed address into lat/lng
-  - File: `frontend/src/views/PassengerView.tsx` — `handleBook()` function
-
-- [ ] **Show live vehicles on the passenger booking map**
-  - The booking screen map always passes `vehicles={[]}` — the fleet never appears
-  - Need to load `vehiclesApi.list()` or subscribe to the tracking WebSocket on the passenger home screen
-  - File: `frontend/src/views/PassengerView.tsx` — bottom of `PassengerView` export
-
 - [ ] **Connect Notifications WebSocket in Passenger and Admin views**
   - `createNotificationsWS` is defined in `api.js` but only the Driver view connects to it
   - Passengers should get real-time push notifications (ride status changes, vehicle assigned) without having to navigate to the Inbox
-  - File: `frontend/src/SwiftApp.tsx` — add WS connection similar to how DriverView does it for tracking
+  - File: `frontend/src/SwiftApp.jsx` — add WS connection similar to how DriverView does it for tracking
 
 - [ ] **Auto-dispatch pipeline on ride booking**
   - Currently a passenger books a ride → it stays `pending` until the 60-second cluster job runs, then waits for an admin to run route optimization
@@ -126,9 +127,9 @@ python seed.py --reset  # wipe and re-seed
   - Add a "Move Vehicle" button in Admin → Jobs panel that updates the vehicle's lat/lng to the suggested target
   - Or add a driver-facing "Suggested Move" card in the Driver dashboard
 
-- [ ] **Wire A\* router into VRP solver for real road distances**
+- [ ] **Wire road routing into VRP solver for real road distances**
   - `services/routing/astar_router.py` exists but is dead code — VRP uses straight haversine distance
-  - Replace the haversine distance matrix in `vrp_solver.py` with actual road distances from OSMnx
+  - Replace the haversine distance matrix in `vrp_solver.py` with cached road distances from Valhalla or OSMnx
   - Warning: this is slow for large route sets — consider caching the road graph
 
 - [ ] **Role management UI**
@@ -136,10 +137,9 @@ python seed.py --reset  # wipe and re-seed
   - No frontend UI to promote a user to `driver` or `admin`
   - Add a User Management page in Admin panel that lists users and lets you change their role
 
-- [ ] **Driver assignment to vehicle**
-  - Currently any driver sees the entire fleet
-  - Need a way to assign a specific vehicle to a specific driver (either in the DB or via Clerk `publicMetadata`)
-  - Then DriverView should only show that driver's vehicle and its assigned rides
+- [ ] **Driver assignment UI**
+  - The backend now supports assigning a vehicle with `driver_user_id`
+  - Add an admin-facing control instead of requiring the API directly
 
 - [ ] **Rating system**
   - `RatingView` component was in the old code (removed)
@@ -160,7 +160,7 @@ python seed.py --reset  # wipe and re-seed
 
 - [ ] **Passenger notification WebSocket badge counter**
   - The sidebar notification badge updates on load but doesn't auto-increment when new notifications arrive via WebSocket
-  - Need to connect the notifications WS in `SwiftApp.tsx` and update `unreadCount` state on new messages
+  - Need to connect the notifications WS in `SwiftApp.jsx` and update `unreadCount` state on new messages
 
 - [ ] **Refresh notifications and trips automatically**
   - After booking a ride, the "Recent Rides" list doesn't update until the user navigates away and back
@@ -227,3 +227,19 @@ Key endpoint groups:
 - `WS /notifications/ws?token=` — per-user notification stream
 - `GET /analytics/overview` — fleet-wide statistics
 - `GET /predict/heatmap` — demand prediction over a bounding box
+
+---
+
+## Security and production notes
+
+- All protected REST and WebSocket endpoints require a verified Clerk session token.
+- Tracking data is scoped server-side: passengers see only their assigned ride vehicle, drivers see only their assigned vehicle, and admins see the fleet.
+- Admins assign a driver to a vehicle with `PATCH /vehicle/{vehicle_id}`:
+
+  ```json
+  { "driver_user_id": 123 }
+  ```
+
+- Keep database credentials, Clerk secrets, and Supabase service-role keys out of the frontend and all `VITE_*` variables.
+- Set explicit production `ALLOWED_ORIGINS` values and serve the frontend/backend over HTTPS/WSS.
+- Run database migrations before deployment and rotate any credentials that have been exposed during development.

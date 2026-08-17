@@ -141,22 +141,18 @@ ws.onclose = (event) => {
 }
 ```
 
-### Important: broadcast goes to all clients
-The notification broadcast is sent to **all connected WebSocket clients**, not just the intended recipient. The frontend must filter by `user_id`:
+### Notification delivery is server-scoped
+The notification manager keys connections by authenticated `user_id`, so a notification is sent only to its intended user. The client does not need to implement a security filter:
 
 ```javascript
-const token = localStorage.getItem("access_token");
-const currentUserId = getCurrentUserId(); // from decoded JWT
+const token = await getClerkSessionToken();
 const ws = new WebSocket(`ws://localhost:8000/notifications/ws?token=${token}`);
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   if (data.type === "notification") {
-    // Only show if it's for this user
-    if (data.notification.user_id === currentUserId) {
-      showNotificationToast(data.notification);
-      incrementUnreadBadge();
-    }
+    showNotificationToast(data.notification);
+    incrementUnreadBadge();
   }
 };
 ```

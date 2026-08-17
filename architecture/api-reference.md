@@ -457,7 +457,7 @@ Push a GPS position update for a vehicle. Broadcasts to all WebSocket subscriber
 **Side effects:**
 - TrackingEvent saved
 - Notifications fired to all passengers on the vehicle's route
-- WebSocket broadcast to all connected clients
+- Scoped WebSocket broadcast to the vehicle's authorized admin/driver clients and passengers on its route
 
 ---
 
@@ -466,7 +466,9 @@ Live vehicle tracking WebSocket.
 
 **Auth:** `?token=<jwt>` query parameter required. Connection is closed with code `4401` if missing or invalid.
 
-**Server broadcasts every 2 seconds:**
+**Server broadcasts every 2 seconds. Payloads are scoped server-side:** admins
+receive the fleet, drivers receive their assigned vehicle, and passengers
+receive only their assigned vehicle.
 ```json
 {
   "type": "tracking_snapshot",
@@ -548,19 +550,10 @@ Real-time notification push channel.
 ```json
 {
   "type": "notification",
-  "notification": {
-    "id": 42,
-    "user_id": 3,
-    "notification_type": "ride_status_updated",
-    "title": "Ride status updated",
-    "message": "Your ride request #12 changed from pending to assigned.",
-    "is_read": false,
-    "created_at": "2026-08-07T10:30:00"
-  }
+  "vehicles": [],
+  "events": []
 }
 ```
-
-> Note: Broadcasts go to ALL connected clients. The frontend must filter by `user_id` to show only relevant notifications.
 
 ---
 

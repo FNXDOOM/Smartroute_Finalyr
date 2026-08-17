@@ -1,16 +1,51 @@
-# React + Vite
+# SmartRouteAI frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The frontend is a React/Vite application using MapLibre GL for passenger,
+driver, and admin maps. FastAPI remains the owner of ride operations, route
+optimization, authentication, and live tracking WebSockets.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev
+```
 
-## React Compiler
+If Vite reports a missing `maplibre-gl-worker.mjs` file, force dependency
+re-optimization:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+npm run dev -- --force
+```
 
-## Expanding the ESLint configuration
+## Environment
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Copy `.env.example` to `.env`:
+
+```env
+VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
+VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_STADIA_API_KEY=your_stadia_key
+VITE_GEOCODER_PROVIDER=stadia
+VITE_ROUTER_URL=http://localhost:8002
+VITE_ROUTER_ENGINE=valhalla
+```
+
+For local demos, `VITE_STADIA_API_KEY` may be omitted. The app then uses the
+Photon geocoder and a CARTO raster fallback through MapLibre. MapTiler is an
+alternative: set `VITE_MAPTILER_KEY` and use
+`VITE_GEOCODER_PROVIDER=maptiler`.
+
+`VITE_MAP_STYLE_URL` can override the default Stadia/MapTiler style URL. Do not
+put database passwords, Clerk secret keys, or Supabase service-role keys in
+this file; all `VITE_*` values are exposed to the browser.
+
+## Build and verify
+
+```bash
+npm run build
+npm run lint
+```
+
+The production build should pass. Existing lint findings in legacy view code
+may still require separate cleanup.

@@ -49,17 +49,20 @@
 
 ## Frontend Mapping
 
-The web application uses React Leaflet with OpenStreetMap/CARTO tiles. There
-is no Google Maps dependency or frontend map key.
+The web application uses MapLibre GL. Production deployments should provide a
+Stadia Maps or MapTiler vector style/key; local development falls back to
+CARTO raster tiles. Address search supports MapTiler or Stadia autocomplete,
+with Photon as a keyless development fallback.
 
 Map data flows through the FastAPI backend:
 
 - `/tracking/feed` supplies vehicle locations and recent tracking events.
-- `/tracking/ws?token=<jwt>` supplies live vehicle snapshots to authorized
-  driver and admin dashboards.
+- `/tracking/ws?token=<jwt>` supplies scoped live vehicle snapshots: admins see
+  the fleet, drivers see their assigned vehicle, and passengers see only a
+  vehicle assigned to one of their active rides.
 - `/predict/heatmap` supplies demand cells rendered as map circles.
 - Ride pickup and destination coordinates are rendered as markers and a route
-  line after the ride form resolves addresses through Nominatim.
+  line after the ride form resolves addresses through the configured geocoder.
 
 ---
 
@@ -143,7 +146,7 @@ This is the full lifecycle of a passenger ride from request to completion.
    Vehicle lat/lng updated
    TrackingEvent saved
    Notifications fired → all passengers on vehicle's route
-   WebSocket broadcast → all connected clients get updated snapshot
+   Scoped WebSocket broadcast → each authorized client receives only permitted data
 
 6. RIDE COMPLETION
    Status transitions: pending → clustered → assigned → arriving

@@ -58,6 +58,6 @@ Passenger App / Driver App / Admin Dashboard
 | Vehicle assignment | SciPy Hungarian algorithm |
 | Demand prediction | XGBoost regressor |
 | Real-time | WebSockets via Starlette |
-| Frontend | React + Vite + Leaflet + Tailwind |
-| Map tiles | OpenStreetMap/CARTO via React Leaflet (no Google Maps key) |
-| Address geocoding | Nominatim OpenStreetMap service |
+| Frontend | React + Vite + MapLibre GL |
+| Map tiles | Stadia/MapTiler vector style, with CARTO raster fallback |
+| Address geocoding | Stadia or MapTiler autocomplete, Photon fallback |
