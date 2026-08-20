@@ -28,7 +28,7 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-Requires a `.env` file at the project root — see `.env.example`.
+Requires `backend/.env` — copy `backend/.env.example` and fill in the values.
 `DATABASE_URL` is required; the backend no longer uses a built-in database
 credential fallback.
 
@@ -195,7 +195,7 @@ python seed.py --reset  # wipe and re-seed
 - [ ] **Production deployment**
   - No Dockerfile or docker-compose
   - No environment separation (dev / staging / prod)
-  - `SECRET_KEY` in `.env` should be rotated before any public deployment
+- Backend secrets belong in `backend/.env` and should be rotated before any public deployment
 
 ---
 

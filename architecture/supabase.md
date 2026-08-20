@@ -48,7 +48,7 @@ deployment supports IPv6, or the Supavisor session pooler on IPv4-only hosting.
 Use the connection string shown by the Supabase **Connect** dialog; never commit
 the password.
 
-Backend `.env`:
+Backend `backend/.env`:
 
 ```env
 DATABASE_URL=postgresql://postgres:<PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres
@@ -78,7 +78,7 @@ The SQLAlchemy models are the current source of truth for these tables:
 Recommended migration process:
 
 1. Create a staging Supabase project.
-2. Set its `DATABASE_URL` in a local backend `.env`.
+2. Set its `DATABASE_URL` in a local `backend/.env`.
 3. Run the existing table creation/seed process against staging and inspect all
    tables, foreign keys, indexes, JSON columns, and geometry columns.
 4. Add proper Alembic migrations before production. Do not use

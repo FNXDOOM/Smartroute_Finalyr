@@ -7,7 +7,7 @@ from config import DATABASE_URL
 
 if not DATABASE_URL:
     raise RuntimeError(
-        "DATABASE_URL is required. Configure it in the project-root .env "
+        "DATABASE_URL is required. Configure it in backend/.env "
         "before starting the backend."
     )
 

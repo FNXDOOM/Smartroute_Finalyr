@@ -3,15 +3,14 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Attempt loading from root .env or local .env
-root_env = Path(__file__).resolve().parent.parent / ".env"
-local_env = Path(__file__).resolve().parent / ".env"
+# Backend configuration belongs beside the backend entry point. Environment
+# variables supplied by the process/container still take precedence because
+# python-dotenv does not override existing values by default.
+backend_env = Path(__file__).resolve().parent / ".env"
 
-if root_env.exists():
-    load_dotenv(dotenv_path=root_env)
-if local_env.exists():
-    load_dotenv(dotenv_path=local_env, override=True)
-if not root_env.exists() and not local_env.exists():
+if backend_env.exists():
+    load_dotenv(dotenv_path=backend_env)
+else:
     load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
