@@ -24,7 +24,7 @@ An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HD
 
 ```bash
 cd backend
-pip install -r requirements.txt
+pip install -r ../requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
@@ -35,7 +35,21 @@ credential fallback.
 Run database migrations before starting the API:
 
 ```bash
-alembic upgrade head
+alembic -c ../alembic.ini upgrade head
+```
+
+Alembic migration resources:
+
+- [Official Alembic documentation](https://alembic.sqlalchemy.org/en/latest/)
+- [Alembic tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html)
+- [Alembic autogenerate guide](https://alembic.sqlalchemy.org/en/latest/autogenerate.html)
+
+When the SQLAlchemy models change, create a migration and review it before
+applying it:
+
+```bash
+alembic -c ../alembic.ini revision --autogenerate -m "describe the schema change"
+alembic -c ../alembic.ini upgrade head
 ```
 
 The API and scheduled jobs are separate processes. Start the API with
@@ -56,9 +70,17 @@ The compose file runs the HTTP API and background worker separately. Provide
 the production database and Clerk settings through `backend/.env` or your
 deployment platform's secret manager; do not bake them into the image.
 
-For Amazon ECS/Fargate deployment with Docker Hub, use the task-definition templates in
-[`deploy/ecs`](deploy/ecs). They define separate API and worker services,
-Secrets Manager injection, CloudWatch logging, and ECS health checks.
+For Amazon ECS/Fargate deployment with Docker Hub, use the task-definition
+templates in [`deploy/ecs`](deploy/ecs). They define separate API and worker
+services, Secrets Manager injection, CloudWatch logging, and ECS health checks.
+See the [ECS deployment guide](deploy/ecs/README.md) for Docker Hub publishing,
+Secrets Manager, IAM, migrations, and ALB setup.
+
+Useful AWS references:
+
+- [ECS standalone tasks](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/standalone-tasks.html)
+- [ECS private registry authentication](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html)
+- [ECS task health checks](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/healthcheck.html)
 
 ### Frontend
 
@@ -215,15 +237,16 @@ python seed.py --reset  # wipe and re-seed
   - The React app crashes completely on unhandled component errors
   - Add `<ErrorBoundary>` wrappers around each view
 
-- [ ] **Backend tests**
-  - `scripts/test_models_schemas.py` exists but is incomplete
-  - No pytest tests for the routers or services
-  - Key areas to cover: auth token validation, ride status transitions, VRP solver output
+- [x] **Backend tests**
+  - Pytest coverage includes schema/model checks, health probes, protected routes,
+    and WebSocket token handling
+  - Continue expanding coverage for ride status transitions and VRP solver output
 
-- [ ] **Production deployment**
-  - No Dockerfile or docker-compose
-  - No environment separation (dev / staging / prod)
-- Backend secrets belong in `backend/.env` and should be rotated before any public deployment
+- [x] **Production deployment foundation**
+  - Dockerfile, Docker Compose, Alembic, separate API/worker processes, and ECS
+    Fargate task-definition templates are included
+  - Use `backend/.env` only for local development; ECS production secrets belong
+    in AWS Secrets Manager
 
 ---
 
