@@ -57,7 +57,7 @@ with Photon as a keyless development fallback.
 Map data flows through the FastAPI backend:
 
 - `/tracking/feed` supplies vehicle locations and recent tracking events.
-- `/tracking/ws?token=<jwt>` supplies scoped live vehicle snapshots: admins see
+- `/tracking/ws` with the `bearer` WebSocket subprotocol supplies scoped live vehicle snapshots: admins see
   the fleet, drivers see their assigned vehicle, and passengers see only a
   vehicle assigned to one of their active rides.
 - `/predict/heatmap` supplies demand cells rendered as map circles.

@@ -1,25 +1,31 @@
 import os
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
-from database import create_db_tables
+from database import engine
 from routers import auth, rides, cluster, route, vehicle, predict, tracking, notifications
 from routers import analytics
 from routers import jobs
-from services.background_jobs import start_background_jobs, stop_background_jobs
+from config import APP_ENV, ENABLE_TRACKING_BROADCAST
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    create_db_tables()
-    # Startup: launch GPS simulation background task
-    tracking.start_simulation()
-    start_background_jobs()
+    # Scheduled jobs run in the dedicated worker process. The API process only
+    # owns the broadcast loop needed by its connected WebSocket clients.
+    if ENABLE_TRACKING_BROADCAST:
+        tracking.start_simulation()
     yield
-    # Shutdown
-    await stop_background_jobs()
 
 
 app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
@@ -90,3 +96,22 @@ app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
 @app.get("/")
 def root():
     return {"message": "SmartRouteAI API is running"}
+
+
+@app.get("/health/live", tags=["Health"])
+def liveness():
+    """Process liveness probe; does not require the database."""
+    return {"status": "ok", "environment": APP_ENV}
+
+
+@app.get("/health/ready", tags=["Health"])
+def readiness():
+    """Readiness probe used by load balancers and orchestrators."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError as exc:
+        logging.getLogger(__name__).warning("readiness check failed: %s", exc.__class__.__name__)
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
+    return {"status": "ok", "database": "ok"}

@@ -23,8 +23,8 @@ class NotificationConnectionManager:
     def __init__(self):
         self.connections_by_user: Dict[int, List[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, user_id: int):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, user_id: int, subprotocol: str | None = None):
+        await websocket.accept(subprotocol=subprotocol)
         self.connections_by_user.setdefault(user_id, []).append(websocket)
 
     def disconnect(self, websocket: WebSocket, user_id: int):

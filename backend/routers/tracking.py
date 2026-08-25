@@ -21,7 +21,7 @@ from schemas.tracking import (
     VehicleTelemetryUpdate,
 )
 from services.notifications import create_notification, create_notifications_for_users
-from utils.auth_utils import get_current_user, get_user_from_token
+from utils.auth_utils import get_current_user, get_user_from_token, get_websocket_token
 from config import ALLOWED_ORIGINS
 
 router = APIRouter()
@@ -39,7 +39,7 @@ class ConnectionManager:
         self.active_connections: List[TrackingConnection] = []
 
     async def connect(self, websocket: WebSocket, user_id: int, role: str):
-        await websocket.accept()
+        await websocket.accept(subprotocol="bearer")
         self.active_connections.append(TrackingConnection(websocket, user_id, role))
 
     def disconnect(self, websocket: WebSocket):
@@ -316,9 +316,9 @@ async def update_vehicle_location(
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for live vehicle tracking.
-    Clients must pass a valid JWT as a query parameter: /ws/tracking?token=<jwt>
+    Clients must pass a valid JWT as the ``bearer`` WebSocket subprotocol.
     """
-    token = websocket.query_params.get("token")
+    token = get_websocket_token(websocket)
     if not token:
         await websocket.close(code=4401, reason="Missing authentication token")
         return

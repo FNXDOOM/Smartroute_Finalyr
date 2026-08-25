@@ -464,7 +464,8 @@ Push a GPS position update for a vehicle. Broadcasts to all WebSocket subscriber
 ### `WS /tracking/ws`
 Live vehicle tracking WebSocket.
 
-**Auth:** `?token=<jwt>` query parameter required. Connection is closed with code `4401` if missing or invalid.
+**Auth:** the `bearer` WebSocket subprotocol must contain a valid JWT. The
+connection is closed with code `4401` if missing or invalid.
 
 **Server broadcasts every 2 seconds. Payloads are scoped server-side:** admins
 receive the fleet, drivers receive their assigned vehicle, and passengers
@@ -544,7 +545,7 @@ Mark all unread notifications as read.
 ### `WS /notifications/ws`
 Real-time notification push channel.
 
-**Auth:** `?token=<jwt>` query parameter required.
+**Auth:** the `bearer` WebSocket subprotocol must contain a valid JWT.
 
 **Server broadcasts when any notification is created:**
 ```json

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@clerk/clerk-react'
-import { C, s } from '../SwiftApp'
+import { C, s } from '../ui/tokens.js'
 import { ridesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
 import { useWebSocket } from '../hooks/useWebSocket.js'
 import AppMap from '../components/AppMap'

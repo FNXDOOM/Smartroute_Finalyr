@@ -29,6 +29,9 @@ CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.getenv("CLERK_ISSUER", "")
 CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "")
 CLERK_ALLOW_NATIVE_CLIENTS = os.getenv("CLERK_ALLOW_NATIVE_CLIENTS", "false").lower() == "true"
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+PROCESS_ROLE = os.getenv("PROCESS_ROLE", "api").lower()
+ENABLE_TRACKING_BROADCAST = os.getenv("ENABLE_TRACKING_BROADCAST", "true").lower() == "true"
 _raw_authorized_parties = os.getenv("CLERK_AUTHORIZED_PARTIES", "")
 CLERK_AUTHORIZED_PARTIES = [
     origin.strip().rstrip("/")

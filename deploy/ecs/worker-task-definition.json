@@ -1,0 +1,42 @@
+{
+  "family": "smartroute-worker",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "worker",
+      "image": "${DOCKERHUB_USERNAME}/smartrouteai:${IMAGE_TAG}",
+      "repositoryCredentials": {
+        "credentialsParameter": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:smartrouteai/production/dockerhub-credentials"
+      },
+      "essential": true,
+      "workingDirectory": "/app/backend",
+      "command": ["python", "worker.py"],
+      "environment": [
+        {"name": "APP_ENV", "value": "production"},
+        {"name": "PROCESS_ROLE", "value": "worker"},
+        {"name": "AUTH_PROVIDER", "value": "clerk"},
+        {"name": "ENABLE_TRACKING_BROADCAST", "value": "false"},
+        {"name": "LOG_LEVEL", "value": "INFO"}
+      ],
+      "secrets": [
+        {"name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:smartrouteai/production/database-url"},
+        {"name": "CLERK_JWKS_URL", "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:smartrouteai/production/clerk-jwks-url"},
+        {"name": "CLERK_ISSUER", "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:smartrouteai/production/clerk-issuer"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/smartroute-worker",
+          "awslogs-region": "${AWS_REGION}",
+          "awslogs-stream-prefix": "ecs",
+          "mode": "non-blocking",
+          "max-buffer-size": "25m"
+        }
+      }
+    }
+  ]
+}

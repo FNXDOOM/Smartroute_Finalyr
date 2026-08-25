@@ -1,20 +1,23 @@
 # WebSocket Channels
 
-Two real-time WebSocket endpoints. Both require a Clerk session JWT via query parameter.
+Two real-time WebSocket endpoints. Both require a Clerk session JWT via the
+`bearer` WebSocket subprotocol.
 
 ---
 
 ## Authentication
 
-WebSocket connections cannot send HTTP headers, so the JWT is passed as a query parameter:
+Browser WebSocket clients cannot set an Authorization header, so the frontend
+sends two subprotocol values: `bearer` and the JWT. The token is not placed in
+the URL or query string:
 
 ```
-ws://localhost:8000/tracking/ws?token=<clerk-session-jwt>
-ws://localhost:8000/notifications/ws?token=<clerk-session-jwt>
+new WebSocket("ws://localhost:8000/tracking/ws", ["bearer", clerkSessionJwt])
+new WebSocket("ws://localhost:8000/notifications/ws", ["bearer", clerkSessionJwt])
 ```
 
 On connection:
-1. Server reads `websocket.query_params.get("token")`
+1. Server reads the `Sec-WebSocket-Protocol` header and extracts the bearer token
 2. Calls `decode_clerk_token(token)` — validates Clerk signature, issuer, and expiry
 3. If missing or invalid → `websocket.close(code=4401, reason="...")` and returns
 4. If valid → connection accepted, added to the broadcast pool
@@ -91,7 +94,7 @@ Triggered by `POST /tracking/vehicles/{id}/location`:
 ### Frontend usage
 ```javascript
 const token = localStorage.getItem("access_token");
-const ws = new WebSocket(`ws://localhost:8000/tracking/ws?token=${token}`);
+const ws = new WebSocket("ws://localhost:8000/tracking/ws", ["bearer", token]);
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
@@ -146,7 +149,7 @@ The notification manager keys connections by authenticated `user_id`, so a notif
 
 ```javascript
 const token = await getClerkSessionToken();
-const ws = new WebSocket(`ws://localhost:8000/notifications/ws?token=${token}`);
+const ws = new WebSocket("ws://localhost:8000/notifications/ws", ["bearer", token]);
 
 ws.onmessage = (event) => {
   const data = JSON.parse(event.data);

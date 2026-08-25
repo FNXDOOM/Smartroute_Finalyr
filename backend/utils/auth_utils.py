@@ -4,7 +4,7 @@ import secrets
 from typing import Optional
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -23,6 +23,25 @@ from models.user import User
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="")
 logger = logging.getLogger(__name__)
 _clerk_jwks_client: Optional[jwt.PyJWKClient] = None
+
+
+def get_websocket_token(websocket: WebSocket) -> Optional[str]:
+    """Extract a bearer token without putting it in the WebSocket URL.
+
+    Browsers cannot set arbitrary WebSocket headers, so the frontend sends the
+    token as the second WebSocket subprotocol: ``bearer, <JWT>``. A secure
+    HttpOnly cookie is also accepted for deployments that terminate auth at a
+    gateway. Query-string tokens are intentionally rejected.
+    """
+    authorization = websocket.headers.get("authorization", "")
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip() or None
+
+    protocols = [part.strip() for part in websocket.headers.get("sec-websocket-protocol", "").split(",")]
+    if len(protocols) >= 2 and protocols[0].lower() == "bearer":
+        return protocols[1] or None
+
+    return websocket.cookies.get("access_token")
 
 
 def get_jwks_client() -> jwt.PyJWKClient:

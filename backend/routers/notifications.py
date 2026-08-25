@@ -14,7 +14,7 @@ from schemas.notification import (
     NotificationResponse,
 )
 from services.notifications import manager
-from utils.auth_utils import get_current_user, get_user_from_token
+from utils.auth_utils import get_current_user, get_user_from_token, get_websocket_token
 from config import ALLOWED_ORIGINS
 
 router = APIRouter()
@@ -106,11 +106,11 @@ def mark_all_notifications_read(
 async def websocket_notifications(websocket: WebSocket):
     """
     WebSocket endpoint for real-time notifications.
-    Clients must pass a valid JWT as a query parameter: /ws/notifications?token=<jwt>
+    Clients must pass a valid JWT as the ``bearer`` WebSocket subprotocol.
     Notifications are scoped to the authenticated user — the connection is
     registered under their user_id so broadcasts never cross between users.
     """
-    token = websocket.query_params.get("token")
+    token = get_websocket_token(websocket)
     if not token:
         await websocket.close(code=4401, reason="Missing authentication token")
         return
@@ -131,7 +131,7 @@ async def websocket_notifications(websocket: WebSocket):
     finally:
         db.close()
 
-    await manager.connect(websocket, user_id)
+    await manager.connect(websocket, user_id, subprotocol="bearer")
     try:
         while True:
             await websocket.receive_text()

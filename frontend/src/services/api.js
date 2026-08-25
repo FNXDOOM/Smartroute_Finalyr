@@ -273,14 +273,14 @@ export const clearAppBootstrap = (clerkUserId) => appBootstrapRequests.delete(cl
 
 // ─── WebSocket factory ────────────────────────────────────────────────────────
 export const createTrackingWS = (token, onMessage, onClose) => {
-  const ws = new WebSocket(`${WS_BASE_URL}/tracking/ws?token=${encodeURIComponent(token)}`);
+  const ws = new WebSocket(`${WS_BASE_URL}/tracking/ws`, ['bearer', token]);
   ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch (error) { void error; } };
   ws.onclose = () => onClose?.();
   ws.onerror = () => ws.close();
   return ws;
 };
 export const createNotificationsWS = (token, onMessage, onClose) => {
-  const ws = new WebSocket(`${WS_BASE_URL}/notifications/ws?token=${encodeURIComponent(token)}`);
+  const ws = new WebSocket(`${WS_BASE_URL}/notifications/ws`, ['bearer', token]);
   ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch (error) { void error; } };
   ws.onclose = () => onClose?.();
   ws.onerror = () => ws.close();

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { C, s } from '../SwiftApp'
+import { C, s } from '../ui/tokens.js'
 import {
   ridesApi, vehiclesApi, clusterApi, routeApi,
   analyticsApi, jobsApi, predictApi,
@@ -131,7 +131,7 @@ function RidesPanel({ setView, toast }) {
     catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
 
   const updateStatus = async (id, status) => {
     try { await ridesApi.updateStatus(id, status); setRides(p => p.map(r => r.id===id?{...r,status}:r)); toast('success',`Ride #${id} → ${status}`) }
@@ -191,7 +191,7 @@ function VehiclesPanel({ setView, toast }) {
     catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
 
   const create = async () => {
     if (!form.license_plate.trim()) { toast('warning','Enter a license plate'); return }
@@ -278,7 +278,7 @@ function ClusterPanel({ setView, toast }) {
     catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
 
   const runCluster = async () => {
     setRunning(true)
@@ -374,7 +374,7 @@ function RoutesPanel({ setView, toast }) {
     } catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
 
   const runOptimize = async () => {
     if (vehicles.length===0) { toast('warning','No idle vehicles available'); return }
@@ -486,7 +486,7 @@ function AnalyticsPanel({ setView, toast }) {
     } catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [days, toast])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
 
   const maxRides = Math.max(1, ...daily.map((d) => d.ride_requests))
   return (
@@ -565,7 +565,7 @@ function JobsPanel({ setView, toast }) {
     } catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
-  useEffect(() => { load() }, [load])
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
 
   const runJob = async (type) => {
     setRunning(type)
@@ -679,9 +679,7 @@ function HeatmapPanel({ setView, toast }) {
     } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
     setLoading(false)
   }
-  useEffect(() => { load() }, [])
-
-  const maxDemand = Math.max(1, ...cells.map((c) => c.predicted_demand||c.historical_request_count||0))
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [])
 
   return (
     <div style={s({ padding:28, maxWidth:900 })}>

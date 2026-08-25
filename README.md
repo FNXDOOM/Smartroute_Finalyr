@@ -32,6 +32,34 @@ Requires `backend/.env` — copy `backend/.env.example` and fill in the values.
 `DATABASE_URL` is required; the backend no longer uses a built-in database
 credential fallback.
 
+Run database migrations before starting the API:
+
+```bash
+alembic upgrade head
+```
+
+The API and scheduled jobs are separate processes. Start the API with
+`uvicorn main:app --host 0.0.0.0 --port 8000` from `backend/`, and start one
+worker with `python worker.py` from `backend/`. Set `APP_ENV` to `development`,
+`staging`, or `production`; never reuse a production `backend/.env` locally.
+
+Health probes are available at `/health/live` and `/health/ready`.
+
+### Docker
+
+```bash
+docker compose up --build
+docker compose exec api alembic upgrade head
+```
+
+The compose file runs the HTTP API and background worker separately. Provide
+the production database and Clerk settings through `backend/.env` or your
+deployment platform's secret manager; do not bake them into the image.
+
+For Amazon ECS/Fargate deployment with Docker Hub, use the task-definition templates in
+[`deploy/ecs`](deploy/ecs). They define separate API and worker services,
+Secrets Manager injection, CloudWatch logging, and ECS health checks.
+
 ### Frontend
 
 ```bash
@@ -75,7 +103,7 @@ python seed.py --reset  # wipe and re-seed
 - Clerk sign-up / sign-in with JWT verification on every backend request
 - Auto-provisions a DB user on first login (role = `passenger` by default)
 - Role-based access control: `passenger`, `driver`, `admin`
-- WebSocket auth via `?token=<jwt>` query param
+- WebSocket auth via the `bearer` subprotocol; tokens are not placed in URLs
 
 ### Passenger
 - Book a ride — creates a `RideRequest` in DB, fires notification
@@ -228,8 +256,8 @@ Key endpoint groups:
 - `GET /rides/my-rides` — passenger trip history
 - `POST /cluster/run` — run HDBSCAN clustering (admin/driver)
 - `POST /route/optimize` — run VRP route optimization (admin/driver)
-- `WS /tracking/ws?token=` — live vehicle tracking stream
-- `WS /notifications/ws?token=` — per-user notification stream
+- `WS /tracking/ws` with the `bearer` subprotocol — live vehicle tracking stream
+- `WS /notifications/ws` with the `bearer` subprotocol — per-user notification stream
 - `GET /analytics/overview` — fleet-wide statistics
 - `GET /predict/heatmap` — demand prediction over a bounding box
 

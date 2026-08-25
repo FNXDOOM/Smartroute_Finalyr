@@ -81,8 +81,9 @@ Recommended migration process:
 2. Set its `DATABASE_URL` in a local `backend/.env`.
 3. Run the existing table creation/seed process against staging and inspect all
    tables, foreign keys, indexes, JSON columns, and geometry columns.
-4. Add proper Alembic migrations before production. Do not use
-   `Base.metadata.create_all()` as the long-term production migration system.
+4. Run the checked-in Alembic baseline with `alembic upgrade head`, then add
+   a new revision for every schema change. Do not use
+   `Base.metadata.create_all()` during application startup.
 5. Back up the existing `smartrouteai.db` before importing any development data.
 6. Import only sanitized seed/demo data into production.
 
@@ -204,7 +205,7 @@ Supabase access token:
 
 ```js
 const wsBase = import.meta.env.VITE_API_BASE_URL.replace(/^http/, 'ws');
-const ws = new WebSocket(`${wsBase}/tracking/ws?token=${encodeURIComponent(accessToken)}`);
+const ws = new WebSocket(`${wsBase}/tracking/ws`, ['bearer', accessToken]);
 ```
 
 Supabase Realtime can be introduced later for database change notifications, but

@@ -1,0 +1,41 @@
+services:
+  api:
+    build: .
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    env_file: ./backend/.env
+    environment:
+      PROCESS_ROLE: api
+      ENABLE_TRACKING_BROADCAST: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "worker.py"]
+    env_file: ./backend/.env
+    environment:
+      PROCESS_ROLE: worker
+      ENABLE_TRACKING_BROADCAST: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: smartrouteai
+      POSTGRES_USER: smartroute
+      POSTGRES_PASSWORD: change-me-in-local-env
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartroute -d smartrouteai"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:

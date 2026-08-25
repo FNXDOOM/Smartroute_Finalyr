@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { C, s } from '../SwiftApp'
+import { C, s } from '../ui/tokens.js'
 import { ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
 import { useAuth } from '@clerk/clerk-react'
 import AppMap from '../components/AppMap'
@@ -26,7 +26,7 @@ export default function DriverView({ user, view, setView, toast }) {
     setLoading(false)
   }, [toast])
 
-  useEffect(() => { loadData() }, [loadData])
+  useEffect(() => { const timer = setTimeout(() => { void loadData() }, 0); return () => clearTimeout(timer) }, [loadData])
 
   // Live tracking WebSocket
   useEffect(() => {
@@ -41,7 +41,7 @@ export default function DriverView({ user, view, setView, toast }) {
             setTracking({ vehicles: msg.vehicles || [], events: msg.events || [] })
           }
         }, () => { if (!dead) setTimeout(connect, 3000) })
-      } catch {}
+      } catch (error) { void error }
     }
     connect()
     return () => { dead = true; wsRef.current?.close() }
