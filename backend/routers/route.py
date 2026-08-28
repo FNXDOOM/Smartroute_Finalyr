@@ -22,11 +22,13 @@ from schemas.route import (
     VRPRequest,
 )
 from services.routing.vrp_solver import solve_vrp
+from services.stadia_client import extract_route_details, route_many
 from services.notifications import create_notification, create_notifications_for_users
+from config import STADIA_API_KEY
 from utils.auth_utils import get_current_user
+from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
-
 
 
 @router.post("/optimize", response_model=OptimizedRouteResponse)
@@ -48,7 +50,10 @@ def optimize_routes(
         )
 
     if payload.source_cluster_run_id is not None:
-        cluster_run = db.query(ClusterRun).filter(ClusterRun.id == payload.source_cluster_run_id).first()
+        cluster_run = db.query(ClusterRun).filter(
+            ClusterRun.id == payload.source_cluster_run_id,
+            ClusterRun.mode == LIVE_MODE,
+        ).first()
         if not cluster_run:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster run not found")
 
@@ -69,7 +74,7 @@ def optimize_routes(
 
     virtual_stops = (
         db.query(VirtualStop)
-        .filter(VirtualStop.id.in_(payload.virtual_stop_ids))
+        .filter(VirtualStop.id.in_(payload.virtual_stop_ids), VirtualStop.mode == LIVE_MODE)
         .order_by(VirtualStop.id.asc())
         .all()
     )
@@ -151,14 +156,30 @@ def optimize_routes(
             }
         )
 
-        estimated_duration = float(route_data["distance_m"]) / 8.33 if route_data["distance_m"] else 0.0
+        road_route = {}
+        if STADIA_API_KEY:
+            try:
+                road_route = extract_route_details(route_many([
+                    {"lat": waypoint["lat"], "lon": waypoint["lng"]}
+                    for waypoint in waypoint_payloads
+                ]))
+            except RuntimeError:
+                # Dispatch remains usable with the local road matrix even if
+                # the optional hosted route geometry is unavailable.
+                road_route = {}
+        route_distance = road_route.get("distanceMeters") or float(route_data["distance_m"])
+        estimated_duration = road_route.get("durationSeconds") or (
+            float(route_data["distance_m"]) / 8.33 if route_data["distance_m"] else 0.0
+        )
         route_solutions.append(
             RouteSolution(
                 route_id=route_id,
                 vehicle_id=actual_vehicle.id,
                 waypoints=[RouteWaypoint(**waypoint) for waypoint in waypoint_payloads],
-                total_distance_meters=float(route_data["distance_m"]),
+                total_distance_meters=float(route_distance),
                 estimated_duration_seconds=estimated_duration,
+                geometry=road_route.get("geometry", []),
+                maneuvers=road_route.get("maneuvers", []),
             )
         )
 
@@ -172,13 +193,16 @@ def optimize_routes(
             status="solved",
             depot_lat=payload.depot_lat,
             depot_lng=payload.depot_lng,
-            total_distance_meters=float(route_data["distance_m"]),
+            total_distance_meters=float(route_distance),
             estimated_duration_seconds=estimated_duration,
             created_by_user_id=current_user.id,
             route_metadata={
                 "vehicle_capacity": actual_vehicle.capacity,
                 "assigned_stop_ids": [wp["stop_id"] for wp in waypoint_payloads if wp["stop_id"] is not None],
                 "source_cluster_run_id": payload.source_cluster_run_id,
+                "geometry": road_route.get("geometry", []),
+                "maneuvers": road_route.get("maneuvers", []),
+                "routing_provider": "stadia" if road_route else "local-road-matrix",
             },
         )
         db.add(route_plan)
@@ -187,7 +211,9 @@ def optimize_routes(
         passenger_user_ids = []
         for virtual_stop in virtual_stops:
             if virtual_stop.id in [wp["stop_id"] for wp in waypoint_payloads if wp["stop_id"] is not None]:
-                passenger_user_ids.extend(request.user_id for request in virtual_stop.ride_requests)
+                for request in virtual_stop.ride_requests:
+                    request.status = "assigned"
+                    passenger_user_ids.append(request.user_id)
         passenger_user_ids = sorted(set(passenger_user_ids))
         if passenger_user_ids:
             create_notifications_for_users(
@@ -257,6 +283,7 @@ def list_routes(
 
     routes = (
         db.query(RoutePlan)
+        .filter(RoutePlan.mode == LIVE_MODE)
         .order_by(RoutePlan.created_at.desc())
         .limit(limit)
         .all()
@@ -276,7 +303,10 @@ def get_route_history(
             detail="Only admin or driver users can view route history",
         )
 
-    route_plan = db.query(RoutePlan).filter(RoutePlan.route_id == route_id).first()
+    route_plan = db.query(RoutePlan).filter(
+        RoutePlan.route_id == route_id,
+        RoutePlan.mode == LIVE_MODE,
+    ).first()
     if not route_plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route not found")
 

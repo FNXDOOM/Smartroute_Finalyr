@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -16,11 +16,13 @@ from schemas.jobs import (
 )
 from services.background_jobs import (
     get_background_job_state,
+    run_auto_dispatch_pipeline,
     run_cluster_job,
     run_demand_refresh_job,
     run_vehicle_rebalance_job,
 )
 from utils.auth_utils import get_current_user
+from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE, validate_ride_mode
 
 router = APIRouter()
 
@@ -31,6 +33,16 @@ def _require_admin_or_driver(current_user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can access job controls",
         )
+
+
+def _require_job_access(current_user: User, mode: str) -> None:
+    """Keep live controls restricted while allowing isolated demo playback."""
+    if current_user.role in {"admin", "driver"} or mode == PRESENTATION_DEMO_MODE:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Only admin or driver users can access live job controls",
+    )
 
 
 @router.get("/status", response_model=BackgroundJobStatusResponse)
@@ -88,13 +100,46 @@ def list_rebalance_suggestions(
     return [VehicleRebalanceSuggestionResponse.model_validate(suggestion) for suggestion in suggestions]
 
 
-@router.post("/run/clustering", response_model=dict)
-def run_cluster_now(
+@router.post("/run/auto-dispatch", response_model=dict)
+def run_auto_dispatch_now(
+    mode: str = Query(LIVE_MODE, description="live | presentation_demo"),
+    demo_run_id: Optional[str] = Query(None, min_length=1, max_length=64),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _require_admin_or_driver(current_user)
-    return run_cluster_job(db, triggered_by_user_id=current_user.id, is_scheduled=False)
+    try:
+        mode = validate_ride_mode(mode)
+        _require_job_access(current_user, mode)
+        return run_auto_dispatch_pipeline(
+            db,
+            triggered_by_user_id=current_user.id,
+            is_scheduled=False,
+            mode=mode,
+            demo_run_id=demo_run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
+@router.post("/run/clustering", response_model=dict)
+def run_cluster_now(
+    mode: str = Query(LIVE_MODE, description="live | presentation_demo"),
+    demo_run_id: Optional[str] = Query(None, min_length=1, max_length=64),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        mode = validate_ride_mode(mode)
+        _require_job_access(current_user, mode)
+        return run_cluster_job(
+            db,
+            triggered_by_user_id=current_user.id,
+            is_scheduled=False,
+            mode=mode,
+            demo_run_id=demo_run_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
 
 @router.post("/run/demand", response_model=dict)

@@ -17,6 +17,7 @@ from models.virtual_stop import VirtualStop
 from schemas.analytics import AnalyticsDailyPoint, AnalyticsDailyResponse, AnalyticsOverviewResponse
 from utils.auth_utils import get_current_user
 from utils.geo import haversine_meters
+from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
 
@@ -49,16 +50,17 @@ def get_analytics_overview(
     _require_admin_or_driver(current_user)
 
     # Use aggregation queries instead of loading entire tables into memory
-    total_rides = db.query(func.count(RideRequest.id)).scalar() or 0
-    total_vehicles = db.query(func.count(Vehicle.id)).scalar() or 0
-    total_virtual_stops = db.query(func.count(VirtualStop.id)).scalar() or 0
-    total_cluster_runs = db.query(func.count(ClusterRun.id)).scalar() or 0
-    total_route_plans = db.query(func.count(RoutePlan.id)).scalar() or 0
+    total_rides = db.query(func.count(RideRequest.id)).filter(RideRequest.mode == LIVE_MODE).scalar() or 0
+    total_vehicles = db.query(func.count(Vehicle.id)).filter(Vehicle.mode == LIVE_MODE).scalar() or 0
+    total_virtual_stops = db.query(func.count(VirtualStop.id)).filter(VirtualStop.mode == LIVE_MODE).scalar() or 0
+    total_cluster_runs = db.query(func.count(ClusterRun.id)).filter(ClusterRun.mode == LIVE_MODE).scalar() or 0
+    total_route_plans = db.query(func.count(RoutePlan.id)).filter(RoutePlan.mode == LIVE_MODE).scalar() or 0
     total_tracking_events = db.query(func.count(TrackingEvent.id)).scalar() or 0
 
     # Status breakdown via GROUP BY
     status_rows = (
         db.query(RideRequest.status, func.count(RideRequest.id))
+        .filter(RideRequest.mode == LIVE_MODE)
         .group_by(RideRequest.status)
         .all()
     )
@@ -67,6 +69,7 @@ def get_analytics_overview(
     # Vehicle idle/active counts via GROUP BY
     vehicle_status_rows = (
         db.query(Vehicle.status, func.count(Vehicle.id))
+        .filter(Vehicle.mode == LIVE_MODE)
         .group_by(Vehicle.status)
         .all()
     )
@@ -79,11 +82,11 @@ def get_analytics_overview(
             active_vehicles += cnt
 
     # Average passengers per virtual stop
-    avg_passengers_row = db.query(func.avg(VirtualStop.passenger_count)).scalar()
+    avg_passengers_row = db.query(func.avg(VirtualStop.passenger_count)).filter(VirtualStop.mode == LIVE_MODE).scalar()
     avg_passengers_per_virtual_stop = round(float(avg_passengers_row or 0.0), 2)
 
     # Average route distance
-    avg_route_dist_row = db.query(func.avg(RoutePlan.total_distance_meters)).scalar()
+    avg_route_dist_row = db.query(func.avg(RoutePlan.total_distance_meters)).filter(RoutePlan.mode == LIVE_MODE).scalar()
     avg_route_distance_meters = round(float(avg_route_dist_row or 0.0), 2)
 
     # Average trip distance — computed over a capped sample to stay memory-safe
@@ -95,6 +98,7 @@ def get_analytics_overview(
             RideRequest.dest_lat,
             RideRequest.dest_lng,
         )
+        .filter(RideRequest.mode == LIVE_MODE)
         .limit(SAMPLE_LIMIT)
         .all()
     )
@@ -108,7 +112,9 @@ def get_analytics_overview(
 
     # Route utilisation — aggregate stop passenger counts for assigned stops
     route_meta_rows = (
-        db.query(RoutePlan.route_metadata).limit(500).all()
+        db.query(RoutePlan.route_metadata)
+        .filter(RoutePlan.mode == LIVE_MODE)
+        .limit(500)
     )
     total_passengers_assigned = 0
     all_stop_ids: List[int] = []
@@ -125,7 +131,7 @@ def get_analytics_overview(
         stop_map = {sid: (pc or 0) for sid, pc in stop_passenger_rows}
         total_passengers_assigned = sum(stop_map.get(sid, 0) for sid in all_stop_ids)
 
-    total_vehicle_capacity_row = db.query(func.sum(Vehicle.capacity)).scalar()
+    total_vehicle_capacity_row = db.query(func.sum(Vehicle.capacity)).filter(Vehicle.mode == LIVE_MODE).scalar()
     total_vehicle_capacity = int(total_vehicle_capacity_row or 0)
     route_utilization_percent = (
         round((total_passengers_assigned / total_vehicle_capacity) * 100.0, 2)
@@ -173,12 +179,12 @@ def get_analytics_daily(
     # Only fetch rides within the requested window
     rides = (
         db.query(RideRequest)
-        .filter(RideRequest.request_time >= start_dt)
+        .filter(RideRequest.request_time >= start_dt, RideRequest.mode == LIVE_MODE)
         .all()
     )
     route_plans = (
         db.query(RoutePlan)
-        .filter(RoutePlan.created_at >= start_dt)
+        .filter(RoutePlan.created_at >= start_dt, RoutePlan.mode == LIVE_MODE)
         .all()
     )
 

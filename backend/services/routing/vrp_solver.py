@@ -1,5 +1,9 @@
 from typing import List, Dict, Any, Optional
 
+import networkx as nx
+
+from services.stops.road_snapper import build_road_graph
+from services.stadia_client import matrix as stadia_matrix
 from utils.geo import haversine_meters as _haversine_meters
 
 
@@ -20,6 +24,143 @@ def build_distance_matrix(stops: List[Dict]) -> List[List[int]]:
                 )
                 matrix[i][j] = int(dist)
     return matrix
+
+
+def build_road_distance_matrix(stops: List[Dict]) -> List[List[int]]:
+    """Build a drivable distance matrix from the local OSM road graph.
+
+    The graph download can fail when OSM data is unavailable or when stops are
+    outside the graph coverage. In those cases, retain the optimizer's safe
+    fallback instead of failing an entire dispatch run.
+    """
+    matrix = build_distance_matrix(stops)
+    if len(stops) < 2:
+        return matrix
+
+    centre_lat = sum(stop["lat"] for stop in stops) / len(stops)
+    centre_lng = sum(stop["lng"] for stop in stops) / len(stops)
+    radius = max(
+        3000,
+        int(max(
+            _haversine_meters(centre_lat, centre_lng, stop["lat"], stop["lng"])
+            for stop in stops
+        ) * 1.35),
+    )
+    graph = build_road_graph(centre_lat, centre_lng, dist=radius)
+    if graph is None:
+        return matrix
+
+    try:
+        import osmnx as ox
+
+        nodes = [ox.distance.nearest_nodes(graph, X=stop["lng"], Y=stop["lat"]) for stop in stops]
+        for i, origin_node in enumerate(nodes):
+            lengths = nx.single_source_dijkstra_path_length(graph, origin_node, weight="length")
+            for j, destination_node in enumerate(nodes):
+                if i != j and destination_node in lengths:
+                    matrix[i][j] = int(round(lengths[destination_node]))
+    except Exception:
+        # Keep the Haversine values for pairs that cannot be resolved on-road.
+        return matrix
+    return matrix
+
+
+def _matrix_rows(data: Dict[str, Any]) -> list:
+    """Accept the common Stadia/Valhalla matrix response shapes."""
+    return (
+        data.get("sources_to_targets")
+        or data.get("sourcesToTargets")
+        or data.get("matrix")
+        or data.get("durations")
+        or []
+    )
+
+
+def build_stadia_distance_matrix(
+    sources: List[Dict],
+    targets: Optional[List[Dict]] = None,
+) -> Optional[List[List[int]]]:
+    """Fetch a road matrix for dispatch when Stadia is configured.
+
+    ``sources`` and ``targets`` may be different-sized lists. This matters for
+    fleet assignment, where vehicle origins and route pickup points are not a
+    single square matrix. Stadia's matrix service is capped by the number of
+    source/target elements, so larger jobs deliberately use the local OSM road
+    graph instead.
+    """
+    targets = sources if targets is None else targets
+    if not sources or not targets or len(sources) > 25 or len(targets) > 25:
+        return None
+    source_points = [{"lat": stop["lat"], "lon": stop["lng"]} for stop in sources]
+    target_points = [{"lat": stop["lat"], "lon": stop["lng"]} for stop in targets]
+    try:
+        data = stadia_matrix(source_points, target_points)
+    except RuntimeError:
+        return None
+
+    rows = _matrix_rows(data)
+    if not isinstance(rows, list) or len(rows) < len(sources):
+        return None
+    result = [[0] * len(targets) for _ in sources]
+    for i in range(len(sources)):
+        row = rows[i] if isinstance(rows[i], list) else []
+        if len(row) < len(targets):
+            return None
+        for j in range(len(targets)):
+            item = row[j]
+            if isinstance(item, dict):
+                distance = item.get("distance")
+            else:
+                distance = item
+            if distance is None:
+                return None
+            # The request uses units=kilometers; keep OR-Tools in meters.
+            try:
+                result[i][j] = max(0, int(round(float(distance) * 1000)))
+            except (TypeError, ValueError):
+                return None
+    return result
+
+
+def build_road_distance_to_targets(
+    sources: List[Dict],
+    targets: List[Dict],
+) -> Optional[List[List[int]]]:
+    """Build a local OSM road-distance matrix for different origins/targets."""
+    if not sources or not targets:
+        return None
+
+    points = [*sources, *targets]
+    centre_lat = sum(point["lat"] for point in points) / len(points)
+    centre_lng = sum(point["lng"] for point in points) / len(points)
+    radius = max(
+        3000,
+        int(max(
+            _haversine_meters(centre_lat, centre_lng, point["lat"], point["lng"])
+            for point in points
+        ) * 1.35),
+    )
+    graph = build_road_graph(centre_lat, centre_lng, dist=radius)
+    if graph is None:
+        return None
+
+    try:
+        import osmnx as ox
+
+        source_nodes = [ox.distance.nearest_nodes(graph, X=point["lng"], Y=point["lat"]) for point in sources]
+        target_nodes = [ox.distance.nearest_nodes(graph, X=point["lng"], Y=point["lat"]) for point in targets]
+        result = []
+        for source_node in source_nodes:
+            lengths = nx.single_source_dijkstra_path_length(graph, source_node, weight="length")
+            result.append([
+                int(round(lengths[target_node])) if target_node in lengths else 0
+                for target_node in target_nodes
+            ])
+        if any(distance <= 0 for row in result for distance in row):
+            return None
+        return result
+    except Exception:
+        return None
 
 
 def solve_vrp(
@@ -53,7 +194,7 @@ def solve_vrp(
     if num_vehicles <= 0:
         return {"routes": [], "total_distance_m": 0, "status": "no_vehicles"}
 
-    distance_matrix = build_distance_matrix(stops)
+    distance_matrix = build_stadia_distance_matrix(stops) or build_road_distance_matrix(stops)
     demands = [int(s.get("demand", 0)) for s in stops]
 
     manager = pywrapcp.RoutingIndexManager(len(stops), num_vehicles, depot_idx)

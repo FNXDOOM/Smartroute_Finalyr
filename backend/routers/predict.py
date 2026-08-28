@@ -17,6 +17,7 @@ from services.clustering.h3_partitioner import get_h3_index
 from services.prediction.feature_engineering import get_h3_center
 from services.prediction.demand_model import build_heatmap_cells, predict_zone_demand
 from utils.auth_utils import get_current_user
+from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
 
@@ -76,6 +77,7 @@ def predict_demand_heatmap(
         db.query(RideRequest)
         .filter(
             RideRequest.request_time >= threshold - timedelta(days=lookback_days),
+            RideRequest.mode == LIVE_MODE,
             RideRequest.pickup_lat >= min_lat,
             RideRequest.pickup_lat <= max_lat,
             RideRequest.pickup_lng >= min_lng,

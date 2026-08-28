@@ -24,6 +24,7 @@ from services.clustering.hdbscan_clusterer import cluster_passengers, get_cluste
 from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
 from utils.auth_utils import get_current_user
+from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
 
@@ -51,7 +52,12 @@ def run_clustering(
             detail="Only admin or driver users can trigger clustering",
         )
 
-    query = db.query(RideRequest).filter(RideRequest.status == "pending")
+    # The regular admin clustering action must never pull presentation-demo
+    # rides into the live dispatch pool.
+    query = db.query(RideRequest).filter(
+        RideRequest.status == "pending",
+        RideRequest.mode == LIVE_MODE,
+    )
     if h3_index:
         query = query.filter(RideRequest.h3_index == h3_index)
 
@@ -108,6 +114,7 @@ def run_clustering(
 
             virtual_stop = VirtualStop(
                 cluster_id=next_cluster_id,
+                mode=LIVE_MODE,
                 h3_index=bucket_h3_index,
                 lat=snapped_lat,
                 lng=snapped_lng,
@@ -188,6 +195,7 @@ def list_cluster_runs(
 
     runs = (
         db.query(ClusterRun)
+        .filter(ClusterRun.mode == LIVE_MODE)
         .order_by(ClusterRun.created_at.desc())
         .limit(limit)
         .all()
@@ -207,7 +215,10 @@ def get_cluster_run(
             detail="Only admin or driver users can view cluster history",
         )
 
-    cluster_run = db.query(ClusterRun).filter(ClusterRun.id == run_id).first()
+    cluster_run = db.query(ClusterRun).filter(
+        ClusterRun.id == run_id,
+        ClusterRun.mode == LIVE_MODE,
+    ).first()
     if not cluster_run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster run not found")
 

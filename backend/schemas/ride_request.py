@@ -28,6 +28,8 @@ class RideRequestResponse(RideRequestBase):
     id: int
     user_id: int
     status: str
+    mode: str = "live"
+    demo_run_id: Optional[str] = None
     h3_index: Optional[str] = None
     cluster_id: Optional[int] = None
     virtual_stop_id: Optional[int] = None

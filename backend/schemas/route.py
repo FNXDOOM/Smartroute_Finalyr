@@ -25,6 +25,8 @@ class RouteSolution(BaseModel):
     waypoints: List[RouteWaypoint]
     total_distance_meters: float
     estimated_duration_seconds: float
+    geometry: List[List[float]] = Field(default_factory=list)
+    maneuvers: List[dict] = Field(default_factory=list)
 
 
 class OptimizedRouteResponse(BaseModel):

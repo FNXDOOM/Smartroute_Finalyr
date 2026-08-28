@@ -21,8 +21,10 @@ from schemas.tracking import (
     VehicleTelemetryUpdate,
 )
 from services.notifications import create_notification, create_notifications_for_users
+from services.stadia_client import extract_route_details, map_match
 from utils.auth_utils import get_current_user, get_user_from_token, get_websocket_token
 from config import ALLOWED_ORIGINS
+from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
 
@@ -97,12 +99,13 @@ def _visible_tracking_ids(db: Session, entry: TrackingConnection) -> tuple[set[i
     if entry.role == "driver":
         vehicle_ids = {
             vehicle_id for (vehicle_id,) in db.query(Vehicle.id)
-            .filter(Vehicle.driver_user_id == entry.user_id).all()
+            .filter(Vehicle.mode == LIVE_MODE, Vehicle.driver_user_id == entry.user_id).all()
         }
         return vehicle_ids, set()
 
     rides = db.query(RideRequest).filter(
         RideRequest.user_id == entry.user_id,
+        RideRequest.mode == LIVE_MODE,
         RideRequest.status.in_(["pending", "clustered", "assigned", "arriving", "in_progress"]),
     ).all()
     ride_ids = {ride.id for ride in rides}
@@ -155,7 +158,7 @@ def _serialize_event(event: TrackingEvent) -> dict:
 
 
 def _get_snapshot(db: Session, limit: int = 20) -> tuple[list[VehicleSnapshot], list[TrackingEventResponse]]:
-    vehicles = db.query(Vehicle).order_by(Vehicle.id.asc()).all()
+    vehicles = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE).order_by(Vehicle.id.asc()).all()
     events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit).all()
     vehicle_snapshots = [VehicleSnapshot.model_validate(vehicle) for vehicle in vehicles]
     event_responses = [TrackingEventResponse.model_validate(event) for event in events]
@@ -167,7 +170,7 @@ async def broadcast_live_feed():
     while True:
         db = SessionLocal()
         try:
-            vehicles = db.query(Vehicle).order_by(Vehicle.id.asc()).all()
+            vehicles = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE).order_by(Vehicle.id.asc()).all()
             events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(10).all()
             await manager.broadcast_snapshot(db, vehicles, events)
         except Exception:
@@ -199,7 +202,7 @@ def get_tracking_feed(
     if current_user.role == "admin":
         vehicles, events = _get_snapshot(db, limit=limit)
     else:
-        vehicles = db.query(Vehicle).filter(Vehicle.driver_user_id == current_user.id).order_by(Vehicle.id.asc()).all()
+        vehicles = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.driver_user_id == current_user.id).order_by(Vehicle.id.asc()).all()
         vehicle_ids = {vehicle.id for vehicle in vehicles}
         events = db.query(TrackingEvent).filter(TrackingEvent.vehicle_id.in_(vehicle_ids)).order_by(TrackingEvent.created_at.desc()).limit(limit).all() if vehicle_ids else []
     return TrackingFeedResponse(status="ok", vehicles=vehicles, events=events)
@@ -220,7 +223,7 @@ def list_tracking_events(
     if current_user.role == "admin":
         events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit).all()
     else:
-        vehicle_ids = [vehicle_id for (vehicle_id,) in db.query(Vehicle.id).filter(Vehicle.driver_user_id == current_user.id).all()]
+        vehicle_ids = [vehicle_id for (vehicle_id,) in db.query(Vehicle.id).filter(Vehicle.mode == LIVE_MODE, Vehicle.driver_user_id == current_user.id).all()]
         events = db.query(TrackingEvent).filter(TrackingEvent.vehicle_id.in_(vehicle_ids)).order_by(TrackingEvent.created_at.desc()).limit(limit).all() if vehicle_ids else []
     return [TrackingEventResponse.model_validate(event) for event in events]
 
@@ -245,8 +248,38 @@ async def update_vehicle_location(
     if current_user.role == "driver" and vehicle.driver_user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Vehicle is not assigned to this driver")
 
-    vehicle.lat = payload.lat
-    vehicle.lng = payload.lng
+    matched_lat = payload.lat
+    matched_lng = payload.lng
+    recent_events = (
+        db.query(TrackingEvent)
+        .filter(
+            TrackingEvent.vehicle_id == vehicle.id,
+            TrackingEvent.lat.isnot(None),
+            TrackingEvent.lng.isnot(None),
+        )
+        .order_by(TrackingEvent.created_at.desc())
+        .limit(4)
+        .all()
+    )
+    trace = [
+        {"lat": event.lat, "lon": event.lng}
+        for event in reversed(recent_events)
+    ] + [{"lat": payload.lat, "lon": payload.lng}]
+    map_matched = False
+    if len(trace) >= 2:
+        try:
+            matched = await asyncio.to_thread(map_match, trace)
+            matched_geometry = extract_route_details(matched).get("geometry", [])
+            if matched_geometry:
+                matched_lng, matched_lat = matched_geometry[-1]
+                map_matched = True
+        except RuntimeError:
+            # GPS telemetry must continue even when the optional map-matching
+            # request is unavailable or the account has no routing quota.
+            pass
+
+    vehicle.lat = matched_lat
+    vehicle.lng = matched_lng
     if payload.status is not None:
         vehicle.status = payload.status
 
@@ -254,9 +287,14 @@ async def update_vehicle_location(
         vehicle_id=vehicle.id,
         event_type="vehicle_location_update",
         status=vehicle.status,
-        lat=payload.lat,
-        lng=payload.lng,
-        payload=payload.payload,
+        lat=matched_lat,
+        lng=matched_lng,
+        payload={
+            **(payload.payload or {}),
+            "raw_lat": payload.lat,
+            "raw_lng": payload.lng,
+            "map_matched": map_matched,
+        },
     )
     db.add(event)
 
@@ -277,7 +315,7 @@ async def update_vehicle_location(
             user_ids=passenger_user_ids,
             notification_type="vehicle_tracking_update",
             title="Your vehicle has a new live update",
-            message=f"Vehicle {vehicle.license_plate} is now at ({payload.lat:.5f}, {payload.lng:.5f}).",
+            message=f"Vehicle {vehicle.license_plate} is now at ({matched_lat:.5f}, {matched_lng:.5f}).",
             related_entity_type="vehicle",
             related_entity_id=vehicle.id,
             metadata={
@@ -296,9 +334,10 @@ async def update_vehicle_location(
         related_entity_type="vehicle",
         related_entity_id=vehicle.id,
         metadata={
-            "lat": payload.lat,
-            "lng": payload.lng,
+            "lat": matched_lat,
+            "lng": matched_lng,
             "status": vehicle.status,
+            "map_matched": map_matched,
         },
     )
     db.commit()

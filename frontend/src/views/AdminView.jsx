@@ -58,19 +58,80 @@ function OverviewPanel({ user, setView, toast }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
+  const [dispatching, setDispatching] = useState(false)
+
+  const reloadData = useCallback(async () => {
+    try {
+      const d = await analyticsApi.overview()
+      setData(d)
+    } catch {
+      toast('error', 'Failed to load overview')
+    }
+  }, [toast])
+
+  const runAutoDispatch = async () => {
+    setDispatching(true)
+    try {
+      const res = await jobsApi.runAutoDispatch()
+      toast('success', 'AI Dispatch Pipeline Complete', `${res.clusters_formed || 0} clusters formed, ${res.routes_optimized || 0} routes optimized, ${res.assigned_rides || 0} rides assigned.`)
+      reloadData()
+    } catch (e) {
+      toast('error', 'Dispatch failed', e?.response?.data?.detail || '')
+    } finally {
+      setDispatching(false)
+    }
+  }
+
   useEffect(() => {
     analyticsApi.overview()
       .then(d => { setData(d); setLoading(false) })
       .catch(() => { toast('error','Failed to load overview'); setLoading(false) })
-  }, [])
+  }, [toast])
 
   if (loading) return <div style={s({ padding:28 })}><p style={s({ color:C.muted, fontSize:13 })}>Loading…</p></div>
 
   const byStatus = data?.rides_by_status || {}
   return (
     <div style={s({ padding:28 })}>
-      <h1 style={s({ color:C.text, fontSize:22, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif', marginBottom:4 })}>Admin Overview</h1>
-      <p style={s({ color:C.muted, fontSize:13, marginBottom:24 })}>Welcome, {user.name} · Last updated: {data?.generated_at ? new Date(data.generated_at).toLocaleTimeString() : '—'}</p>
+      <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexWrap:'wrap', gap:12, marginBottom:20 })}>
+        <div>
+          <h1 style={s({ color:C.text, fontSize:22, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif', marginBottom:4 })}>Admin Overview</h1>
+          <p style={s({ color:C.muted, fontSize:13 })}>Welcome, {user.name} · Last updated: {data?.generated_at ? new Date(data.generated_at).toLocaleTimeString() : '—'}</p>
+        </div>
+        <div style={s({ display:'flex', gap:8 })}>
+          <button onClick={()=>setView('presentation-demo')} style={s({ padding:'9px 14px', background:`${C.accent}18`, border:`1px solid ${C.accent}66`, color:C.accent, borderRadius:8, fontSize:12, fontWeight:700, cursor:'pointer' })}>
+            ⚡ Open Presentation Demo
+          </button>
+          <button onClick={runAutoDispatch} disabled={dispatching} style={s({ padding:'9px 16px', background:C.accent2, color:C.bg, border:'none', borderRadius:8, fontSize:12, fontWeight:700, cursor:dispatching?'not-allowed':'pointer', opacity:dispatching?0.6:1 })}>
+            {dispatching ? '⏳ Optimizing…' : '⚡ Run Full AI Pipeline'}
+          </button>
+        </div>
+      </div>
+
+      {/* AI Pre-Dispatch Pipeline Status Banner */}
+      <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'14px 18px', marginBottom:24 })}>
+        <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 })}>
+          <p style={s({ color:C.text, fontSize:12, fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em' })}>AI Automated Transit Pipeline</p>
+          <span style={s({ fontSize:10, color:C.accent, fontWeight:700, background:`${C.accent}22`, padding:'2px 8px', borderRadius:5 })}>HDBSCAN + OR-Tools + Hungarian</span>
+        </div>
+        <div style={s({ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(170px, 1fr))', gap:10 })}>
+          {[
+            { step:'1. Grouping', title:'HDBSCAN Clustering', desc:'Density clustering of pending requests in H3 cells (~50m radius)', icon:'🔬' },
+            { step:'2. Virtual Stops', title:'K-Medoids & Snapping', desc:'Centroid medoids snapped to drivable OSM road network', icon:'📍' },
+            { step:'3. Routing', title:'OR-Tools CVRP', desc:'Pre-dispatch multi-stop route optimization solving vehicle capacities', icon:'🛣️' },
+            { step:'4. Assignment', title:'Hungarian Matching', desc:'Minimum-cost bipartite assignment of idle vehicles to routes', icon:'🚗' },
+          ].map(p => (
+            <div key={p.step} style={s({ background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:'10px 12px' })}>
+              <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:4 })}>
+                <span style={s({ fontSize:10, fontWeight:700, color:C.muted2 })}>{p.step}</span>
+                <span style={{ fontSize:14 }}>{p.icon}</span>
+              </div>
+              <p style={s({ color:C.text, fontSize:11, fontWeight:700, marginBottom:3 })}>{p.title}</p>
+              <p style={s({ color:C.muted, fontSize:10, lineHeight:1.3 })}>{p.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div style={s({ display:'flex', gap:12, flexWrap:'wrap', marginBottom:24 })}>
         <StatCard label="Total Rides"    val={data?.total_rides||0}          icon="🛻" col={C.accent} />
@@ -570,9 +631,9 @@ function JobsPanel({ setView, toast }) {
   const runJob = async (type) => {
     setRunning(type)
     try {
-      const fn = type==='clustering' ? jobsApi.runClustering : type==='demand' ? jobsApi.runDemand : jobsApi.runRebalance
+      const fn = type==='auto_dispatch' ? jobsApi.runAutoDispatch : type==='clustering' ? jobsApi.runClustering : type==='demand' ? jobsApi.runDemand : jobsApi.runRebalance
       const res = await fn()
-      toast('success', `${type} job triggered`, res?.message||'')
+      toast('success', `${type.replace('_',' ')} triggered`, res?.message || (res?.clusters_formed !== undefined ? `${res.clusters_formed} clusters, ${res.routes_optimized||0} routes` : 'Done'))
       setTimeout(load, 1500)
     } catch(e) { toast('error','Job failed', e?.response?.data?.detail||'') }
     setRunning(null)
@@ -608,9 +669,10 @@ function JobsPanel({ setView, toast }) {
         <p style={s({ color:C.text, fontSize:13, fontWeight:700, marginBottom:14 })}>Manual Triggers</p>
         <div style={s({ display:'flex', gap:10, flexWrap:'wrap' })}>
           {([
-            { key:'clustering', label:'🔬 Run Clustering',  col:C.accent3 },
-            { key:'demand',     label:'📊 Refresh Demand',  col:'#60a5fa' },
-            { key:'rebalance',  label:'🚗 Rebalance Fleet', col:C.accent2 },
+            { key:'auto_dispatch', label:'⚡ Run Full AI Pipeline', col:C.accent2 },
+            { key:'clustering',    label:'🔬 Run Clustering',       col:C.accent3 },
+            { key:'demand',        label:'📊 Refresh Demand',       col:'#60a5fa' },
+            { key:'rebalance',     label:'🚗 Rebalance Fleet',      col:C.accent },
           ]).map(j => (
             <button key={j.key} onClick={()=>runJob(j.key)} disabled={!!running} style={s({ padding:'10px 18px', background:`${j.col}22`, border:`1px solid ${j.col}55`, color:j.col, fontSize:12, fontWeight:700, borderRadius:8, cursor:running?'not-allowed':'pointer', opacity:running?0.6:1 })}>
               {running===j.key ? '⏳ Running…' : j.label}
@@ -668,7 +730,7 @@ function HeatmapPanel({ setView, toast }) {
   const [minLng,   setMinLng]   = useState('77.40')
   const [maxLng,   setMaxLng]   = useState('77.80')
 
-  const load = async () => {    setLoading(true)
+  const load = useCallback(async () => {    setLoading(true)
     try {
       const res = await predictApi.heatmap({
         min_lat:Number(minLat), max_lat:Number(maxLat),
@@ -678,8 +740,8 @@ function HeatmapPanel({ setView, toast }) {
       if ((res?.cells||[]).length===0) toast('info','No demand data','No rides in this area/timeframe')
     } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
     setLoading(false)
-  }
-  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [])
+  }, [maxLat, maxLng, minLat, minLng, toast])
+  useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
 
   return (
     <div style={s({ padding:28, maxWidth:900 })}>

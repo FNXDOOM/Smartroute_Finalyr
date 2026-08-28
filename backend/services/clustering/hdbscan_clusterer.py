@@ -16,33 +16,44 @@ def cluster_passengers(
     requests: list, min_cluster_size: int = 2
 ) -> np.ndarray:
     """
-    Apply HDBSCAN clustering to passenger pickup locations.
+    Apply density-based clustering to passenger pickup locations.
     Returns array of integer cluster labels (-1 = noise/outlier).
-    Falls back to DBSCAN (via sklearn) if hdbscan is unavailable.
 
-    Note: haversine metric operates on radians, so coordinates are converted
-    before being passed to the clusterer.  cluster_selection_epsilon is also
-    expressed in radians:
-        50 m / 6_371_000 m ≈ 7.85e-6 rad  (~50 m pickup-grouping radius)
+    Strategy
+    --------
+    1. Primary: HDBSCAN with ``cluster_selection_method='leaf'`` and
+       ``cluster_selection_epsilon`` set to 300 m in radians.  This mode
+       picks the finest-grained clusters that sit within the epsilon
+       neighbourhood, which is the correct behaviour for ride-sharing grouping.
+    2. Fallback: sklearn DBSCAN with the same epsilon if hdbscan is not installed.
+
+    The 300 m radius comfortably groups passengers waiting on the same block
+    or within a typical shared-taxi boarding window.
+        300 m / 6_371_000 m ≈ 4.71e-5 rad
     """
     coords = np.array([_extract_pickup_coords(r) for r in requests], dtype=float)
 
     if len(coords) < min_cluster_size:
         return np.array([-1] * len(coords))
 
-    # ~50 m in radians  (was incorrectly 0.0005 ≈ 3 km)
-    epsilon_rad = 50.0 / 6_371_000
+    # 300 m expressed in radians for haversine
+    epsilon_rad = 300.0 / 6_371_000
 
     try:
-        import hdbscan
-        clusterer = hdbscan.HDBSCAN(
+        import hdbscan as _hdbscan
+        clusterer = _hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
+            min_samples=1,
             metric="haversine",
             cluster_selection_epsilon=epsilon_rad,
+            cluster_selection_method="leaf",
         )
         labels = clusterer.fit_predict(np.radians(coords))
-    except ImportError:
-        # Fallback to sklearn DBSCAN with haversine metric
+        # If HDBSCAN still produces all noise (can happen with very few points),
+        # fall through to DBSCAN which is more reliable for small, tight groups.
+        if (labels == -1).all():
+            raise ValueError("HDBSCAN produced all-noise; using DBSCAN fallback")
+    except Exception:
         from sklearn.cluster import DBSCAN
         clusterer = DBSCAN(
             eps=epsilon_rad,

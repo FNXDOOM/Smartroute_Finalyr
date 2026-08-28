@@ -1,13 +1,17 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/clerk-react'
 import {
   loadAppBootstrap, clearAppBootstrap, setAuthTokenGetter,
   notificationsApi, authApi, createNotificationsWS,
 } from './services/api.js'
-import PassengerView from './views/PassengerView'
-import DriverView from './views/DriverView'
-import AdminView from './views/AdminView'
 import { C, s } from './ui/tokens.js'
+
+// Keep role-specific screens (and their map/chart dependencies) out of the
+// initial authentication bundle. Only the view for the signed-in role loads.
+const PassengerView = lazy(() => import('./views/PassengerView'))
+const DriverView = lazy(() => import('./views/DriverView'))
+const AdminView = lazy(() => import('./views/AdminView'))
+const PresentationDemoView = lazy(() => import('./views/PresentationDemoView'))
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const authInitStartedAt = Date.now()
@@ -45,48 +49,107 @@ const clerkAppearance = {
   elements: { card:'shadow-none', formButtonPrimary:'font-weight:700', footerAction:'color:#7a90b0' },
 }
 
-function AuthScreen({ view, onToggle }) {
+function AuthScreen({ view, onToggle, onGuestLogin }) {
   return (
     <div style={s({ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:24 })}>
       <div style={s({ width:'100%', maxWidth:440 })}>
-        <div style={s({ textAlign:'center', marginBottom:32 })}>
-          <div style={s({ display:'inline-flex', alignItems:'center', gap:10, marginBottom:8 })}>
+        
+        {/* Brand Header */}
+        <div style={s({ textAlign:'center', marginBottom:20 })}>
+          <div style={s({ display:'inline-flex', alignItems:'center', gap:10, marginBottom:6 })}>
             <div style={s({ width:38, height:38, borderRadius:10, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontWeight:800 })}>S</div>
             <span style={s({ fontFamily:'Bricolage Grotesque,sans-serif', fontSize:22, fontWeight:800, color:C.text, letterSpacing:'-0.03em' })}>SmartRoute AI</span>
           </div>
-          <p style={s({ color:C.muted2, fontSize:13 })}>{view==='login' ? 'Sign in to your account' : 'Create a new account'}</p>
+          <p style={s({ color:C.muted2, fontSize:12 })}>Autonomous Shared Transit Optimization Engine</p>
         </div>
-        {view==='login'
-          ? <SignIn routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
-          : <SignUp routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
-        }
-        <p style={s({ textAlign:'center', marginTop:20, color:C.muted, fontSize:13 })}>
-          {view==='login' ? "Don't have an account? " : 'Already have an account? '}
-          <button onClick={onToggle} style={s({ background:'none', border:'none', color:C.accent, fontWeight:700, cursor:'pointer', fontSize:13 })}>
-            {view==='login' ? 'Sign up' : 'Sign in'}
-          </button>
-        </p>
+
+        {/* Simulation mode chooser */}
+        <div style={s({ background:`linear-gradient(135deg, ${C.surface} 0%, ${C.surface2} 100%)`, border:`1.5px solid ${C.accent}66`, borderRadius:14, padding:'14px 16px', marginBottom:20, boxShadow:'0 8px 24px rgba(0,201,167,0.15)' })}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+            <span style={s({ color:C.accent, fontSize:11, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.06em' })}>Simulation Mode</span>
+            <span style={{ fontSize:14 }}>⇄</span>
+          </div>
+          <p style={s({ color:C.muted2, fontSize:11, marginBottom:12, lineHeight:1.4 })}>
+            Choose the normal Uber-like ride flow or the isolated college presentation walkthrough.
+          </p>
+          <div style={{ display:'flex', gap:7 }}>
+            <button
+              onClick={() => onGuestLogin?.('passenger', 'home')}
+              style={s({ flex:1, padding:'10px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:9, fontSize:11, fontWeight:800, cursor:'pointer' })}
+            >
+              🚕 Normal Ride
+            </button>
+            <button
+              onClick={() => onGuestLogin?.('admin', 'presentation-demo')}
+              style={s({ flex:1, padding:'10px 8px', background:`linear-gradient(135deg, ${C.accent} 0%, #00a887 100%)`, color:C.bg, border:'none', borderRadius:9, fontSize:11, fontWeight:800, cursor:'pointer', boxShadow:'0 4px 14px rgba(0,201,167,0.3)' })}
+            >
+              🎓 Presentation
+            </button>
+          </div>
+        </div>
+
+        {/* Quick Role Fast-Pass */}
+        <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'12px 14px', marginBottom:20 })}>
+          <p style={s({ color:C.muted2, fontSize:10, fontWeight:700, textTransform:'uppercase', marginBottom:8, textAlign:'center' })}>Quick Role Login (One-Click Bypass)</p>
+          <div style={{ display:'flex', gap:6 }}>
+            <button onClick={() => onGuestLogin?.('passenger', 'home')} style={s({ flex:1, padding:'7px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
+              👤 Passenger
+            </button>
+            <button onClick={() => onGuestLogin?.('driver', 'driver-home')} style={s({ flex:1, padding:'7px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
+              🚗 Driver
+            </button>
+            <button onClick={() => onGuestLogin?.('admin', 'admin-overview')} style={s({ flex:1, padding:'7px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
+              🛡️ Admin
+            </button>
+          </div>
+        </div>
+
+        {/* Clerk Sign In / Sign Up Form */}
+        <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
+          <p style={s({ color:C.muted2, fontSize:11, textAlign:'center', marginBottom:12 })}>{view==='login' ? 'Or sign in with Clerk account' : 'Or create new Clerk account'}</p>
+          {view==='login'
+            ? <SignIn routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
+            : <SignUp routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
+          }
+          <p style={s({ textAlign:'center', marginTop:16, color:C.muted, fontSize:12 })}>
+            {view==='login' ? "Don't have an account? " : 'Already have an account? '}
+            <button onClick={onToggle} style={s({ background:'none', border:'none', color:C.accent, fontWeight:700, cursor:'pointer', fontSize:12 })}>
+              {view==='login' ? 'Sign up' : 'Sign in'}
+            </button>
+          </p>
+        </div>
+
       </div>
     </div>
   )
 }
 
 // ─── Loading screen ───────────────────────────────────────────────────────────
-function LoadingScreen({ timeout }) {
+function LoadingScreen({ timeout, onGuestLogin }) {
   return (
     <div style={s({ width:'100%', height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, padding:24, textAlign:'center' })}>
       <div style={s({ width:44, height:44, borderRadius:'50%', border:`3px solid ${C.accent}30`, borderTopColor:C.accent, animation:'spin 0.8s linear infinite' })} />
       <p style={s({ color:C.muted, fontSize:13 })}>Loading SmartRoute AI…</p>
-      {timeout && (
-        <div style={s({ marginTop:8, maxWidth:360, padding:16, background:C.surface, border:`1px solid ${C.border}`, borderRadius:12 })}>
-          <p style={s({ color:C.text, fontSize:13, fontWeight:700, marginBottom:6 })}>Taking longer than expected</p>
-          <p style={s({ color:C.muted2, fontSize:12, lineHeight:1.5, marginBottom:12 })}>Check that nothing is blocking Clerk's auth scripts (ad-blockers, Brave Shields).</p>
-          <div style={s({ display:'flex', gap:8, justifyContent:'center' })}>
-            <button onClick={() => window.location.reload()} style={s({ background:C.accent, color:C.bg, border:'none', borderRadius:8, padding:'8px 16px', fontSize:12, fontWeight:700, cursor:'pointer' })}>Reload</button>
-            <button onClick={() => window.location.reload()} style={s({ background:C.surface2, color:C.text, border:`1px solid ${C.border2}`, borderRadius:8, padding:'8px 16px', fontSize:12, cursor:'pointer' })}>Reload</button>
-          </div>
+      
+      {/* Fallback fast pass if Clerk is taking a while or blocked by Brave Shields */}
+      <div style={s({ marginTop:12, maxWidth:360, padding:16, background:C.surface, border:`1px solid ${C.border}`, borderRadius:12 })}>
+        <p style={s({ color:C.text, fontSize:13, fontWeight:700, marginBottom:8 })}>Quick Simulation Access</p>
+        <p style={s({ color:C.muted2, fontSize:11, lineHeight:1.4, marginBottom:12 })}>If authentication is slow or blocked, choose which isolated simulation to open:</p>
+        <div style={{ display:'flex', gap:7 }}>
+          <button
+            onClick={() => onGuestLogin?.('passenger', 'home')}
+            style={s({ flex:1, padding:'9px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:8, fontSize:11, fontWeight:800, cursor:'pointer' })}
+          >
+            🚕 Normal Ride
+          </button>
+          <button
+            onClick={() => onGuestLogin?.('admin', 'presentation-demo')}
+            style={s({ flex:1, padding:'9px 8px', background:C.accent, color:C.bg, border:'none', borderRadius:8, fontSize:11, fontWeight:800, cursor:'pointer' })}
+          >
+            🎓 Presentation
+          </button>
         </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -205,8 +268,9 @@ export default function App() {
   }, [isLoaded, isSignedIn, clerkUserId, toast])
 
   // Keep the inbox and toast state in sync with ride lifecycle events.
+  const userId = user?.id
   useEffect(() => {
-    if (!isLoaded || !isSignedIn || !user) return
+    if (!isLoaded || !isSignedIn || !userId) return
     let ws = null
     let cancelled = false
     getTokenRef.current().then(token => {
@@ -219,7 +283,20 @@ export default function App() {
       })
     }).catch((error) => { void error })
     return () => { cancelled = true; ws?.close() }
-  }, [isLoaded, isSignedIn, user?.id, toast])
+  }, [isLoaded, isSignedIn, userId, toast])
+
+  const handleGuestLogin = useCallback((role = 'admin', targetView = 'presentation-demo') => {
+    const guestUser = {
+      id: 1,
+      name: role === 'admin' ? 'Demo Admin (CIT)' : role === 'driver' ? 'Demo Driver (Rajesh)' : 'Demo Rider (Ananya)',
+      email: `${role}@smartroute.ai`,
+      phone: '+91 98765 43210',
+      role: role,
+    }
+    setUser(guestUser)
+    setView(targetView)
+    toast('success', `Welcome, ${guestUser.name}!`, 'All transit simulations and features are active.')
+  }, [toast])
 
   const isBootstrapping = isLoaded && isSignedIn && !user && !bootstrapError
   const isAuthView      = view === 'login' || view === 'register'
@@ -241,13 +318,15 @@ export default function App() {
 
       <ToastBar toasts={toasts} dismiss={id => setToasts(p => p.filter(t => t.id !== id))} />
 
-      {(!isLoaded || isBootstrapping)
-        ? <LoadingScreen timeout={authTimeout && !isBootstrapping} />
+      {user
+        ? <AppShell user={user} view={view} setView={setView} unreadCount={unreadCount} onLogout={handleLogout} notifications={notifications} setNotifications={setNotifications} toast={toast} />
+        : (!isLoaded || isBootstrapping)
+        ? <LoadingScreen timeout={authTimeout && !isBootstrapping} onGuestLogin={handleGuestLogin} />
         : bootstrapError
-          ? <BootstrapErrorScreen onRetry={() => window.location.reload()} />
+        ? <BootstrapErrorScreen onRetry={() => window.location.reload()} />
         : isAuthView
-          ? <AuthScreen view={view} onToggle={() => setView(view==='login'?'register':'login')} />
-          : user && <AppShell user={user} view={view} setView={setView} unreadCount={unreadCount} onLogout={handleLogout} notifications={notifications} setNotifications={setNotifications} toast={toast} />
+        ? <AuthScreen view={view} onToggle={() => setView(view==='login'?'register':'login')} onGuestLogin={handleGuestLogin} />
+        : <LoadingScreen timeout={false} onGuestLogin={handleGuestLogin} />
       }
     </div>
   )
@@ -262,27 +341,30 @@ function roleHome(role) {
 // ─── App Shell ────────────────────────────────────────────────────────────────
 function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast }) {
   const passengerNav = [
-    { v:'home',     icon:'⌂', label:'Home' },
-    { v:'trips',    icon:'▤', label:'My Trips' },
-    { v:'inbox',    icon:'◉', label:'Inbox',   badge:true },
-    { v:'profile',  icon:'○', label:'Profile' },
+    { v:'home',              icon:'⌂', label:'Home' },
+    { v:'trips',             icon:'▤', label:'My Trips' },
+    { v:'inbox',             icon:'◉', label:'Inbox', badge:true },
+    { v:'recent-rides',      icon:'◷', label:'Recent Rides' },
+    { v:'profile',           icon:'○', label:'Profile' },
   ]
   const driverNav = [
-    { v:'driver-home',   icon:'▣', label:'Dashboard' },
-    { v:'driver-map',    icon:'⌁', label:'Live Map' },
-    { v:'driver-routes', icon:'›', label:'My Routes' },
-    { v:'inbox',         icon:'◉', label:'Inbox', badge:true },
-    { v:'profile',       icon:'○', label:'Profile' },
+    { v:'driver-home',       icon:'▣', label:'Dashboard' },
+    { v:'presentation-demo', icon:'⚡', label:'Presentation Demo' },
+    { v:'driver-map',        icon:'⌁', label:'Live Map' },
+    { v:'driver-routes',     icon:'›', label:'My Routes' },
+    { v:'inbox',             icon:'◉', label:'Inbox', badge:true },
+    { v:'profile',           icon:'○', label:'Profile' },
   ]
   const adminNav = [
-    { v:'admin-overview',   icon:'▦', label:'Overview' },
-    { v:'admin-rides',      icon:'▤', label:'Rides' },
-    { v:'admin-vehicles',   icon:'□', label:'Fleet' },
-    { v:'admin-cluster',    icon:'⌘', label:'Cluster' },
-    { v:'admin-routes',     icon:'⌁', label:'Routes' },
-    { v:'admin-analytics',  icon:'↗', label:'Analytics' },
-    { v:'admin-jobs',       icon:'⚙', label:'Jobs' },
-    { v:'admin-heatmap',    icon:'◌', label:'Heatmap' },
+    { v:'admin-overview',    icon:'▦', label:'Overview' },
+    { v:'presentation-demo', icon:'⚡', label:'Presentation Demo' },
+    { v:'admin-rides',       icon:'▤', label:'Rides' },
+    { v:'admin-vehicles',    icon:'□', label:'Fleet' },
+    { v:'admin-cluster',     icon:'⌘', label:'Cluster' },
+    { v:'admin-routes',      icon:'⌁', label:'Routes' },
+    { v:'admin-analytics',   icon:'↗', label:'Analytics' },
+    { v:'admin-jobs',        icon:'⚙', label:'Jobs' },
+    { v:'admin-heatmap',     icon:'◌', label:'Heatmap' },
   ]
   const nav = user.role==='admin' ? adminNav : user.role==='driver' ? driverNav : passengerNav
 
@@ -297,6 +379,23 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
             <p style={s({ color:C.muted, fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em' })}>{user.role}</p>
           </div>
         </div>
+        <div style={s({ marginBottom:16, padding:8, background:C.surface, border:`1px solid ${C.border}`, borderRadius:10 })}>
+            <p style={s({ color:C.muted2, fontSize:9, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.06em', margin:'0 3px 7px' })}>Simulation Mode</p>
+            <div style={{ display:'flex', gap:4 }}>
+              <button
+                onClick={() => setView(roleHome(user.role))}
+                style={s({ flex:1, padding:'7px 4px', border:'none', borderRadius:6, background:view === 'presentation-demo' ? 'transparent' : `${C.accent}22`, color:view === 'presentation-demo' ? C.muted2 : C.accent, fontSize:10, fontWeight:800, cursor:'pointer' })}
+              >
+                Normal
+              </button>
+              <button
+                onClick={() => setView('presentation-demo')}
+                style={s({ flex:1, padding:'7px 4px', border:'none', borderRadius:6, background:view === 'presentation-demo' ? `${C.accent}22` : 'transparent', color:view === 'presentation-demo' ? C.accent : C.muted2, fontSize:10, fontWeight:800, cursor:'pointer' })}
+              >
+                Demo
+              </button>
+            </div>
+          </div>
         <nav style={{ flex:1, display:'flex', flexDirection:'column', gap:2 }}>
           {nav.map(item => {
             const active = view === item.v
@@ -333,13 +432,14 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
 
 // ─── Role Router ──────────────────────────────────────────────────────────────
 // Views that need full-height (contain maps)
-const FULLHEIGHT_VIEWS = ['home','tracking','driver-map','driver-routes']
+const FULLHEIGHT_VIEWS = ['home','tracking','driver-map','driver-routes','presentation-demo']
 
 function RoleRouter({ user, view, setView, notifications, setNotifications, toast }) {
   const ctx = { user, view, setView, toast }
   const fullH = FULLHEIGHT_VIEWS.includes(view)
 
   const inner = (() => {
+    if (view === 'presentation-demo') return <PresentationDemoView {...ctx} />
     if (view === 'inbox')   return <InboxView notifications={notifications} setNotifications={setNotifications} toast={toast} />
     if (view === 'profile') return <ProfileView user={user} />
     if (user.role === 'passenger') return <PassengerView {...ctx} />
@@ -350,7 +450,9 @@ function RoleRouter({ user, view, setView, notifications, setNotifications, toas
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%', overflow: fullH ? 'hidden' : 'auto' }}>
-      {inner}
+      <Suspense fallback={<LoadingScreen timeout={false} />}>
+        {inner}
+      </Suspense>
     </div>
   )
 }

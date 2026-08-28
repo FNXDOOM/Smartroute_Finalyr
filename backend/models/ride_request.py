@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -14,12 +16,18 @@ class RideRequest(Base):
     dest_lat = Column(Float, nullable=False)
     dest_lng = Column(Float, nullable=False)
     status = Column(String, default="pending", nullable=False)  # pending | clustered | assigned | in_progress | completed | cancelled
+    mode = Column("ride_mode", String, default="live", nullable=False, index=True)  # live | presentation_demo
+    demo_run_id = Column(String, nullable=True, index=True)
     h3_index = Column(String, index=True, nullable=True)
     cluster_id = Column(Integer, nullable=True)
     virtual_stop_id = Column(Integer, ForeignKey("virtual_stops.id"), nullable=True)
     pickup_location = Column(PortableGeometry, nullable=True)
     destination_location = Column(PortableGeometry, nullable=True)
-    request_time = Column(DateTime(timezone=True), server_default=func.now())
+    # Python-side default (microsecond resolution) rather than server_default=func.now():
+    # SQLite's CURRENT_TIMESTAMP only has 1-second resolution, so rides created in the
+    # same request/transaction (e.g. the demo-batch endpoint) were all getting the exact
+    # same request_time. default= is evaluated per-row at flush time in Python instead.
+    request_time = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now())
     # Human-readable labels supplied by the mobile client
     pickup_label = Column(String, nullable=True)
     destination_label = Column(String, nullable=True)
@@ -30,4 +38,3 @@ class RideRequest(Base):
 
     user = relationship("User", back_populates="ride_requests")
     virtual_stop = relationship("VirtualStop", back_populates="ride_requests")
-

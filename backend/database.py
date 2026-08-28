@@ -84,6 +84,22 @@ def create_db_tables(bind_engine=None):
                 "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
                 "ON vehicles (driver_user_id)"
             ))
+            for table in ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles"):
+                columns = {column["name"] for column in inspect(target_engine).get_columns(table)}
+                if "ride_mode" not in columns and "mode" in columns:
+                    connection.execute(text(f"ALTER TABLE {table} RENAME COLUMN mode TO ride_mode"))
+                connection.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ride_mode VARCHAR NOT NULL DEFAULT 'live'"
+                ))
+                connection.execute(text(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS demo_run_id VARCHAR"
+                ))
+                connection.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{table}_ride_mode ON {table} (ride_mode)"
+                ))
+                connection.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{table}_demo_run_id ON {table} (demo_run_id)"
+                ))
     elif target_engine.dialect.name == "sqlite":
         columns = {column[1] for column in inspect(target_engine).get_columns("users")}
         if "clerk_user_id" not in columns:
@@ -102,6 +118,27 @@ def create_db_tables(bind_engine=None):
                 connection.execute(text(
                     "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
                     "ON vehicles (driver_user_id)"
+                ))
+        for table in ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles"):
+            columns = {column[1] for column in inspect(target_engine).get_columns(table)}
+            with target_engine.begin() as connection:
+                if "ride_mode" not in columns and "mode" in columns:
+                    connection.execute(text(f"ALTER TABLE {table} RENAME COLUMN mode TO ride_mode"))
+                    columns.remove("mode")
+                    columns.add("ride_mode")
+                if "ride_mode" not in columns:
+                    connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN ride_mode VARCHAR NOT NULL DEFAULT 'live'"
+                    ))
+                if "demo_run_id" not in columns:
+                    connection.execute(text(
+                        f"ALTER TABLE {table} ADD COLUMN demo_run_id VARCHAR"
+                    ))
+                connection.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{table}_ride_mode ON {table} (ride_mode)"
+                ))
+                connection.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS ix_{table}_demo_run_id ON {table} (demo_run_id)"
                 ))
 
 

@@ -9,6 +9,8 @@ class VirtualStop(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     cluster_id = Column(Integer, nullable=False)
+    mode = Column("ride_mode", String, default="live", nullable=False, index=True)  # live | presentation_demo
+    demo_run_id = Column(String, nullable=True, index=True)
     h3_index = Column(String, index=True, nullable=True)
     lat = Column(Float, nullable=False)
     lng = Column(Float, nullable=False)

@@ -15,6 +15,7 @@ from services.prediction.feature_engineering import (
     build_demand_features,
     features_to_dict,
 )
+from utils.ride_scope import LIVE_MODE
 
 MODEL_PATH = Path(__file__).resolve().parents[3] / "ml" / "models" / "demand_model.pkl"
 FEATURE_ORDER = ["hour", "day_of_week", "h3_zone", "historical_count", "is_weekend"]
@@ -39,7 +40,10 @@ def _query_historical_requests(
     lookback_days: int = 30,
 ) -> List[RideRequest]:
     threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-    query = db.query(RideRequest).filter(RideRequest.request_time >= threshold)
+    query = db.query(RideRequest).filter(
+        RideRequest.request_time >= threshold,
+        RideRequest.mode == LIVE_MODE,
+    )
 
     if h3_index:
         query = query.filter(RideRequest.h3_index == h3_index)
@@ -64,7 +68,11 @@ def _count_historical_requests(
     threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
     return (
         db.query(RideRequest)
-        .filter(RideRequest.request_time >= threshold, RideRequest.h3_index == h3_index)
+        .filter(
+            RideRequest.request_time >= threshold,
+            RideRequest.h3_index == h3_index,
+            RideRequest.mode == LIVE_MODE,
+        )
         .count()
     )
 

@@ -13,6 +13,8 @@ from models.cluster_run import ClusterRun
 from models.demand_snapshot import DemandSnapshot
 from models.job_run import JobRun
 from models.ride_request import RideRequest
+from models.route_plan import RoutePlan
+from models.route_waypoint import RouteWaypointRecord
 from models.vehicle import Vehicle
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 from models.virtual_stop import VirtualStop
@@ -22,8 +24,10 @@ from services.prediction.demand_model import predict_zone_demand
 from services.prediction.feature_engineering import get_h3_center
 from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
-from services.notifications import create_notification
+from services.routing.vrp_solver import solve_vrp
+from services.notifications import create_notification, create_notifications_for_users
 from utils.geo import haversine_meters as _haversine_meters
+from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE, apply_ride_scope, validate_ride_mode
 
 CLUSTER_INTERVAL_SECONDS = 60
 DEMAND_INTERVAL_SECONDS = 300
@@ -74,11 +78,18 @@ def run_cluster_job(
     min_cluster_size: int = 2,
     triggered_by_user_id: Optional[int] = None,
     is_scheduled: bool = True,
+    mode: str = LIVE_MODE,
+    demo_run_id: Optional[str] = None,
 ) -> Dict:
+    try:
+        mode = validate_ride_mode(mode)
+        ride_query = apply_ride_scope(db.query(RideRequest), mode, demo_run_id)
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
     job_run = _start_job_run(db, "cluster_pending_rides", triggered_by_user_id, is_scheduled)
     try:
         requests = (
-            db.query(RideRequest)
+            ride_query
             .filter(RideRequest.status == "pending")
             .order_by(RideRequest.request_time.asc())
             .all()
@@ -93,6 +104,8 @@ def run_cluster_job(
                 clusters_formed=0,
                 noise_requests_count=0,
                 created_by_user_id=triggered_by_user_id,
+                mode=mode,
+                demo_run_id=demo_run_id,
                 cluster_summary=[],
             )
             db.add(cluster_run)
@@ -143,6 +156,8 @@ def run_cluster_job(
 
                 virtual_stop = VirtualStop(
                     cluster_id=next_cluster_id,
+                    mode=mode,
+                    demo_run_id=demo_run_id,
                     h3_index=bucket_h3_index,
                     lat=snapped_lat,
                     lng=snapped_lng,
@@ -183,6 +198,8 @@ def run_cluster_job(
             clusters_formed=clusters_formed,
             noise_requests_count=noise_count,
             created_by_user_id=triggered_by_user_id,
+            mode=mode,
+            demo_run_id=demo_run_id,
             cluster_summary=cluster_groups_payload,
         )
         db.add(cluster_run)
@@ -227,7 +244,10 @@ def run_demand_refresh_job(
     try:
         ref_time = reference_time or datetime.now(timezone.utc)
         threshold = ref_time - timedelta(days=lookback_days)
-        rides = db.query(RideRequest).filter(RideRequest.request_time >= threshold).all()
+        rides = db.query(RideRequest).filter(
+            RideRequest.request_time >= threshold,
+            RideRequest.mode == LIVE_MODE,
+        ).all()
         h3_indexes = set()
         for ride in rides:
             h3_indexes.add(ride.h3_index or get_h3_index(ride.pickup_lat, ride.pickup_lng, resolution=resolution))
@@ -287,7 +307,10 @@ def run_vehicle_rebalance_job(
 ) -> Dict:
     job_run = _start_job_run(db, "rebalance_idle_vehicles", triggered_by_user_id, is_scheduled)
     try:
-        idle_vehicles = db.query(Vehicle).filter(Vehicle.status == "idle").order_by(Vehicle.id.asc()).all()
+        idle_vehicles = db.query(Vehicle).filter(
+            Vehicle.mode == LIVE_MODE,
+            Vehicle.status == "idle",
+        ).order_by(Vehicle.id.asc()).all()
         if not idle_vehicles:
             _finish_job_run(
                 db,
@@ -303,7 +326,10 @@ def run_vehicle_rebalance_job(
             }
 
         threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-        rides = db.query(RideRequest).filter(RideRequest.request_time >= threshold).all()
+        rides = db.query(RideRequest).filter(
+            RideRequest.request_time >= threshold,
+            RideRequest.mode == LIVE_MODE,
+        ).all()
         demand_cells = {}
         for ride in rides:
             h3_index = ride.h3_index or get_h3_index(ride.pickup_lat, ride.pickup_lng)
@@ -388,37 +414,276 @@ def run_vehicle_rebalance_job(
         raise
 
 
+def run_auto_dispatch_pipeline(
+    db: Session,
+    triggered_by_user_id: Optional[int] = None,
+    is_scheduled: bool = False,
+    depot_lat: float = 12.9784,
+    depot_lng: float = 77.6408,
+    mode: str = LIVE_MODE,
+    demo_run_id: Optional[str] = None,
+) -> Dict:
+    """
+    Runs the full end-to-end AI Dispatch Pipeline:
+    1. Clusters pending requests into virtual stops using HDBSCAN & K-Medoids + road snapping.
+    2. Gathers clustered virtual stops and idle vehicles.
+    3. Optimizes multi-passenger routes using Google OR-Tools CVRP solver.
+    4. Dynamically assigns vehicles using Hungarian matching and updates ride status to 'assigned'.
+    """
+    mode = validate_ride_mode(mode)
+    if mode == PRESENTATION_DEMO_MODE and not demo_run_id:
+        raise ValueError("demo_run_id is required for presentation_demo mode")
+    job_run = _start_job_run(db, "auto_dispatch_pipeline", triggered_by_user_id, is_scheduled)
+    try:
+        # Step 1: Run clustering on any pending requests
+        cluster_res = run_cluster_job(
+            db,
+            triggered_by_user_id=triggered_by_user_id,
+            is_scheduled=is_scheduled,
+            mode=mode,
+            demo_run_id=demo_run_id,
+        )
+
+        # Step 2: Find all clustered virtual stops that do not have an active route plan
+        clustered_rides = apply_ride_scope(
+            db.query(RideRequest), mode, demo_run_id
+        ).filter(
+            RideRequest.status == "clustered",
+            RideRequest.virtual_stop_id.isnot(None),
+        ).all()
+
+        if not clustered_rides:
+            _finish_job_run(db, job_run, "success", {
+                "clusters_formed": cluster_res.get("clusters_formed", 0),
+                "routes_optimized": 0,
+                "assigned_rides": 0,
+                "message": "No unassigned clustered rides to dispatch",
+            })
+            db.commit()
+            return {
+                "job_run_id": job_run.id,
+                "clusters_formed": cluster_res.get("clusters_formed", 0),
+                "routes_optimized": 0,
+                "assigned_rides": 0,
+            }
+
+        virtual_stop_ids = sorted({r.virtual_stop_id for r in clustered_rides if r.virtual_stop_id})
+        virtual_stop_query = db.query(VirtualStop).filter(
+            VirtualStop.id.in_(virtual_stop_ids),
+            VirtualStop.mode == mode,
+        )
+        if mode == PRESENTATION_DEMO_MODE:
+            virtual_stop_query = virtual_stop_query.filter(VirtualStop.demo_run_id == demo_run_id)
+        virtual_stops = virtual_stop_query.all()
+
+        vehicle_scope = db.query(Vehicle)
+        if mode == PRESENTATION_DEMO_MODE:
+            demo_vehicle = vehicle_scope.filter(
+                Vehicle.mode == PRESENTATION_DEMO_MODE,
+                Vehicle.license_plate == "DEMO-PRESENTATION-01",
+            ).first()
+            if not demo_vehicle:
+                demo_vehicle = Vehicle(
+                    license_plate="DEMO-PRESENTATION-01",
+                    capacity=4,
+                    mode=PRESENTATION_DEMO_MODE,
+                    status="idle",
+                    lat=depot_lat,
+                    lng=depot_lng,
+                )
+                db.add(demo_vehicle)
+                db.flush()
+            demo_vehicle.status = "idle"
+            demo_vehicle.assigned_route_id = None
+            vehicle_scope = vehicle_scope.filter(Vehicle.id == demo_vehicle.id)
+        else:
+            vehicle_scope = vehicle_scope.filter(Vehicle.mode == LIVE_MODE)
+        idle_vehicles = vehicle_scope.filter(
+            (Vehicle.status == "idle") | (Vehicle.assigned_route_id.is_(None))
+        ).order_by(Vehicle.id.asc()).all()
+
+        if not idle_vehicles or not virtual_stops:
+            _finish_job_run(db, job_run, "success", {
+                "clusters_formed": cluster_res.get("clusters_formed", 0),
+                "routes_optimized": 0,
+                "idle_vehicles": len(idle_vehicles),
+                "message": "No idle vehicles available for dispatch",
+            })
+            db.commit()
+            return {
+                "job_run_id": job_run.id,
+                "clusters_formed": cluster_res.get("clusters_formed", 0),
+                "routes_optimized": 0,
+                "idle_vehicles": len(idle_vehicles),
+            }
+
+        capacities = [v.capacity for v in idle_vehicles]
+        stops = [{"lat": depot_lat, "lng": depot_lng, "demand": 0, "stop_id": None}]
+        for vs in virtual_stops:
+            stops.append({
+                "lat": vs.lat,
+                "lng": vs.lng,
+                "demand": max(1, int(vs.passenger_count)),
+                "stop_id": vs.id,
+            })
+
+        solution = solve_vrp(
+            stops=stops,
+            num_vehicles=len(idle_vehicles),
+            vehicle_capacity=min(capacities) if capacities else 4,
+            vehicle_capacities=capacities,
+        )
+
+        routes_count = 0
+        assigned_rides_count = 0
+        stop_lookup = {idx: stop for idx, stop in enumerate(stops)}
+
+        for route_data in solution.get("routes", []):
+            vehicle_idx = route_data["vehicle_idx"]
+            if vehicle_idx >= len(idle_vehicles):
+                continue
+            actual_vehicle = idle_vehicles[vehicle_idx]
+            route_id = f"route-{actual_vehicle.id}-{uuid4().hex[:8]}"
+
+            waypoint_payloads = [{
+                "stop_id": None,
+                "lat": depot_lat,
+                "lng": depot_lng,
+                "waypoint_type": "depot",
+                "passenger_ids": [],
+            }]
+
+            for stop_index in route_data["stop_indices"][1:]:
+                stop = stop_lookup.get(stop_index)
+                if not stop or stop.get("stop_id") is None:
+                    continue
+                vs_match = next((v for v in virtual_stops if v.id == stop["stop_id"]), None)
+                if not vs_match:
+                    continue
+                passenger_ids = [req.id for req in vs_match.ride_requests if req.status == "clustered"]
+                waypoint_payloads.append({
+                    "stop_id": vs_match.id,
+                    "lat": vs_match.lat,
+                    "lng": vs_match.lng,
+                    "waypoint_type": "pickup",
+                    "passenger_ids": passenger_ids,
+                })
+
+            waypoint_payloads.append({
+                "stop_id": None,
+                "lat": depot_lat,
+                "lng": depot_lng,
+                "waypoint_type": "depot",
+                "passenger_ids": [],
+            })
+
+            actual_vehicle.assigned_route_id = route_id
+            actual_vehicle.status = "active"
+
+            route_plan = RoutePlan(
+                route_id=route_id,
+                vehicle_id=actual_vehicle.id,
+                source_cluster_run_id=cluster_res.get("cluster_run_id"),
+                status="solved",
+                depot_lat=depot_lat,
+                depot_lng=depot_lng,
+                total_distance_meters=float(route_data.get("distance_m", 0)),
+                estimated_duration_seconds=float(route_data.get("distance_m", 0)) / 8.33,
+                created_by_user_id=triggered_by_user_id,
+                mode=mode,
+                demo_run_id=demo_run_id,
+                route_metadata={
+                    "vehicle_capacity": actual_vehicle.capacity,
+                    "assigned_stop_ids": [wp["stop_id"] for wp in waypoint_payloads if wp["stop_id"] is not None],
+                    "routing_provider": "local-road-matrix",
+                },
+            )
+            db.add(route_plan)
+            db.flush()
+
+            for sequence, waypoint in enumerate(waypoint_payloads):
+                db.add(
+                    RouteWaypointRecord(
+                        route_plan_id=route_plan.id,
+                        sequence=sequence,
+                        stop_id=waypoint["stop_id"],
+                        lat=waypoint["lat"],
+                        lng=waypoint["lng"],
+                        waypoint_type=waypoint["waypoint_type"],
+                        passenger_ids=waypoint["passenger_ids"],
+                    )
+                )
+
+            # Update all member ride requests to assigned
+            passenger_user_ids = []
+            for wp in waypoint_payloads:
+                if wp["stop_id"]:
+                    vs_item = next((v for v in virtual_stops if v.id == wp["stop_id"]), None)
+                    if vs_item:
+                        for req in vs_item.ride_requests:
+                            if req.status == "clustered":
+                                req.status = "assigned"
+                                assigned_rides_count += 1
+                                passenger_user_ids.append(req.user_id)
+
+            passenger_user_ids = sorted(set(passenger_user_ids))
+            if passenger_user_ids:
+                create_notifications_for_users(
+                    db,
+                    user_ids=passenger_user_ids,
+                    notification_type="route_assigned",
+                    title="Your route has been optimized",
+                    message=f"Your shared ride has been assigned to vehicle {actual_vehicle.license_plate}.",
+                    related_entity_type="route_plan",
+                    related_entity_id=route_plan.id,
+                    metadata={"route_id": route_id, "vehicle_id": actual_vehicle.id},
+                )
+            routes_count += 1
+
+        _finish_job_run(db, job_run, "success", {
+            "clusters_formed": cluster_res.get("clusters_formed", 0),
+            "routes_optimized": routes_count,
+            "assigned_rides": assigned_rides_count,
+        })
+        db.commit()
+        return {
+            "job_run_id": job_run.id,
+            "clusters_formed": cluster_res.get("clusters_formed", 0),
+            "routes_optimized": routes_count,
+            "assigned_rides": assigned_rides_count,
+        }
+    except Exception as exc:
+        db.rollback()
+        job_run = db.merge(job_run)
+        _finish_job_run(db, job_run, "failed", {}, error_message=str(exc))
+        db.commit()
+        raise
+
+
 def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Dict:
     """
-    Simulates the ride lifecycle (pending -> assigned -> arriving -> in_progress -> completed)
+    Simulates the active ride lifecycle (assigned -> arriving -> in_progress -> completed)
     every few seconds to feed real-time WebSocket events to the frontend.
     """
     job_run = _start_job_run(db, "simulate_ride_dispatch", None, is_scheduled)
     try:
-        # We process pending, clustered, assigned, arriving, and in_progress rides.
-        # Note: We won't strictly enforce 5s using request_time, we'll just progress them by one state 
-        # on each run if they've been in their current state for a few seconds. 
-        # For simplicity, we just bump the state of everything that is active.
         active_rides = db.query(RideRequest).filter(
-            RideRequest.status.in_(["pending", "clustered", "assigned", "arriving", "in_progress"])
+            RideRequest.status.in_(["assigned", "arriving", "in_progress"])
         ).all()
 
         transitions = {
-            "pending": "assigned",
-            "clustered": "assigned",
             "assigned": "arriving",
             "arriving": "in_progress",
             "in_progress": "completed",
         }
-        
+
         updates_count = 0
         for ride in active_rides:
             old_status = ride.status
             new_status = transitions.get(old_status)
             if new_status:
                 ride.status = new_status
-                
-                # Create a notification to trigger a WebSocket push to the user
+
                 create_notification(
                     db,
                     user_id=ride.user_id,
@@ -430,7 +695,25 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
                     metadata={"old_status": old_status, "new_status": new_status, "ride_id": ride.id},
                 )
                 updates_count += 1
-                
+
+                # If completed, check if vehicle can return to idle
+                if new_status == "completed" and ride.virtual_stop_id:
+                    waypoint = db.query(RouteWaypointRecord).filter(
+                        RouteWaypointRecord.stop_id == ride.virtual_stop_id
+                    ).first()
+                    if waypoint:
+                        route_plan = db.query(RoutePlan).filter(RoutePlan.id == waypoint.route_plan_id).first()
+                        if route_plan and route_plan.vehicle_id:
+                            veh = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+                            if veh:
+                                other_active = db.query(RideRequest).filter(
+                                    RideRequest.status.in_(["assigned", "arriving", "in_progress"]),
+                                    RideRequest.virtual_stop_id == ride.virtual_stop_id,
+                                ).count()
+                                if other_active == 0:
+                                    veh.status = "idle"
+                                    veh.assigned_route_id = None
+
         _finish_job_run(
             db,
             job_run,

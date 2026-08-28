@@ -16,8 +16,11 @@ from schemas.vehicle import (
     VehicleUpdate,
 )
 from services.assignment.hungarian_assigner import assign_vehicles
+from services.routing.vrp_solver import build_road_distance_to_targets, build_stadia_distance_matrix
+from config import STADIA_API_KEY
 from utils.auth_utils import get_current_user
 from utils.geo import haversine_meters
+from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
 
@@ -32,7 +35,7 @@ def list_vehicles(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can view fleet vehicles",
         )
-    query = db.query(Vehicle)
+    query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE)
     if current_user.role == "driver":
         query = query.filter(Vehicle.driver_user_id == current_user.id)
     return query.order_by(Vehicle.id.asc()).all()
@@ -50,7 +53,7 @@ def list_idle_vehicles(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can view fleet vehicles",
         )
-    query = db.query(Vehicle).filter(Vehicle.status == "idle")
+    query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == "idle")
     if current_user.role == "driver":
         query = query.filter(Vehicle.driver_user_id == current_user.id)
     return (
@@ -72,7 +75,7 @@ def assign_idle_vehicles_to_routes(
             detail="Only admin or driver users can assign vehicles",
         )
 
-    vehicle_query = db.query(Vehicle).filter(Vehicle.status == "idle")
+    vehicle_query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == "idle")
     if current_user.role == "driver":
         vehicle_query = vehicle_query.filter(Vehicle.driver_user_id == current_user.id)
     if payload.vehicle_ids:
@@ -85,15 +88,36 @@ def assign_idle_vehicles_to_routes(
     if not routes:
         return VehicleAssignmentResponse(status="no_routes", assignments=[])
 
+    located_vehicles = [vehicle for vehicle in vehicles if vehicle.lat is not None and vehicle.lng is not None]
+    route_points = [{"lat": route.lat, "lng": route.lng} for route in routes]
+    road_costs = None
+    if located_vehicles:
+        vehicle_points = [{"lat": vehicle.lat, "lng": vehicle.lng} for vehicle in located_vehicles]
+        if STADIA_API_KEY:
+            road_costs = build_stadia_distance_matrix(vehicle_points, route_points)
+        if road_costs is None:
+            road_costs = build_road_distance_to_targets(vehicle_points, route_points)
+
+    located_costs = {
+        vehicle.id: road_costs[index]
+        for index, vehicle in enumerate(located_vehicles)
+    } if road_costs is not None else {}
+
     cost_matrix = []
     for vehicle in vehicles:
-        if vehicle.lat is None or vehicle.lng is None:
-            vehicle_costs = [999_999 for _ in routes]
+        if vehicle.id in located_costs:
+            vehicle_costs = located_costs[vehicle.id]
         else:
-            vehicle_costs = [
-                int(haversine_meters(vehicle.lat, vehicle.lng, route.lat, route.lng))
-                for route in routes
-            ]
+            if vehicle.lat is None or vehicle.lng is None:
+                # Missing GPS is never selected ahead of a located vehicle.
+                vehicle_costs = [999_999 for _ in routes]
+            else:
+                # A provider/OSM outage should not make dispatch fail. This is
+                # only an outage fallback; normal assignment uses road costs.
+                vehicle_costs = [
+                    int(haversine_meters(vehicle.lat, vehicle.lng, route.lat, route.lng))
+                    for route in routes
+                ]
         cost_matrix.append(vehicle_costs)
 
     matched_pairs = assign_vehicles(cost_matrix)
@@ -155,6 +179,7 @@ def create_vehicle(
     vehicle = Vehicle(
         license_plate=payload.license_plate,
         capacity=payload.capacity,
+        mode=LIVE_MODE,
         status=payload.status or "idle",
         lat=payload.lat,
         lng=payload.lng,

@@ -30,6 +30,7 @@ class VehicleLocationUpdate(BaseModel):
 
 class VehicleResponse(VehicleBase):
     id: int
+    mode: str = "live"
     assigned_route_id: Optional[str] = None
     driver_user_id: Optional[int] = None
     created_at: Optional[datetime] = None

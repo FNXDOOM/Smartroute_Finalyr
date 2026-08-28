@@ -13,6 +13,8 @@ class RoutePlan(Base):
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=False)
     source_cluster_run_id = Column(Integer, ForeignKey("cluster_runs.id"), nullable=True)
     status = Column(String, default="solved", nullable=False)
+    mode = Column("ride_mode", String, default="live", nullable=False, index=True)
+    demo_run_id = Column(String, nullable=True, index=True)
     depot_lat = Column(Float, nullable=False)
     depot_lng = Column(Float, nullable=False)
     total_distance_meters = Column(Float, default=0.0, nullable=False)

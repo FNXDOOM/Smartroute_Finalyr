@@ -13,6 +13,8 @@ class ClusterRun(Base):
     resolution = Column(Integer, nullable=False)
     min_cluster_size = Column(Integer, nullable=False)
     status = Column(String, default="clustered", nullable=False)
+    mode = Column("ride_mode", String, default="live", nullable=False, index=True)
+    demo_run_id = Column(String, nullable=True, index=True)
     total_processed_requests = Column(Integer, default=0, nullable=False)
     clusters_formed = Column(Integer, default=0, nullable=False)
     noise_requests_count = Column(Integer, default=0, nullable=False)

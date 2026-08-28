@@ -9,6 +9,7 @@ class Vehicle(Base):
     id = Column(Integer, primary_key=True, index=True)
     license_plate = Column(String, unique=True, index=True, nullable=False)
     capacity = Column(Integer, nullable=False)
+    mode = Column("ride_mode", String, default="live", nullable=False, index=True)  # live | presentation_demo
     status = Column(String, default="idle", nullable=False)  # idle | active | en_route | offline
     lat = Column(Float, nullable=True)
     lng = Column(Float, nullable=True)

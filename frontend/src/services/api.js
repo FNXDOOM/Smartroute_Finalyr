@@ -5,17 +5,8 @@ const appBootstrapRequests = new Map();
 
 export const setAuthTokenGetter = (getter) => { authTokenGetter = getter; };
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
-// MapTiler/Stadia are recommended for production; Photon remains a keyless
-// development fallback so the app still works before provider keys are added.
-const GEOCODER_PROVIDER = (import.meta.env.VITE_GEOCODER_PROVIDER || 'photon').toLowerCase();
-const GEOCODER_URL = import.meta.env.VITE_GEOCODER_URL || 'https://photon.komoot.io/api';
-const MAPTILER_KEY = import.meta.env.VITE_MAPTILER_KEY;
-const STADIA_KEY = import.meta.env.VITE_STADIA_API_KEY;
-const ROUTER_URL = import.meta.env.VITE_ROUTER_URL || '';
-const ROUTER_ENGINE = (import.meta.env.VITE_ROUTER_ENGINE || 'osrm').toLowerCase();
-const INDIA_BBOX = '68.1,6.5,97.4,35.7';
 
 const COMMON_LOCATION_TYPOS = {
   chruch: 'church',
@@ -28,22 +19,6 @@ const COMMON_LOCATION_TYPOS = {
 
 function normaliseLocationQuery(query) {
   return query.split(/(\s+)/).map(part => COMMON_LOCATION_TYPOS[part.toLowerCase()] || part).join('');
-}
-
-function decodePolyline(encoded, precision = 6) {
-  const coordinates = [];
-  let index = 0, lat = 0, lng = 0;
-  const factor = 10 ** precision;
-  while (index < encoded.length) {
-    let shift = 0, result = 0, byte;
-    do { byte = encoded.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-    lat += (result & 1) ? ~(result >> 1) : result >> 1;
-    shift = 0; result = 0;
-    do { byte = encoded.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
-    lng += (result & 1) ? ~(result >> 1) : result >> 1;
-    coordinates.push([lng / factor, lat / factor]);
-  }
-  return coordinates;
 }
 
 const client = axios.create({
@@ -67,6 +42,16 @@ export const authApi = {
 // ─── Rides ────────────────────────────────────────────────────────────────────
 export const ridesApi = {
   create: async (payload) => (await client.post('/rides/request', payload)).data,
+  createBatch: async (requests) => (await client.post('/rides/batch', { requests })).data,
+  createDemoBatch: async (zone = 'indiranagar', demoRunId, locations = {}) => (await client.post('/rides/demo-batch', null, { params: {
+    zone,
+    ...(demoRunId ? { demo_run_id: demoRunId } : {}),
+    ...(locations.pickup?.lat != null ? { pickup_lat: locations.pickup.lat, pickup_lng: locations.pickup.lng } : {}),
+    ...(locations.destination?.lat != null ? { dest_lat: locations.destination.lat, dest_lng: locations.destination.lng } : {}),
+    ...(locations.pickup?.label ? { pickup_label: locations.pickup.label } : {}),
+    ...(locations.destination?.label ? { destination_label: locations.destination.label } : {}),
+  } })).data,
+  resetDemoRun: async (demoRunId) => (await client.delete(`/rides/demo-runs/${demoRunId}`)).data,
   getMyRides: async () => {
     const data = (await client.get('/rides/my-rides')).data;
     return Array.isArray(data) ? data : (data.rides || []);
@@ -85,105 +70,34 @@ export const ridesApi = {
 export const geocodeApi = {
   suggest: async (query, bias) => {
     const corrected = normaliseLocationQuery(query);
-    const queries = [...new Set([query, corrected, `${corrected}, India`])];
-    if (GEOCODER_PROVIDER === 'maptiler' && MAPTILER_KEY) {
-      const response = await axios.get(`https://api.maptiler.com/geocoding/${encodeURIComponent(corrected)}.json`, {
-        params: { key: MAPTILER_KEY, limit: 8, country: 'IN', ...(bias?.lat != null ? { proximity: `${bias.lng},${bias.lat}` } : {}) }, timeout: 7000,
-      });
-      return (response.data?.features || []).map(feature => {
-        const [lng, lat] = feature.geometry.coordinates;
-        return { lat, lng, label: feature.place_name || feature.text || query, raw: feature };
-      });
-    }
-    if (GEOCODER_PROVIDER === 'stadia' && STADIA_KEY) {
-      const response = await axios.get('https://api.stadiamaps.com/geocoding/v1/autocomplete', {
-        params: { text: corrected, api_key: STADIA_KEY, lang: 'en', focus_point: bias?.lat != null ? `${bias.lng},${bias.lat}` : undefined, boundary_country: 'IN' }, timeout: 7000,
-      });
-      return (response.data?.features || []).map(feature => {
-        const [lng, lat] = feature.geometry.coordinates;
-        return { lat, lng, label: feature.properties?.label || feature.properties?.name || query, raw: feature };
-      });
-    }
-    const responses = await Promise.all(queries.map(searchQuery => axios.get(GEOCODER_URL, {
-      params: { q: searchQuery, limit: 8, bbox: INDIA_BBOX, ...(bias?.lat != null ? { lat: bias.lat, lon: bias.lng } : {}) },
-      timeout: 7000,
-      headers: { Accept: 'application/json' },
-    })));
-    const results = responses.flatMap(response => response.data?.features || [])
-      .filter(feature => feature.geometry?.coordinates)
-      .filter(feature => {
-        const [lng, lat] = feature.geometry.coordinates;
-        const countryCode = String(feature.properties?.countrycode || '').toUpperCase();
-        return countryCode === 'IN'
-          && lng >= 68.1 && lng <= 97.4 && lat >= 6.5 && lat <= 35.7;
-      }).map(feature => {
-      const [lng, lat] = feature.geometry.coordinates;
-      const p = feature.properties || {};
-      const label = [p.name, p.street, p.locality, p.city, p.country].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(', ');
-      return { lat, lng, label: label || query, raw: feature };
-    });
-    // India is the product's service area. Never display a similarly named
-    // result from the United States, Liberia, Bangladesh, or another country.
-    return results.filter((result, index, all) => all.findIndex(item => item.lat === result.lat && item.lng === result.lng) === index);
+    return (await client.get('/geocode/suggest', { params: { query: corrected, ...(bias?.lat != null ? { lat: bias.lat, lng: bias.lng } : {}) } })).data;
   },
-  search: async (query, bias) => {
-    const results = await geocodeApi.suggest(query, bias);
+  search: async (query) => {
+    const corrected = normaliseLocationQuery(query);
+    const results = (await client.get('/geocode/search', { params: { query: corrected } })).data;
     if (!results.length) throw new Error('Location not found');
     return results[0];
   },
   reverse: async (lat, lng) => {
-    if (GEOCODER_PROVIDER === 'maptiler' && MAPTILER_KEY) {
-      const response = await axios.get(`https://api.maptiler.com/geocoding/${lng},${lat}.json`, { params: { key: MAPTILER_KEY, limit: 1 }, timeout: 7000 });
-      const feature = response.data?.features?.[0];
-      if (!feature) throw new Error('Location not found');
-      return { lat, lng, label: feature.place_name || feature.text || 'Current location' };
-    }
-    if (GEOCODER_PROVIDER === 'stadia' && STADIA_KEY) {
-      const response = await axios.get('https://api.stadiamaps.com/geocoding/v1/reverse', { params: { lat, lon: lng, api_key: STADIA_KEY }, timeout: 7000 });
-      const feature = response.data?.features?.[0];
-      if (!feature) throw new Error('Location not found');
-      return { lat, lng, label: feature.properties?.label || 'Current location' };
-    }
-    const response = await axios.get(`${GEOCODER_URL}/reverse`, {
-      params: { lat, lon: lng }, timeout: 7000, headers: { Accept: 'application/json' },
-    });
-    const p = response.data?.features?.[0]?.properties || {};
-    if (p.countrycode && String(p.countrycode).toUpperCase() !== 'IN') throw new Error('Current location is outside India');
-    return { lat, lng, label: [p.name, p.street, p.locality, p.city, p.country].filter(Boolean).join(', ') || 'Current location' };
+    return (await client.get('/geocode/reverse', { params: { lat, lng } })).data;
+  },
+  nearestRoad: async (lat, lng) => {
+    return (await client.get('/routing/nearest-road', { params: { lat, lng } })).data;
   },
 };
 
 // ─── Routing / route validation ─────────────────────────────────────────────
 export const routingApi = {
-  route: async (from, to) => {
-    if (!ROUTER_URL) return null;
-    if (ROUTER_ENGINE === 'valhalla') {
-      // Stadia exposes Valhalla at /route/v1, while a self-hosted Valhalla
-      // server commonly exposes the same request at /route. Keep the URL
-      // complete in VITE_ROUTER_URL so both deployments are supported.
-      const routerUrl = ROUTER_URL.replace(/\/$/, '');
-      const requestConfig = {
-        timeout: 10000,
-        ...(STADIA_KEY && routerUrl.includes('stadiamaps.com')
-          ? { params: { api_key: STADIA_KEY } }
-          : {}),
-      };
-      const response = await axios.post(routerUrl, {
-        locations: [{ lat: from.lat, lon: from.lng }, { lat: to.lat, lon: to.lng }],
-        costing: 'auto', units: 'kilometers', directions_options: { units: 'kilometers' },
-      }, requestConfig);
-      const summary = response.data?.trip?.summary || {};
-      const shape = response.data?.trip?.legs?.flatMap(leg => leg.shape ? decodePolyline(leg.shape) : []) || [];
-      return { distanceMeters: (summary.length || 0) * 1000, durationSeconds: summary.time || 0, geometry: shape };
-    }
-    const base = ROUTER_URL.replace(/\/$/, '');
-    const response = await axios.get(`${base}/route/v1/driving/${from.lng},${from.lat};${to.lng},${to.lat}`, {
-      params: { overview: 'full', geometries: 'geojson', alternatives: 'false' }, timeout: 10000,
-    });
-    const route = response.data?.routes?.[0];
-    if (!route) throw new Error('No drivable route found');
-    return { distanceMeters: route.distance, durationSeconds: route.duration, geometry: route.geometry?.coordinates || [] };
+  route: async (from, to, { traffic = false } = {}) => {
+    return (await client.get('/routing/route', { params: {
+      from_lat: from.lat, from_lng: from.lng, to_lat: to.lat, to_lng: to.lng,
+      traffic,
+    } })).data;
   },
+  matrix: async (sources, targets, costing) =>
+    (await client.post('/routing/matrix', { sources, targets, costing })).data,
+  mapMatch: async (locations) =>
+    (await client.post('/routing/map-match', locations)).data,
 };
 
 // ─── Vehicles ─────────────────────────────────────────────────────────────────
@@ -246,7 +160,8 @@ export const predictApi = {
 export const jobsApi = {
   status: async () => (await client.get('/jobs/status')).data,
   runs: async () => (await client.get('/jobs/runs')).data,
-  runClustering: async () => (await client.post('/jobs/run/clustering')).data,
+  runAutoDispatch: async ({ mode = 'live', demoRunId } = {}) => (await client.post('/jobs/run/auto-dispatch', null, { params: { mode, ...(demoRunId ? { demo_run_id: demoRunId } : {}) } })).data,
+  runClustering: async ({ mode = 'live', demoRunId } = {}) => (await client.post('/jobs/run/clustering', null, { params: { mode, ...(demoRunId ? { demo_run_id: demoRunId } : {}) } })).data,
   runDemand: async () => (await client.post('/jobs/run/demand')).data,
   runRebalance: async () => (await client.post('/jobs/run/rebalance')).data,
   rebalanceSuggestions: async () => (await client.get('/jobs/rebalance-suggestions')).data,
