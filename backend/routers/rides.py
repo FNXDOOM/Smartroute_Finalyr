@@ -18,6 +18,7 @@ from schemas.ride_request import (
     RideRequestResponse,
     RideRequestStatusUpdate,
     RideRequestBatchCreate,
+    DemoSharedBatchCreate,
 )
 from schemas.tracking import VehicleSnapshot
 from services.notifications import create_notification
@@ -233,6 +234,62 @@ def create_demo_clustered_riders(
             related_entity_type="ride_request",
             related_entity_id=req.id,
             metadata={"status": req.status, "h3_index": h3_idx},
+        )
+        created.append(req)
+    db.commit()
+    for req in created:
+        db.refresh(req)
+    return created
+
+
+@router.post("/demo-shared-batch", response_model=List[RideRequestResponse], status_code=status.HTTP_201_CREATED)
+def create_demo_shared_batch(
+    batch_in: DemoSharedBatchCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Create up to three presentation riders joining one shared-auto route."""
+    created = []
+    for item in batch_in.riders:
+        if not all(
+            is_india_location(lat, lng)
+            for lat, lng in (
+                (item.pickup_lat, item.pickup_lng),
+                (item.dest_lat, item.dest_lng),
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="All shared-demo pickup and destination points must be within the supported India service area",
+            )
+        h3_idx = get_h3_index(item.pickup_lat, item.pickup_lng, resolution=9)
+        req = RideRequest(
+            user_id=current_user.id,
+            pickup_lat=item.pickup_lat,
+            pickup_lng=item.pickup_lng,
+            dest_lat=item.dest_lat,
+            dest_lng=item.dest_lng,
+            status="pending",
+            mode=PRESENTATION_DEMO_MODE,
+            demo_run_id=batch_in.demo_run_id,
+            h3_index=h3_idx,
+            pickup_label=item.pickup_label,
+            destination_label=item.destination_label,
+            ride_option_id=item.ride_option_id or "swift-x",
+            ride_option_name=item.ride_option_name or "SwiftX",
+            ride_option_price=item.ride_option_price or "₹12–15",
+        )
+        db.add(req)
+        db.flush()
+        create_notification(
+            db,
+            user_id=current_user.id,
+            notification_type="ride_requested",
+            title="Shared ride request created",
+            message=f"Shared-demo ride #{req.id} ({item.pickup_label or 'virtual-stop pickup'}) is pending route matching.",
+            related_entity_type="ride_request",
+            related_entity_id=req.id,
+            metadata={"status": req.status, "h3_index": h3_idx, "demo_run_id": batch_in.demo_run_id},
         )
         created.append(req)
     db.commit()

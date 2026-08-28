@@ -51,6 +51,7 @@ export const ridesApi = {
     ...(locations.pickup?.label ? { pickup_label: locations.pickup.label } : {}),
     ...(locations.destination?.label ? { destination_label: locations.destination.label } : {}),
   } })).data,
+  createDemoSharedBatch: async (riders, demoRunId) => (await client.post('/rides/demo-shared-batch', { demo_run_id: demoRunId, riders })).data,
   resetDemoRun: async (demoRunId) => (await client.delete(`/rides/demo-runs/${demoRunId}`)).data,
   getMyRides: async () => {
     const data = (await client.get('/rides/my-rides')).data;

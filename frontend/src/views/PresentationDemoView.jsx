@@ -35,12 +35,99 @@ function interpolateDemoPath(path, progress) {
   return { position: path[path.length - 1], bearing: 0 }
 }
 
+function nearestPathProgress(path, point) {
+  if (!path.length) return 0
+  let bestIndex = 0
+  let bestDistance = Number.POSITIVE_INFINITY
+  path.forEach(([lng, lat], index) => {
+    const distance = Math.hypot((lng - point.lng) * Math.cos((point.lat * Math.PI) / 180), lat - point.lat)
+    if (distance < bestDistance) {
+      bestDistance = distance
+      bestIndex = index
+    }
+  })
+  return bestIndex / Math.max(1, path.length - 1)
+}
+
+function pointAtDemoProgress(path, progress) {
+  return interpolateDemoPath(path, progress).position
+}
+
+function nearbyHome(stop, direction) {
+  const walkMeters = 150
+  const latDelta = walkMeters / 111320
+  const lngDelta = walkMeters / (111320 * Math.max(0.2, Math.cos((stop.lat * Math.PI) / 180)))
+  return direction === 'north'
+    ? { lat: stop.lat + latDelta, lng: stop.lng, label: 'TC Palya residence' }
+    : { lat: stop.lat, lng: stop.lng - lngDelta, label: 'Near-route residence' }
+}
+
+function buildSharedPassengers(path, pickup, destination, baseRiders) {
+  const firstPickupProgress = Math.max(0.12, Math.min(0.45, nearestPathProgress(path, pickup)))
+  const secondPickupProgress = Math.min(0.72, Math.max(0.5, firstPickupProgress + 0.18))
+  const thirdPickupProgress = Math.min(0.86, Math.max(0.68, secondPickupProgress + 0.16))
+  const stops = [
+    { progress: firstPickupProgress, stop: pickup, home: pickup, walkDistanceM: 0, homeLabel: pickup.label, stopLabel: `${pickup.label} boarding point` },
+    { progress: secondPickupProgress, stop: (() => { const [lng, lat] = pointAtDemoProgress(path, secondPickupProgress); return { lat, lng } })(), home: null, walkDistanceM: 150, homeLabel: 'TC Palya residence', stopLabel: 'TC Palya Main Road Virtual Stop' },
+    { progress: thirdPickupProgress, stop: (() => { const [lng, lat] = pointAtDemoProgress(path, thirdPickupProgress); return { lat, lng } })(), home: null, walkDistanceM: 150, homeLabel: 'Near-route residence', stopLabel: 'Route Stop #3 Virtual Stop' },
+  ]
+  stops[1].home = nearbyHome(stops[1].stop, 'north')
+  stops[2].home = nearbyHome(stops[2].stop, 'west')
+
+  return baseRiders.slice(0, 3).map((rider, index) => {
+    const assignment = stops[index]
+    return {
+      ...rider,
+      plat: assignment.home.lat,
+      plng: assignment.home.lng,
+      plbl: assignment.homeLabel,
+      dlat: destination.lat,
+      dlng: destination.lng,
+      dlbl: destination.label,
+      homeLabel: assignment.homeLabel,
+      virtualStop: { ...assignment.stop, label: assignment.stopLabel },
+      pickupProgress: assignment.progress,
+      walkDistanceM: assignment.walkDistanceM,
+      walkingPath: assignment.walkDistanceM > 0
+        ? [[assignment.home.lng, assignment.home.lat], [assignment.stop.lng, assignment.stop.lat]]
+        : [],
+      riderNumber: index + 1,
+    }
+  })
+}
+
+const riderStatusLabels = {
+  requested: 'Requested',
+  clustered: 'Matched to route',
+  assigned: 'Route assigned',
+  walking_to_stop: 'Walking to stop',
+  boarding: 'Boarding',
+  in_vehicle: 'In shared auto',
+  completed: 'Dropped off',
+}
+
+function buildSharedWaypoints(scenario, depot, destination) {
+  return [
+    { lat: depot.lat, lng: depot.lng, waypoint_type: 'depot', label: 'Depot', marker_label: '🏢' },
+    ...scenario.flatMap(rider => [
+      { ...rider.virtualStop, waypoint_type: 'pickup', label: `P${rider.riderNumber} · ${rider.virtualStop.label}`, marker_label: `P${rider.riderNumber}` },
+      ...(rider.walkDistanceM > 0
+        ? [{ lat: rider.plat, lng: rider.plng, waypoint_type: 'rider_home', label: `P${rider.riderNumber} home · ${rider.homeLabel}`, marker_label: '🏠' }]
+        : []),
+    ]),
+    { lat: destination.lat, lng: destination.lng, waypoint_type: 'destination', label: destination.label, marker_label: '★' },
+  ]
+}
+
 export default function PresentationDemoView({ toast }) {
   const [selectedZone, setSelectedZone] = useState('indiranagar')
   const [currentStage, setCurrentStage] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(1)
-  const [followCamera, setFollowCamera] = useState(true)
+  // Keep the route still by default so the auto visibly travels along it.
+  // Users can enable Follow to use the Uber-style camera that keeps the auto
+  // centered while the map moves underneath it.
+  const [followCamera, setFollowCamera] = useState(false)
 
   const activePreset = DEMO_PRESETS[selectedZone] || DEMO_PRESETS.indiranagar
   const defaultPickup = {
@@ -63,24 +150,12 @@ export default function PresentationDemoView({ toast }) {
   const [routePreviewing, setRoutePreviewing] = useState(false)
   const [routeEstimate, setRouteEstimate] = useState(null)
   const [demoRoutePath, setDemoRoutePath] = useState(activePreset.roadPath)
+  const demoRoutePathRef = useRef(activePreset.roadPath)
 
-  const demoRiders = useMemo(() => {
-    const pickupOffsets = [[0, 0], [0.00002, 0.00002], [-0.00002, 0.00002]]
-    const destinationOffsets = [[0, 0], [0.00002, -0.00002], [-0.00002, -0.00002]]
-    return activePreset.riders.map((rider, index) => {
-      const [pickupLatOffset, pickupLngOffset] = pickupOffsets[index] || [0, 0]
-      const [destinationLatOffset, destinationLngOffset] = destinationOffsets[index] || [0, 0]
-      return {
-        ...rider,
-        plat: demoPickup.lat + pickupLatOffset,
-        plng: demoPickup.lng + pickupLngOffset,
-        plbl: `${demoPickup.label || 'Selected pickup'}${index ? ` (Stop ${String.fromCharCode(65 + index)})` : ''}`,
-        dlat: demoDestination.lat + destinationLatOffset,
-        dlng: demoDestination.lng + destinationLngOffset,
-        dlbl: `${demoDestination.label || 'Selected destination'}${index ? ` (Dropoff ${index + 1})` : ''}`,
-      }
-    })
-  }, [activePreset, demoDestination, demoPickup])
+  const demoRiders = useMemo(
+    () => buildSharedPassengers(demoRoutePath, demoPickup, demoDestination, activePreset.riders),
+    [activePreset.riders, demoDestination, demoPickup, demoRoutePath],
+  )
 
   const [simData, setSimData] = useState({
     vehiclePosition: activePreset.roadPath[0],
@@ -97,6 +172,7 @@ export default function PresentationDemoView({ toast }) {
     riders: demoRiders,
     routeGeometry: [],
     waypoints: [],
+    walkingPaths: [],
   })
 
   const driveFrameRef = useRef(null)
@@ -105,6 +181,7 @@ export default function PresentationDemoView({ toast }) {
   const pipelineRunRef = useRef(0)
   const demoRideIdsRef = useRef([])
   const demoRunIdRef = useRef(null)
+  const sharedPassengersRef = useRef(demoRiders)
 
   const addLog = useCallback((text, type = 'info') => {
     const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -134,6 +211,9 @@ export default function PresentationDemoView({ toast }) {
         ...(toDestination?.geometry || []),
       ]
       const path = geometry.length > 1 ? geometry : fallbackDemoPath(pickup, destination)
+      const scenario = buildSharedPassengers(path, pickup, destination, activePreset.riders)
+      sharedPassengersRef.current = scenario
+      demoRoutePathRef.current = path
       setDemoRoutePath(path)
       setRouteEstimate(toDestination)
       setSimData(prev => ({
@@ -141,19 +221,35 @@ export default function PresentationDemoView({ toast }) {
         routeGeometry: path,
         vehiclePosition: path[0],
         progress: 0,
+        walkingPaths: scenario.filter(rider => rider.walkingPath.length).map(rider => ({
+          geometry: rider.walkingPath,
+          label: `${rider.name} walking to ${rider.virtualStop.label}`,
+        })),
       }))
       return path
     } catch {
       const path = fallbackDemoPath(pickup, destination)
+      const scenario = buildSharedPassengers(path, pickup, destination, activePreset.riders)
+      sharedPassengersRef.current = scenario
+      demoRoutePathRef.current = path
       setDemoRoutePath(path)
       setRouteEstimate(null)
-      setSimData(prev => ({ ...prev, routeGeometry: path, vehiclePosition: path[0], progress: 0 }))
+      setSimData(prev => ({
+        ...prev,
+        routeGeometry: path,
+        vehiclePosition: path[0],
+        progress: 0,
+        walkingPaths: scenario.filter(rider => rider.walkingPath.length).map(rider => ({
+          geometry: rider.walkingPath,
+          label: `${rider.name} walking to ${rider.virtualStop.label}`,
+        })),
+      }))
       setLocationError('Road route preview unavailable; using a direct demo path.')
       return path
     } finally {
       setRoutePreviewing(false)
     }
-  }, [activePreset.depot, demoDestination, demoPickup, fallbackDemoPath])
+  }, [activePreset.depot, activePreset.riders, demoDestination, demoPickup, fallbackDemoPath])
 
   const applyDemoLocation = useCallback(async (field, point) => {
     if (!point?.lat || !point?.lng) return
@@ -209,29 +305,44 @@ export default function PresentationDemoView({ toast }) {
       await ridesApi.resetDemoRun(demoRunIdRef.current).catch(() => {})
     }
     const previewPath = await previewDemoRoute()
+    const scenario = buildSharedPassengers(previewPath, demoPickup, demoDestination, activePreset.riders)
+    sharedPassengersRef.current = scenario
     const demoRunId = createDemoRunId()
     demoRunIdRef.current = demoRunId
     try {
-      const created = await ridesApi.createDemoBatch(selectedZone, demoRunId, { pickup: demoPickup, destination: demoDestination })
+      const created = await ridesApi.createDemoSharedBatch(scenario.map(rider => ({
+        pickup_lat: rider.plat,
+        pickup_lng: rider.plng,
+        dest_lat: rider.dlat,
+        dest_lng: rider.dlng,
+        pickup_label: rider.plbl,
+        destination_label: rider.dlbl,
+        ride_option_id: 'swift-x',
+        ride_option_name: 'SwiftX Shared Auto',
+        ride_option_price: '₹12–15',
+      })), demoRunId)
       // Track the real backend ride IDs so the final drive-sim step can
       // persist "completed" back to these actual rows, not just the local
       // preset animation.
       demoRideIdsRef.current = Array.isArray(created) ? created.map(r => r.id) : []
-      addLog(`✓ 3 ride requests created: Status PENDING (${demoPickup.label} → ${demoDestination.label})`, 'success')
+      addLog(`✓ Passenger 1 booked ${demoPickup.label} → ${demoDestination.label}; shared-auto capacity reserved for 2 more`, 'success')
+      addLog('✓ Passenger 2 near TC Palya accepted: 150 m walk to virtual stop (within 200 m)', 'success')
+      addLog('✓ Passenger 3 accepted: 150 m walk to route-side virtual stop; capacity 3/3', 'success')
     } catch {
       demoRideIdsRef.current = []
-      addLog('✓ Seeded demo coordinates for 3 passengers using the selected route', 'info')
+      addLog('✓ Seeded the three shared-auto requests using the selected route', 'info')
     }
     setSimData(prev => ({
       ...prev,
-      riders: demoRiders.map(r => ({ ...r, status: 'pending' })),
-      routeGeometry: [],
-      waypoints: [
-        { lat: activePreset.depot.lat, lng: activePreset.depot.lng, waypoint_type: 'depot', label: 'Depot' },
-        ...demoRiders.map((r, i) => ({ lat: r.plat, lng: r.plng, waypoint_type: 'pickup', label: `Rider ${i + 1}` })),
-      ],
+      riders: scenario.map(r => ({ ...r, status: 'requested' })),
+      routeGeometry: previewPath,
+      waypoints: buildSharedWaypoints(scenario, activePreset.depot, demoDestination),
       vehiclePosition: previewPath[0],
       vehicleBearing: 180,
+      walkingPaths: scenario.filter(r => r.walkingPath.length).map(r => ({
+        geometry: r.walkingPath,
+        label: `${r.name} walking ${r.walkDistanceM}m to ${r.virtualStop.label}`,
+      })),
     }))
   }
 
@@ -248,7 +359,7 @@ export default function PresentationDemoView({ toast }) {
     }
     setSimData(prev => ({
       ...prev,
-      riders: demoRiders.map(r => ({ ...r, status: 'clustered' })),
+      riders: (sharedPassengersRef.current || demoRiders).map(r => ({ ...r, status: 'clustered' })),
     }))
   }
 
@@ -260,11 +371,11 @@ export default function PresentationDemoView({ toast }) {
     addLog(`✓ Virtual Stop #1 established near [${demoPickup.lat.toFixed(5)}, ${demoPickup.lng.toFixed(5)}]`, 'success')
     setSimData(prev => ({
       ...prev,
-      waypoints: [
-        { lat: activePreset.depot.lat, lng: activePreset.depot.lng, waypoint_type: 'depot', label: 'Depot' },
-        { lat: demoPickup.lat, lng: demoPickup.lng, waypoint_type: 'pickup', label: 'Virtual Stop #1' },
-        { lat: demoDestination.lat, lng: demoDestination.lng, waypoint_type: 'destination', label: demoDestination.label },
-      ],
+      waypoints: buildSharedWaypoints(sharedPassengersRef.current || demoRiders, activePreset.depot, demoDestination),
+      walkingPaths: (sharedPassengersRef.current || demoRiders).filter(r => r.walkingPath.length).map(r => ({
+        geometry: r.walkingPath,
+        label: `${r.name} walking ${r.walkDistanceM}m to ${r.virtualStop.label}`,
+      })),
     }))
   }
 
@@ -276,12 +387,19 @@ export default function PresentationDemoView({ toast }) {
       const res = await jobsApi.runAutoDispatch({ mode: 'presentation_demo', demoRunId: demoRunIdRef.current })
       addLog(`✓ Optimal route solved! Hungarian matching assigned vehicle KA-01-TEST-99 (${res?.assigned_rides || 3} rides assigned)`, 'success')
     } catch {
-      addLog(`✓ Route plan solved: Depot → Stop 1 (Pick up 3) → ${demoDestination.label} (Dropoff)`, 'info')
+      const stopSequence = (sharedPassengersRef.current || demoRiders)
+        .map(rider => `P${rider.riderNumber} ${rider.virtualStop.label}`)
+        .join(' → ')
+      addLog(`✓ Route plan solved: Depot → ${stopSequence} → ${demoDestination.label} (Dropoff)`, 'info')
     }
     setSimData(prev => ({
       ...prev,
-      routeGeometry: demoRoutePath,
-      riders: demoRiders.map(r => ({ ...r, status: 'assigned' })),
+      routeGeometry: demoRoutePathRef.current,
+      riders: (sharedPassengersRef.current || demoRiders).map(r => ({ ...r, status: 'assigned' })),
+      walkingPaths: (sharedPassengersRef.current || demoRiders).filter(r => r.walkingPath.length).map(r => ({
+        geometry: r.walkingPath,
+        label: `${r.name} walking ${r.walkDistanceM}m to ${r.virtualStop.label}`,
+      })),
     }))
   }
 
@@ -297,8 +415,19 @@ export default function PresentationDemoView({ toast }) {
       driveElapsedMsRef.current = 0
     }
 
-    const path = (demoRoutePath.length > 1 ? demoRoutePath : fallbackDemoPath()).filter(point => Array.isArray(point) && point.length >= 2)
+    const selectedPath = demoRoutePathRef.current
+    const path = (selectedPath.length > 1 ? selectedPath : fallbackDemoPath()).filter(point => Array.isArray(point) && point.length >= 2)
     if (path.length < 2) return
+    // AppMap receives this path once, then the requestAnimationFrame loop below
+    // is the sole owner of the vehicle's live position. Keeping the static
+    // overlays out of each frame prevents MapLibre markers being removed and
+    // recreated while the auto is moving.
+    setSimData(prev => ({
+      ...prev,
+      routeGeometry: path,
+      vehiclePosition: resume ? prev.vehiclePosition : path[0],
+      waypoints: prev.waypoints.length ? prev.waypoints : buildSharedWaypoints(sharedPassengersRef.current || demoRiders, activePreset.depot, demoDestination),
+    }))
     const routeDistance = Math.max(1000, Math.round(routeEstimate?.distanceMeters || 4200))
     const routeDuration = Math.max(120, Math.round(routeEstimate?.durationSeconds || 480))
     // Keep 1x presentation runs long enough to visibly follow the vehicle
@@ -311,23 +440,29 @@ export default function PresentationDemoView({ toast }) {
 
     const updateFrame = progress => {
       const { position, bearing } = interpolateDemoPath(path, progress)
+      const scenario = sharedPassengersRef.current || demoRiders
+      const riderStatuses = scenario.map((rider, index) => {
+        if (progress < rider.pickupProgress - 0.025) return index === 0 ? 'assigned' : 'walking_to_stop'
+        if (progress < rider.pickupProgress + 0.035) return 'boarding'
+        if (progress < 0.95) return 'in_vehicle'
+        return 'completed'
+      })
 
-      let riderStatus = 'assigned'
-      let onboard = 0
-      let instruction = `En route to Virtual Stop #1 (${demoPickup.label})`
+      const boardingIndex = riderStatuses.findIndex(status => status === 'boarding')
+      const walkingIndex = riderStatuses.findIndex(status => status === 'walking_to_stop')
+      const onboard = riderStatuses.filter(status => status === 'in_vehicle' || status === 'boarding').length
+      let instruction = `En route to ${scenario[0]?.virtualStop?.label || demoPickup.label}`
       let speed = Math.round(34 + Math.sin(progress * 15) * 6)
-      if (progress > 0.28 && progress < 0.35) {
+      if (boardingIndex >= 0) {
         speed = 0
-        riderStatus = 'arriving'
-        onboard = 3
-        instruction = '🚏 Boarding 3 passengers at Virtual Stop #1...'
-      } else if (progress >= 0.35 && progress < 0.85) {
-        riderStatus = 'in_progress'
-        onboard = 3
-        instruction = `Driving towards ${demoDestination.label} (3 passengers onboard)`
-      } else if (progress >= 0.85) {
-        riderStatus = 'completed'
-        onboard = 0
+        const rider = scenario[boardingIndex]
+        instruction = `🚏 Auto stopped at ${rider.virtualStop.label}: picking up Passenger ${rider.riderNumber}`
+      } else if (walkingIndex >= 0) {
+        const rider = scenario[walkingIndex]
+        instruction = `🚶 Passenger ${rider.riderNumber} near ${rider.homeLabel} — walk ${rider.walkDistanceM} m to ${rider.virtualStop.label}`
+      } else if (progress < 0.95) {
+        instruction = `🚗 Shared auto continuing to ${demoDestination.label} (${onboard}/3 passengers onboard)`
+      } else {
         instruction = `Arriving at ${demoDestination.label} dropoffs`
       }
 
@@ -341,8 +476,7 @@ export default function PresentationDemoView({ toast }) {
         etaSeconds: Math.max(0, Math.round((1 - progress) * routeDuration)),
         passengersOnboard: onboard,
         currentInstruction: instruction,
-        riders: demoRiders.map(rider => ({ ...rider, status: riderStatus })),
-        routeGeometry: path,
+        riders: scenario.map((rider, index) => ({ ...rider, status: riderStatuses[index] })),
       }))
     }
 
@@ -431,6 +565,7 @@ export default function PresentationDemoView({ toast }) {
       riders: demoRiders,
       routeGeometry: [],
       waypoints: [],
+      walkingPaths: [],
     })
     if (demoRunId) void ridesApi.resetDemoRun(demoRunId).catch(() => {})
   }
@@ -447,8 +582,8 @@ export default function PresentationDemoView({ toast }) {
     status: currentStage >= 5 && simData.progress < 1 ? 'active' : 'idle',
     lat: simData.vehiclePosition[1],
     lng: simData.vehiclePosition[0],
+    bearing: simData.vehicleBearing,
   }
-
   return (
     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', background: C.bg }}>
       
@@ -612,7 +747,7 @@ export default function PresentationDemoView({ toast }) {
 
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted2, fontSize: 11, cursor: 'pointer' }}>
             <input type="checkbox" checked={followCamera} onChange={e => setFollowCamera(e.target.checked)} />
-            Follow 🚗
+            Follow auto
           </label>
         </div>
 
@@ -645,6 +780,29 @@ export default function PresentationDemoView({ toast }) {
             <div style={{ height: 6, background: C.surface3, borderRadius: 3, overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${simData.progress * 100}%`, background: `linear-gradient(90deg, ${C.accent}, ${C.accent2})`, transition: 'width 0.1s linear' }} />
             </div>
+          </div>
+        </div>
+
+        {/* Shared-auto rider manifest */}
+        <div style={s({ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 })}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <p style={s({ color: C.muted2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' })}>Shared Auto Manifest</p>
+            <span style={s({ color: C.accent, fontSize: 10, fontWeight: 800 })}>MAX 3</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {demoRiders.map(rider => {
+              const liveRider = simData.riders.find(item => item.id === rider.id) || rider
+              return (
+                <div key={rider.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 7px', background: C.surface2, borderRadius: 7 }}>
+                  <span style={s({ width: 22, height: 22, borderRadius: '50%', background: rider.riderNumber === 1 ? `${C.accent}22` : '#f59e0b22', color: rider.riderNumber === 1 ? C.accent : '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800 })}>P{rider.riderNumber}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={s({ color: C.text, fontSize: 10, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{rider.riderNumber === 1 ? `${rider.plbl} → ${rider.dlbl}` : `${rider.homeLabel} → ${rider.virtualStop.label}`}</p>
+                    <p style={s({ color: C.muted2, fontSize: 9 })}>{rider.riderNumber === 1 ? 'Route origin pickup' : `Walk ${rider.walkDistanceM} m · max 200 m`}</p>
+                  </div>
+                  <span style={s({ color: liveRider.status === 'in_vehicle' ? '#22c55e' : liveRider.status === 'boarding' ? C.accent : C.muted2, fontSize: 9, fontWeight: 800, whiteSpace: 'nowrap' })}>{riderStatusLabels[liveRider.status] || 'Waiting'}</span>
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -702,15 +860,19 @@ export default function PresentationDemoView({ toast }) {
       {/* ── Right Surface (Full-Height Live Map) ── */}
       <div style={{ flex: 1, position: 'relative', minWidth: 0, minHeight: 0 }}>
         <AppMap
-          center={[simData.vehiclePosition[1], simData.vehiclePosition[0]]}
+          // A fixed map center lets the vehicle marker visibly move when
+          // Follow is off; AppMap handles the moving camera when it is on.
+          center={[demoPickup.lat, demoPickup.lng]}
           zoom={14}
           height="100%"
           vehicles={[mapVehicle]}
           vehicleMotion="direct"
-          pickup={demoPickup}
-          destination={demoDestination}
+          mapLayerMarkers
+          pickup={simData.waypoints.length === 0 ? demoPickup : undefined}
+          destination={simData.waypoints.length === 0 ? demoDestination : undefined}
           routeGeometry={simData.routeGeometry}
           waypoints={simData.waypoints}
+          walkingPaths={simData.walkingPaths}
           onMapClick={locationPicker ? chooseDemoLocationOnMap : undefined}
           followCamera={followCamera && isPlaying}
         />

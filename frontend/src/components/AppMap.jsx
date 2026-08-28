@@ -32,10 +32,11 @@ function markerElement(label, type = 'pickup') {
   
   const isDepot = type === 'depot'
   const isDest = type === 'destination'
+  const isHome = type === 'rider_home'
   const isVirtual = type === 'virtual_stop' || type === 'waypoint'
 
-  const bg = isDest ? '#f43f5e' : isDepot ? '#3b82f6' : isVirtual ? '#a78bfa' : '#00c9a7'
-  const borderRadius = isDest || isDepot ? '50%' : '50% 50% 50% 0'
+  const bg = isDest ? '#f43f5e' : isDepot ? '#3b82f6' : isHome ? '#f59e0b' : isVirtual ? '#a78bfa' : '#00c9a7'
+  const borderRadius = isDest || isDepot || isHome ? '50%' : '50% 50% 50% 0'
 
   inner.style.cssText = `
     width: 32px;
@@ -60,7 +61,7 @@ function markerElement(label, type = 'pickup') {
   return el
 }
 
-function vehicleMarkerElement(status = 'active') {
+function vehicleMarkerElement() {
   const el = document.createElement('div')
   // MapLibre owns the root marker transform. Applying the CSS drop animation
   // here would overwrite that transform and make the vehicle appear stuck or
@@ -190,11 +191,14 @@ export default function AppMap({
   destination,
   routeGeometry = [],
   waypoints = [],
+  walkingPaths = [],
   heatCells = [],
   onMapClick,
   style,
   vehicleAnimation = null,
   vehicleMotion = 'smooth',
+  vehicleRenderMode = 'marker',
+  mapLayerMarkers = false,
   pickupPulse = false,
   followCamera = false,
 }) {
@@ -288,6 +292,54 @@ export default function AppMap({
           },
         })
 
+        // Dashed walking legs show how a rider reaches their assigned
+        // virtual stop instead of implying a door-to-door pickup.
+        map.addSource('walking', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+        map.addLayer({
+          id: 'walking-lines',
+          type: 'line',
+          source: 'walking',
+          paint: {
+            'line-color': '#f59e0b',
+            'line-width': 3,
+            'line-opacity': 0.9,
+            'line-dasharray': [1.5, 1.5],
+          },
+        })
+
+        // WebGL-backed point layers stay on the map while React telemetry is
+        // updating. This is more reliable than repeatedly mounting HTML
+        // markers during a live route simulation.
+        map.addSource('stops', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+        map.addLayer({
+          id: 'stop-halos', type: 'circle', source: 'stops',
+          paint: { 'circle-radius': 22, 'circle-color': ['get', 'color'], 'circle-opacity': .18, 'circle-blur': .35 },
+        })
+        map.addLayer({
+          id: 'stop-points', type: 'circle', source: 'stops',
+          paint: { 'circle-radius': 15, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
+        })
+        map.addLayer({
+          id: 'stop-labels', type: 'symbol', source: 'stops',
+          layout: { 'text-field': ['get', 'markerLabel'], 'text-size': 11, 'text-allow-overlap': true },
+          paint: { 'text-color': '#ffffff', 'text-halo-color': '#0f172a', 'text-halo-width': 1 },
+        })
+
+        map.addSource('vehicles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+        map.addLayer({
+          id: 'vehicle-halos', type: 'circle', source: 'vehicles',
+          paint: { 'circle-radius': 28, 'circle-color': ['get', 'color'], 'circle-opacity': .2, 'circle-blur': .45 },
+        })
+        map.addLayer({
+          id: 'vehicle-points', type: 'circle', source: 'vehicles',
+          paint: { 'circle-radius': 18, 'circle-color': '#0f172a', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 },
+        })
+        map.addLayer({
+          id: 'vehicle-labels', type: 'symbol', source: 'vehicles',
+          layout: { 'text-field': '🚗', 'text-size': 15, 'text-allow-overlap': true },
+          paint: { 'text-color': '#ffffff' },
+        })
+
         // Heatmap demand cells
         map.addSource('heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
         map.addLayer({
@@ -301,8 +353,8 @@ export default function AppMap({
           },
         })
 
-        updateOverlays(map, { routeGeometry, waypoints, heatCells, pickup, destination, pickupPulse })
-        syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion)
+        updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers })
+        syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion, vehicleRenderMode)
         animateVehicleAlongPath(map, vehicleAnimation, markersRef, routeAnimationRef, followCamera)
       })
 
@@ -326,21 +378,24 @@ export default function AppMap({
 
   useEffect(() => {
     const map = mapRef.current
-    if (map?.isStyleLoaded()) {
-      updateOverlays(map, { routeGeometry, waypoints, heatCells, pickup, destination, pickupPulse })
+    // A map may keep loading tiles even after its sources are ready. Check
+    // the source itself, otherwise live simulation updates can be skipped and
+    // leave the vehicle at its initial coordinate.
+    if (map?.getSource('route')) {
+      updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers })
     }
-  }, [routeGeometry, waypoints, heatCells, pickup, destination, pickupPulse])
+  }, [routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers])
 
   useEffect(() => {
     const map = mapRef.current
-    if (!map?.isStyleLoaded()) return
-    syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion)
+    if (!map?.getSource('vehicles')) return
+    syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion, vehicleRenderMode)
     if (vehicleMotion === 'direct' && followCamera) {
       const leader = vehicles.find(vehicle => vehicle.lat != null && vehicle.lng != null)
       if (leader) map.jumpTo({ center: [leader.lng, leader.lat] })
     }
     animateVehicleAlongPath(map, vehicleAnimation, markersRef, routeAnimationRef, followCamera)
-  }, [vehicles, vehicleAnimation, vehicleMotion, followCamera])
+  }, [vehicles, vehicleAnimation, vehicleMotion, vehicleRenderMode, followCamera])
 
   // Fit bounds when route appears
   useEffect(() => {
@@ -374,11 +429,23 @@ export default function AppMap({
   )
 }
 
-function updateOverlays(map, { routeGeometry, waypoints, heatCells, pickup, destination, pickupPulse }) {
+function updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers = false }) {
   const routeSource = map.getSource('route')
   if (routeSource) {
     const coords = routeGeometry.length > 1 ? routeGeometry : []
     drawRoute(map, routeSource, coords)
+  }
+
+  const walkingSource = map.getSource('walking')
+  if (walkingSource) {
+    walkingSource.setData({
+      type: 'FeatureCollection',
+      features: walkingPaths.filter(path => path?.geometry?.length > 1).map(path => ({
+        type: 'Feature',
+        properties: { label: path.label || '' },
+        geometry: { type: 'LineString', coordinates: path.geometry },
+      })),
+    })
   }
 
   const heatSource = map.getSource('heat')
@@ -412,17 +479,34 @@ function updateOverlays(map, { routeGeometry, waypoints, heatCells, pickup, dest
     next.push(marker)
   }
 
+  const stopFeatures = []
+  const addStopFeature = (point, color, markerLabel) => {
+    if (point?.lat == null || point?.lng == null) return
+    stopFeatures.push({ type: 'Feature', properties: { color, markerLabel }, geometry: { type: 'Point', coordinates: [point.lng, point.lat] } })
+  }
+
   // Draw rich waypoints
   waypoints.forEach((wp, i) => {
     const isDepot = wp.waypoint_type === 'depot'
     const isPickup = wp.waypoint_type === 'pickup'
-    const label = isDepot ? '🏢' : isPickup ? `🚏 ${i}` : '•'
-    const col = isDepot ? colours.depot : colours.waypoint
-    add(wp, col, label, isDepot ? 'Depot Hub' : `Stop ${i}`, wp.waypoint_type)
+    const isHome = wp.waypoint_type === 'rider_home'
+    const label = wp.marker_label || (isDepot ? '🏢' : isPickup ? `🚏 ${i}` : isHome ? '🏠' : '•')
+    const col = isDepot ? colours.depot : isHome ? '#f59e0b' : colours.waypoint
+    if (mapLayerMarkers) addStopFeature(wp, col, label)
+    else add(wp, col, label, isDepot ? 'Depot Hub' : `Stop ${i}`, wp.waypoint_type)
   })
 
-  if (pickup) add(pickup, colours.pickup, '▲', 'Pickup Stop', 'pickup')
-  if (destination) add(destination, colours.destination, '★', 'Destination', 'destination', 0)
+  if (pickup) {
+    if (mapLayerMarkers) addStopFeature(pickup, colours.pickup, '▲')
+    else add(pickup, colours.pickup, '▲', 'Pickup Stop', 'pickup')
+  }
+  if (destination) {
+    if (mapLayerMarkers) addStopFeature(destination, colours.destination, '★')
+    else add(destination, colours.destination, '★', 'Destination', 'destination', 0)
+  }
+
+  const stopsSource = map.getSource('stops')
+  if (stopsSource) stopsSource.setData({ type: 'FeatureCollection', features: mapLayerMarkers ? stopFeatures : [] })
 
   map.__smartRouteMarkers = next
 
@@ -495,7 +579,19 @@ function drawRoute(map, routeSource, coords) {
   map.__smartRouteDraw = { key: routeKey, frameId: requestAnimationFrame(drawFrame) }
 }
 
-function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion = 'smooth') {
+function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion = 'smooth', vehicleRenderMode = 'marker') {
+  if (vehicleRenderMode === 'geojson') {
+    const source = map.getSource('vehicles')
+    source?.setData({
+      type: 'FeatureCollection',
+      features: vehicles.filter(vehicle => vehicle.lat != null && vehicle.lng != null).map(vehicle => ({
+        type: 'Feature',
+        properties: { color: vehicleColor(vehicle.status), bearing: vehicle.bearing || 0 },
+        geometry: { type: 'Point', coordinates: [vehicle.lng, vehicle.lat] },
+      })),
+    })
+    return
+  }
   const activeIds = new Set()
   const animatingId = vehicleAnimation?.vehicleId ? `vehicle-${vehicleAnimation.vehicleId}` : null
 
@@ -506,7 +602,7 @@ function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, 
 
     let marker = markersRef.current.get(id)
     if (!marker) {
-      const element = vehicleMarkerElement(vehicle.status)
+      const element = vehicleMarkerElement()
       element.style.setProperty('--pin-color', vehicleColor(vehicle.status))
       marker = new maplibregl.Marker({ element, anchor: 'center' }).setLngLat(target).addTo(map)
       const route = vehicle.assigned_route_id ? `Route: ${escapeHtml(vehicle.assigned_route_id.slice(0, 18))}…` : ''
@@ -564,7 +660,7 @@ function animateVehicleAlongPath(map, animation, markersRef, animationRef, follo
   const markerId = `vehicle-${animation.vehicleId}`
   let marker = markersRef.current.get(markerId)
   if (!marker) {
-    const element = vehicleMarkerElement('active')
+    const element = vehicleMarkerElement()
     element.style.setProperty('--pin-color', '#00c9a7')
     marker = new maplibregl.Marker({ element, anchor: 'center' }).setLngLat(animation.path[0]).addTo(map)
     markersRef.current.set(markerId, marker)
@@ -574,10 +670,11 @@ function animateVehicleAlongPath(map, animation, markersRef, animationRef, follo
   if (path.length < 2) return
 
   const started = performance.now()
-  const duration = Math.max(3000, animation.durationMs || 16000)
+  const startProgress = Math.max(0, Math.min(1, animation.startProgress || 0))
+  const duration = Math.max(3000, (animation.durationMs || 16000) * (1 - startProgress))
 
   const frame = now => {
-    const progress = Math.min(1, (now - started) / duration)
+    const progress = startProgress + (1 - startProgress) * Math.min(1, (now - started) / duration)
     const { position, bearing } = interpolatePath(path, progress)
     marker.setLngLat(position)
     if (bearing != null) marker.setRotation(bearing)

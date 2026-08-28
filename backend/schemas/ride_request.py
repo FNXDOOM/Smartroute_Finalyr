@@ -40,3 +40,8 @@ class RideRequestResponse(RideRequestBase):
 
 class RideRequestBatchCreate(BaseModel):
     requests: List[RideRequestCreate] = Field(..., min_length=1, max_length=100)
+
+
+class DemoSharedBatchCreate(BaseModel):
+    demo_run_id: str = Field(..., min_length=1, max_length=64)
+    riders: List[RideRequestCreate] = Field(..., min_length=1, max_length=3)

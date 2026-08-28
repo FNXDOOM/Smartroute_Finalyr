@@ -19,7 +19,7 @@ export const DEMO_PRESETS = {
 }
 
 export const DEMO_STAGES = [
-  { id: 'SPAWN', title: '1. Spawn Riders', icon: '👥', subtitle: '3 riders request near selected pickup', desc: 'Creates 3 passenger requests within 40m of the selected pickup.' },
+  { id: 'SPAWN', title: '1. Spawn Riders', icon: '👥', subtitle: 'Seed one route and two near-route requests', desc: 'Creates Passenger 1 at the origin and two candidates near the planned route.' },
   { id: 'CLUSTER', title: '2. HDBSCAN Density', icon: '🧬', subtitle: 'Identify high-density pickup cluster', desc: 'Density-based spatial clustering groups nearby requests with leaf selection.' },
   { id: 'VIRTUAL_STOP', title: '3. Virtual Stop', icon: '🚏', subtitle: 'Selected pickup snapped to drivable OSM road', desc: 'K-Medoids computes the pooled boarding stop near the selected pickup.' },
   { id: 'VRP_SOLVE', title: '4. CVRP & Hungarian', icon: '⚡', subtitle: 'OR-Tools multi-stop routing + Vehicle', desc: 'Solves capacitated VRP and assigns nearest idle vehicle KA-01-TEST-99.' },
