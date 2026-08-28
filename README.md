@@ -13,7 +13,7 @@ An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HD
 | Auth | Clerk (JWT RS256 via JWKS) |
 | Algorithms | HDBSCAN clustering, OR-Tools CVRP, Hungarian algorithm (scipy), H3 spatial indexing |
 | ML | XGBoost demand model (heuristic fallback if model file absent) |
-| Maps | Stadia/MapTiler vector maps via MapLibre, CARTO fallback, OSMnx road graph for stop snapping |
+| Maps | Stadia Maps via MapLibre, with OSMnx road graph support for dispatch distances |
 | Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications |
 
 ---
@@ -94,20 +94,17 @@ Requires `frontend/.env` with:
 ```
 VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
 VITE_API_BASE_URL=http://127.0.0.1:8000
-VITE_STADIA_API_KEY=your_stadia_key
-VITE_GEOCODER_PROVIDER=stadia
-VITE_ROUTER_URL=https://api.stadiamaps.com/route/v1
-VITE_ROUTER_ENGINE=valhalla
 ```
 
-Stadia hosts the Valhalla routing engine, so Valhalla does not need to be
-installed or maintained on the VPS. The frontend sends route validation and
-ETA requests to Stadia using `VITE_STADIA_API_KEY`. Restrict the Stadia key to
-your production domains because `VITE_*` values are visible in the browser.
+Keep the Stadia key server-side in `backend/.env` as `STADIA_API_KEY`. The
+frontend calls FastAPI for geocoding, road snapping, routing, matrix, traffic,
+and map matching; never place the Stadia secret in a `VITE_*` variable because
+Vite publishes those values in the browser bundle.
 
-For local development, the map can also use the Photon geocoder and CARTO
-raster fallback. For production, configure Stadia or MapTiler using
-[`frontend/.env.example`](frontend/.env.example).
+Configure the private Stadia API key in `backend/.env` as `STADIA_API_KEY`.
+The frontend map uses the authenticated FastAPI Stadia proxy, so no Stadia key
+is required in `frontend/.env`. The map is Stadia-only and has no tile
+fallback.
 
 ### Seed the database (first run)
 

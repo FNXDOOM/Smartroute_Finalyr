@@ -32,6 +32,35 @@ CLERK_ALLOW_NATIVE_CLIENTS = os.getenv("CLERK_ALLOW_NATIVE_CLIENTS", "false").lo
 APP_ENV = os.getenv("APP_ENV", "development").lower()
 PROCESS_ROLE = os.getenv("PROCESS_ROLE", "api").lower()
 ENABLE_TRACKING_BROADCAST = os.getenv("ENABLE_TRACKING_BROADCAST", "true").lower() == "true"
+# Opt-in convenience for local/single-process dev: also run the periodic
+# dispatch job (assigned -> arriving -> in_progress -> completed, etc.)
+# inside the API process itself, instead of requiring a separate
+# `python worker.py` process. Defaults to off so docker-compose's dedicated
+# worker service (see docker-compose.yml) doesn't double-run these jobs.
+ENABLE_BACKGROUND_JOBS_IN_API = os.getenv("ENABLE_BACKGROUND_JOBS_IN_API", "false").lower() == "true"
+STADIA_API_KEY = os.getenv("STADIA_API_KEY", "").strip()
+STADIA_GEOCODER_URL = os.getenv(
+    "STADIA_GEOCODER_URL", "https://api.stadiamaps.com/geocoding/v1"
+).rstrip("/")
+STADIA_ROUTER_URL = os.getenv(
+    "STADIA_ROUTER_URL", "https://api.stadiamaps.com/route/v1"
+).rstrip("/")
+STADIA_MATRIX_URL = os.getenv(
+    "STADIA_MATRIX_URL", "https://api.stadiamaps.com/matrix/v1"
+).rstrip("/")
+STADIA_NEAREST_ROADS_URL = os.getenv(
+    "STADIA_NEAREST_ROADS_URL", "https://api.stadiamaps.com/nearest_roads/v1"
+).rstrip("/")
+STADIA_MAP_MATCH_URL = os.getenv(
+    "STADIA_MAP_MATCH_URL", "https://api.stadiamaps.com/map_match/v1"
+).rstrip("/")
+STADIA_ROUTING_COSTING = os.getenv("STADIA_ROUTING_COSTING", "auto").strip()
+STADIA_TILES_URL = os.getenv(
+    "STADIA_TILES_URL", "https://tiles.stadiamaps.com"
+).rstrip("/")
+STADIA_MAP_STYLE_PATH = os.getenv(
+    "STADIA_MAP_STYLE_PATH", "styles/alidade_smooth.json"
+).strip().lstrip("/")
 _raw_authorized_parties = os.getenv("CLERK_AUTHORIZED_PARTIES", "")
 CLERK_AUTHORIZED_PARTIES = [
     origin.strip().rstrip("/")

@@ -8,10 +8,11 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from database import engine
-from routers import auth, rides, cluster, route, vehicle, predict, tracking, notifications
+from routers import auth, rides, cluster, route, routing, geocode, maps, vehicle, predict, tracking, notifications
 from routers import analytics
 from routers import jobs
-from config import APP_ENV, ENABLE_TRACKING_BROADCAST
+from config import ALLOWED_ORIGINS, APP_ENV, ENABLE_TRACKING_BROADCAST, ENABLE_BACKGROUND_JOBS_IN_API
+from services.background_jobs import start_background_jobs, stop_background_jobs
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -21,26 +22,28 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Scheduled jobs run in the dedicated worker process. The API process only
-    # owns the broadcast loop needed by its connected WebSocket clients.
+    # Scheduled jobs normally run in the dedicated worker process (see
+    # backend/worker.py + docker-compose.yml) so the API process only owns
+    # the broadcast loop needed by its connected WebSocket clients.
+    #
+    # ENABLE_BACKGROUND_JOBS_IN_API is an opt-in for local/single-process dev:
+    # without a worker process running, rides that reach "assigned" never
+    # auto-advance to arriving/in_progress/completed, since that transition
+    # is entirely driven by the periodic simulate_ride_dispatch job.
     if ENABLE_TRACKING_BROADCAST:
         tracking.start_simulation()
+    if ENABLE_BACKGROUND_JOBS_IN_API:
+        start_background_jobs()
     yield
+    if ENABLE_BACKGROUND_JOBS_IN_API:
+        await stop_background_jobs()
 
 
 app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
 
-# CORS — wildcard origins are incompatible with allow_credentials=True.
-# Read explicit origins from the environment; fall back to localhost dev only.
-_raw_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173",
-)
-allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -58,7 +61,7 @@ async def _maybe_add_dev_csp(request: Request, call_next):
     """
     response = await call_next(request)
     try:
-        origins = allowed_origins
+        origins = ALLOWED_ORIGINS
     except NameError:
         origins = []
 
@@ -85,6 +88,9 @@ app.include_router(auth.router, prefix="/auth", tags=["Auth"])
 app.include_router(rides.router, prefix="/rides", tags=["Rides"])
 app.include_router(cluster.router, prefix="/cluster", tags=["Cluster"])
 app.include_router(route.router, prefix="/route", tags=["Route"])
+app.include_router(routing.router, prefix="/routing", tags=["Routing"])
+app.include_router(geocode.router, prefix="/geocode", tags=["Geocoding"])
+app.include_router(maps.router, prefix="/maps/stadia", tags=["Maps"])
 app.include_router(vehicle.router, prefix="/vehicle", tags=["Vehicle"])
 app.include_router(predict.router, prefix="/predict", tags=["Predict"])
 app.include_router(tracking.router, prefix="/tracking", tags=["Tracking"])

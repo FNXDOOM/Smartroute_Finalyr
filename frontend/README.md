@@ -25,25 +25,17 @@ Copy `.env.example` to `.env`:
 ```env
 VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
 VITE_API_BASE_URL=http://127.0.0.1:8000
-VITE_STADIA_API_KEY=your_stadia_key
-VITE_GEOCODER_PROVIDER=stadia
-VITE_ROUTER_URL=https://api.stadiamaps.com/route/v1
-VITE_ROUTER_ENGINE=valhalla
 ```
 
-Stadia hosts the Valhalla routing engine, so no Valhalla process or map tiles
-are required on the VPS. The frontend sends route validation and ETA requests
-to Stadia using `VITE_STADIA_API_KEY`. Restrict the Stadia key to your
-production domains in the Stadia dashboard because `VITE_*` values are
-visible in the browser.
+The frontend sends geocoding, road snapping, route, matrix, map, and
+map-matching requests to FastAPI. Put the Stadia key only in `backend/.env` as
+`STADIA_API_KEY`; it must never be placed in a `VITE_*` variable because Vite
+publishes those values in the browser bundle.
 
-For local demos, `VITE_STADIA_API_KEY` may be omitted. The app then uses a
-CARTO raster fallback through MapLibre, but Stadia geocoding and Valhalla
-routing will be unavailable.
-
-`VITE_MAP_STYLE_URL` can override the default Stadia/MapTiler style URL. Do not
-put database passwords, Clerk secret keys, or Supabase service-role keys in
-this file; all `VITE_*` values are exposed to the browser.
+The map is Stadia-only and requires `STADIA_API_KEY` in `backend/.env`; it does
+not fall back to another tile provider. Do not put database passwords, Clerk
+secret keys, or Supabase service-role keys in this file; all `VITE_*` values
+are exposed to the browser.
 
 ## Build and verify
 
