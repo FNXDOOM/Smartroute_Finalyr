@@ -4,6 +4,88 @@ An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HD
 
 ---
 
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Prerequisites](#prerequisites)
+- [Tech Stack](#tech-stack)
+- [Running the Project](#running-the-project)
+- [What Works Right Now](#what-works-right-now-)
+- [What Still Needs to Be Built](#what-still-needs-to-be-built-)
+- [Architecture Overview](#architecture-overview)
+- [API Reference](#api-reference)
+- [Security and Production Notes](#security-and-production-notes)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+
+---
+
+## Quick Start
+
+Get the system running locally in 5 minutes:
+
+```bash
+# Clone and setup
+git clone <repo>
+cd finalyr_project
+
+# Backend setup
+cd backend
+pip install -r ../requirements.txt
+cp .env.example .env
+# Edit .env with your DATABASE_URL, CLERK credentials, and STADIA_API_KEY
+
+# Run migrations
+alembic -c ../alembic.ini upgrade head
+
+# Seed database (optional demo data)
+python seed.py
+
+# Start API
+uvicorn main:app --reload --port 8000
+
+# In another terminal, start worker
+python worker.py
+```
+
+```bash
+# Frontend setup (in new terminal from root)
+cd frontend
+npm install
+cp .env.example .env
+# Edit .env with VITE_CLERK_PUBLISHABLE_KEY and VITE_API_BASE_URL
+
+# Start dev server
+npm run dev
+```
+
+Open `http://localhost:5173` in your browser.
+
+---
+
+## Prerequisites
+
+**System Requirements:**
+- Python 3.10+
+- Node.js 18+
+- PostgreSQL (or use Supabase)
+- Docker & Docker Compose (optional, for containerized deployment)
+
+**Services:**
+- [Clerk](https://clerk.com) — Authentication (sign up for free account)
+- [Supabase](https://supabase.com) — PostgreSQL hosting (optional; local PostgreSQL works too)
+- [Stadia Maps](https://stadiamaps.com) — Maps, geocoding, routing (free tier available)
+
+**Local Database Alternative:**
+For local development without Supabase, install PostgreSQL and create a local database:
+```bash
+createdb smartrouteai
+```
+
+Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartrouteai`
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -140,91 +222,81 @@ python seed.py --reset  # wipe and re-seed
 - View and manage assigned rides — Start / Arriving / Complete buttons
 - Route waypoint detail with map overlay showing optimized stops
 
+### Passenger Real-Time Features
+- **Notifications WebSocket** — Connected to `/notifications/ws` for instant ride status changes (assigned, vehicle arriving, completed)
+- **Live route tracking** — WebSocket connection updates vehicle GPS every 5 seconds with real-time vehicle animation on map
+- **Route polyline rendering** — Displays optimized VRP route path on map once vehicle is assigned to a ride group
+- **Automatic ride status progression** — Simulation job advances rides through pipeline (`pending → clustered → assigned → arriving → in_progress → completed`) every 5 seconds with WebSocket push
+
 ### Admin (8 panels)
 - **Overview** — real-time stats: total rides, vehicles, clusters, routes, utilisation %
 - **Rides** — list all rides with status filter, manually advance any ride through the pipeline
 - **Fleet** — create vehicles, set idle/active/offline, view GPS positions
-- **Cluster** — run HDBSCAN clustering on pending rides, view run history with summaries
-- **Routes** — run OR-Tools VRP optimization, view waypoint maps for each route
+- **Cluster** — run HDBSCAN clustering on pending rides, view run history with summaries; also auto-triggers on new ride bookings
+- **Routes** — run OR-Tools VRP optimization with real road distances (via Stadia routing API + OSM fallback), view waypoint maps for each route
 - **Analytics** — daily bar chart + table (7/14/30 day), overview metrics
 - **Jobs** — scheduler status, manual trigger for clustering/demand/rebalance jobs, run history
-- **Heatmap** — demand prediction heatmap on a MapLibre map using H3 cells
+- **Heatmap** — XGBoost demand predictions (pre-trained model deployed) visualized on MapLibre map using H3 cells
 
 ### Background Jobs (auto-run on backend startup)
-- Clustering every 60 seconds — groups `pending` rides into virtual stops via HDBSCAN
-- Demand refresh every 300 seconds — updates DemandSnapshot table with XGBoost/heuristic predictions
-- Fleet rebalance every 300 seconds — generates VehicleRebalanceSuggestion records
-- **Ride simulation every 5 seconds** — automatically advances active rides through the status pipeline (`pending → assigned → arriving → in_progress → completed`) and pushes WebSocket notifications — this is what makes the live tracking feel real
+- **Auto-dispatch pipeline** — on new ride booking, immediately queues clustering + VRP optimization + Hungarian assignment (no admin intervention needed)
+- Clustering every 60 seconds — groups `pending` rides into virtual stops via HDBSCAN + K-Medoids + OSMnx road snapping
+- Demand refresh every 300 seconds — updates DemandSnapshot table with XGBoost predictions (trained model at `ml/models/demand_model.pkl`)
+- Fleet rebalance every 300 seconds — generates VehicleRebalanceSuggestion records for idle vehicles
+- **Ride simulation every 5 seconds** — automatically advances active rides through the status pipeline and pushes WebSocket notifications
 
 ---
 
 ## What Still Needs to Be Built 🚧
 
-### High Priority (breaks the Uber-like flow)
+### High Priority
 
-- [ ] **Connect Notifications WebSocket in Passenger and Admin views**
-  - `createNotificationsWS` is defined in `api.js` but only the Driver view connects to it
-  - Passengers should get real-time push notifications (ride status changes, vehicle assigned) without having to navigate to the Inbox
-  - File: `frontend/src/SwiftApp.jsx` — add WS connection similar to how DriverView does it for tracking
-
-- [ ] **Auto-dispatch pipeline on ride booking**
-  - Currently a passenger books a ride → it stays `pending` until the 60-second cluster job runs, then waits for an admin to run route optimization
-  - Need a trigger in `POST /rides/request` that immediately queues clustering + routing for new rides
-  - File: `backend/routers/rides.py` → `create_ride_request()`
+- [ ] **Act on vehicle rebalance suggestions**
+  - Suggestions are generated and stored (see `/jobs/rebalance-suggestions` endpoint) but never acted on
+  - Add a "Move Vehicle" button in Admin → Jobs panel that updates vehicle's lat/lng to suggested location
+  - **Effort:** Low (2-3 hours; backend ready)
 
 ### Medium Priority (important features that are partially done)
 
-- [ ] **Act on vehicle rebalance suggestions**
-  - Suggestions are generated and stored but never acted on
-  - Add a "Move Vehicle" button in Admin → Jobs panel that updates the vehicle's lat/lng to the suggested target
-  - Or add a driver-facing "Suggested Move" card in the Driver dashboard
-
-- [ ] **Wire road routing into VRP solver for real road distances**
-  - `services/routing/astar_router.py` exists but is dead code — VRP uses straight haversine distance
-  - Replace the haversine distance matrix in `vrp_solver.py` with cached road distances from Valhalla or OSMnx
-  - Warning: this is slow for large route sets — consider caching the road graph
+- [ ] **Optimize VRP solver road distance caching**
+  - Road routing **is already implemented** via Stadia routing API (up to 25×25 matrices) with OSMnx fallback for larger sets
+  - Enhancement: Add persistent cache layer to avoid repeated road graph loads on restart
+  - Or: Replace in-memory OSM graph with cached GeoParquet dataset for faster initialization
 
 - [ ] **Role management UI**
   - `PATCH /auth/users/{user_id}/role` endpoint exists (admin only)
   - No frontend UI to promote a user to `driver` or `admin`
   - Add a User Management page in Admin panel that lists users and lets you change their role
+  - **Effort:** Medium (4-5 hours)
 
 - [ ] **Driver assignment UI**
-  - The backend now supports assigning a vehicle with `driver_user_id`
-  - Add an admin-facing control instead of requiring the API directly
+  - Backend supports assigning a vehicle with `driver_user_id` (see `PATCH /vehicle/{id}`)
+  - Add an admin-facing dropdown in Fleet panel to assign drivers
+  - **Effort:** Low (2-3 hours)
 
 - [ ] **Rating system**
-  - `RatingView` component was in the old code (removed)
-  - No `ratings` table in the DB
+  - No `ratings` table in the DB; no model or endpoints
   - Add a rating model, POST endpoint, and a post-trip rating screen for passengers
+  - **Effort:** High (8-10 hours)
 
 - [ ] **Payment flow**
   - Fare amounts are display-only strings (`₹12–15`) — no payment processing
-  - Need a `payments` table, Razorpay/Stripe integration, and a checkout screen
-  - `PaymentView` view exists in the nav but renders nothing
-
-- [ ] **Train and deploy the XGBoost demand model**
-  - `backend/services/prediction/demand_model.py` loads from `ml/models/demand_model.pkl`
-  - The file doesn't exist — prediction silently falls back to a time-of-day heuristic
-  - Create a training script in `ml/` that trains on historical `ride_requests` data
+  - Requires `payments` table, Razorpay/Stripe API integration, checkout flow, webhook handling
+  - **Effort:** Very High (20-30 hours, requires payment provider setup)
 
 ### Low Priority (polish and production-readiness)
 
-- [ ] **Passenger notification WebSocket badge counter**
-  - The sidebar notification badge updates on load but doesn't auto-increment when new notifications arrive via WebSocket
-  - Need to connect the notifications WS in `SwiftApp.jsx` and update `unreadCount` state on new messages
+- [ ] **Notification badge auto-increment on WebSocket**
+  - Sidebar notification badge updates on page load but doesn't auto-update when new messages arrive via WS
+  - **Effort:** Low (1-2 hours)
 
-- [ ] **Refresh notifications and trips automatically**
-  - After booking a ride, the "Recent Rides" list doesn't update until the user navigates away and back
-  - Add a polling mechanism or WebSocket trigger to refresh the ride list when status changes
+- [ ] **Driver view: auto-filter to own assigned rides**
+  - Backend endpoint already scopes rides by driver; frontend just needs the filter
+  - **Effort:** Low (1-2 hours)
 
-- [ ] **Driver can only see their own assigned rides**
-  - Currently the driver panel loads all rides with `status=assigned`
-  - Should filter by `vehicle.assigned_route_id` matching the driver's vehicle
-
-- [ ] **Map: show route polyline on passenger tracking screen**
-  - The passenger tracking map shows the vehicle marker and pickup/destination pins
-  - Once a route is assigned, load the route waypoints and draw the VRP polyline
+- [ ] **Notification inbox auto-refresh on new messages**
+  - Passenger trips already auto-poll every 4s; just needs WebSocket trigger instead
+  - **Effort:** Low (1-2 hours)
 
 - [ ] **Responsive / mobile layout**
   - The sidebar + main panel layout breaks on screens narrower than ~800px
@@ -283,7 +355,7 @@ Key endpoint groups:
 
 ---
 
-## Security and production notes
+## Security and Production Notes
 
 - All protected REST and WebSocket endpoints require a verified Clerk session token.
 - Tracking data is scoped server-side: passengers see only their assigned ride vehicle, drivers see only their assigned vehicle, and admins see the fleet.
@@ -296,3 +368,187 @@ Key endpoint groups:
 - Keep database credentials, Clerk secrets, and Supabase service-role keys out of the frontend and all `VITE_*` variables.
 - Set explicit production `ALLOWED_ORIGINS` values and serve the frontend/backend over HTTPS/WSS.
 - Run database migrations before deployment and rotate any credentials that have been exposed during development.
+
+---
+
+## Troubleshooting
+
+### Backend Issues
+
+**Backend won't start with "Cannot import name 'X' from module"**
+- Ensure you've installed all dependencies: `pip install -r requirements.txt`
+- Try clearing pip cache: `pip cache purge` then reinstall
+
+**Database connection error: `database "smartrouteai" does not exist`**
+- Create the database: `createdb smartrouteai`
+- Or update `DATABASE_URL` in `.env` to point to an existing database
+- Ensure PostgreSQL is running: `psql -U postgres` should work
+
+**Alembic migration fails with "Can't locate revision identified by..."**
+- Delete any incomplete migration files in `alembic/versions/`
+- Re-create from current models: `alembic revision --autogenerate -m "restart migrations"`
+
+**WebSocket connection fails in tracking/notifications**
+- Ensure `uvicorn main:app` is running (not a production server without WebSocket support)
+- Check `ALLOWED_ORIGINS` in `.env` matches your frontend URL
+- Verify Clerk token is valid and not expired
+
+**Worker.py runs but doesn't trigger clustering/rebalance jobs**
+- Set `ENABLE_BACKGROUND_JOBS_IN_API=false` in `.env` (only one process should handle jobs)
+- Check logs: `python worker.py` should print job execution details
+- Ensure database connectivity with `python -c "import backend.database; print('OK')"`
+
+### Frontend Issues
+
+**Vite dev server shows "Cannot find module 'maplibre-gl-worker.mjs'"**
+- This is a Vite dependency resolution issue; fix with:
+  ```bash
+  rm -rf node_modules package-lock.json
+  npm install
+  npm run dev -- --force
+  ```
+
+**Map doesn't load or shows blank canvas**
+- Verify `VITE_API_BASE_URL` in `.env` is correct
+- Verify `STADIA_API_KEY` is set in backend `.env`
+- Check browser console for errors; map requires STADIA_API_KEY to function
+- Ensure backend's `/maps/style` endpoint returns valid Stadia style JSON
+
+**"Cannot read property 'auth' of undefined" in browser console**
+- Clerk app is not initialized; check that `VITE_CLERK_PUBLISHABLE_KEY` is set correctly in `.env`
+- Verify Clerk Domain matches your Clerk app settings
+
+**TypeScript/ESLint warnings about React 19**
+- React 19 changes the `jsx` syntax; this is expected and not an error
+- Run `npm run lint` to see actual lint issues vs. warnings
+
+### Database & Migrations
+
+**"Relation 'user' does not exist" after running backend**
+- Migrations haven't been applied; run:
+  ```bash
+  alembic -c alembic.ini upgrade head
+  ```
+
+**Want to reset database to clean state**
+- Downgrade migrations to zero:
+  ```bash
+  alembic downgrade base
+  alembic upgrade head
+  python seed.py  # repopulate with demo data
+  ```
+
+### Docker & Deployment
+
+**Docker build fails with "Package X not found"**
+- Ensure `requirements.txt` is in the root directory and is up-to-date
+- The Dockerfile assumes a specific structure; verify all paths are correct
+
+**ECS task keeps crashing**
+- Check CloudWatch logs: `aws logs tail /ecs/smartroute-api`
+- Verify Secrets Manager secrets are named exactly as task definition expects
+- Ensure IAM task execution role has permission to read Secrets Manager
+
+---
+
+## Contributing
+
+### Development Workflow
+
+1. **Create a feature branch**: `git checkout -b feature/my-feature`
+2. **Make changes** — follow existing code style and patterns
+3. **Test your changes**:
+   - Backend: `pytest tests/` (if adding new endpoints)
+   - Frontend: `npm run lint` and manual testing in dev server
+4. **Commit with clear messages**: `git commit -m "Add feature: description"`
+5. **Push and create a PR**
+
+### Code Style
+
+**Backend (Python)**:
+- Use type hints in function signatures
+- Format with `black` (configured in project)
+- Organize imports: standard library → third-party → local
+- Docstrings for public functions/classes
+
+**Frontend (JavaScript/React)**:
+- Use functional components with hooks
+- Keep components small and focused
+- Prop-drill or use React Context for state management
+- Use destructuring for imports and props
+
+### Adding New Features
+
+1. **Database schema changes?** Create an Alembic migration:
+   ```bash
+   alembic revision --autogenerate -m "add_new_column"
+   ```
+   Review the migration file before applying it
+
+2. **New backend endpoint?** Add to `backend/routers/` and include:
+   - Request/response schemas in `backend/schemas/`
+   - Type-safe SQLAlchemy queries
+   - Proper error handling and HTTP status codes
+   - WebSocket broadcast for real-time updates if applicable
+
+3. **New UI view?** Add to `frontend/src/views/` with:
+   - Component structure in `frontend/src/components/`
+   - Styling that matches existing UI
+   - Error boundaries for graceful failure
+
+### Testing
+
+**Backend**:
+```bash
+cd backend
+pytest tests/ -v  # verbose output
+pytest tests/test_health_and_ws_auth.py::test_health_live  # single test
+```
+
+**Frontend**:
+```bash
+cd frontend
+npm run lint  # check for style issues
+npm run build  # verify production build works
+```
+
+### Project Structure Quick Reference
+
+```
+backend/
+├── main.py              # FastAPI app initialization
+├── models/              # SQLAlchemy ORM models
+├── routers/             # API endpoint groups (auth, rides, vehicles, etc.)
+├── schemas/             # Pydantic request/response validators
+├── services/            # Business logic (clustering, routing, ML, etc.)
+├── utils/               # Helper functions (auth, geo, etc.)
+├── config.py            # Settings and environment variables
+├── database.py          # SQLAlchemy engine and session
+└── seed.py              # Demo data insertion
+
+frontend/
+├── src/
+│   ├── App.jsx          # Main router
+│   ├── SwiftApp.jsx     # App shell with sidebar
+│   ├── views/           # Full-page views (PassengerView, DriverView, etc.)
+│   ├── components/      # Reusable UI components
+│   ├── hooks/           # Custom React hooks (useWebSocket, etc.)
+│   ├── services/        # API clients (api.js)
+│   └── config/          # Frontend constants
+
+architecture/            # Detailed technical documentation
+├── system-design.md
+├── api-reference.md
+├── db-schema.md
+├── algorithms.md
+├── websockets.md
+└── supabase.md
+```
+
+### Getting Help
+
+- Check [architecture/README.md](architecture/README.md) for design docs
+- Review [architecture/api-reference.md](architecture/api-reference.md) for endpoint specs
+- Read inline comments in service modules (clustering, routing, etc.)
+- Run backend API at `/docs` for interactive Swagger UI
+- Check test files for usage examples
