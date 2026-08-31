@@ -148,9 +148,12 @@ docker compose up --build
 docker compose exec api alembic upgrade head
 ```
 
-The compose file runs the HTTP API and background worker separately. Provide
-the production database and Clerk settings through `backend/.env` or your
-deployment platform's secret manager; do not bake them into the image.
+The compose file runs four services: `db` (Postgres), `api`, `worker`, and
+`nginx-proxy-manager` (reverse proxy/TLS termination in front of `api`). See
+[Running behind Nginx Proxy Manager](#running-behind-nginx-proxy-manager) for
+how to configure the proxy host. Provide the production database and Clerk
+settings through `backend/.env` or your deployment platform's secret manager;
+do not bake them into the image.
 
 For Amazon ECS/Fargate deployment with Docker Hub, use the task-definition
 templates in [`deploy/ecs`](deploy/ecs). They define separate API and worker
@@ -368,6 +371,21 @@ Key endpoint groups:
 - Keep database credentials, Clerk secrets, and Supabase service-role keys out of the frontend and all `VITE_*` variables.
 - Set explicit production `ALLOWED_ORIGINS` values and serve the frontend/backend over HTTPS/WSS.
 - Run database migrations before deployment and rotate any credentials that have been exposed during development.
+
+### Running behind Nginx Proxy Manager
+
+`docker-compose.yml` includes an `nginx-proxy-manager` service (image `jc21/nginx-proxy-manager`) on the same default network as `api`, so no extra network setup is needed.
+
+1. `docker compose up -d` (starts db, api, worker, and NPM together).
+2. Open the NPM admin UI at `http://<server-ip>:81`. First login is `admin@example.com` / `changeme` -- **change both immediately**.
+3. Add a Proxy Host: domain = your public domain, forward hostname/IP = `api`, forward port = `8000`, scheme = `http`.
+4. Turn on **Websockets Support** on that proxy host -- `/tracking/ws` and `/notifications/ws` will fail silently without it.
+5. On the SSL tab, request a Let's Encrypt certificate and force SSL.
+6. In NPM's Advanced tab for this proxy host, consider raising `proxy_read_timeout`/`proxy_send_timeout`; the default nginx timeout can drop long-lived WebSocket connections.
+7. Point your domain's DNS A record at the server before requesting the certificate, and make sure ports 80/443 are open on the host firewall (needed for Let's Encrypt's HTTP-01 challenge).
+8. Set `ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` in `backend/.env` to your real `https://` domain, not `localhost`.
+
+Uvicorn is already started with `--proxy-headers --forwarded-allow-ips=*` (see `Dockerfile` / `docker-compose.yml`) so it trusts `X-Forwarded-For`/`X-Forwarded-Proto` from NPM -- this is required for the HSTS header logic in `backend/main.py` to detect HTTPS correctly and for real client IPs to show up in logs.
 
 ---
 

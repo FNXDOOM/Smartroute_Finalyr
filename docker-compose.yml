@@ -1,7 +1,9 @@
 services:
   api:
     build: .
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # --proxy-headers + --forwarded-allow-ips lets Uvicorn trust X-Forwarded-For/Proto
+    # from a reverse proxy (e.g. Nginx Proxy Manager) sitting in front of this service.
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
     env_file: ./backend/.env
     environment:
       PROCESS_ROLE: api
@@ -11,6 +13,12 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   worker:
     build: .
@@ -22,6 +30,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # The image's HEALTHCHECK probes an HTTP endpoint the worker doesn't serve.
+    healthcheck:
+      disable: true
 
   db:
     image: postgres:16-alpine
@@ -37,5 +48,25 @@ services:
       timeout: 5s
       retries: 10
 
+  # Reverse proxy / TLS termination in front of the api service. Admin UI is
+  # on port 81 (first login: admin@example.com / changeme -- change both
+  # immediately). Add a Proxy Host in the UI pointing at http://api:8000,
+  # with "Websockets Support" turned ON (required for /tracking/ws and
+  # /notifications/ws), and request a Let's Encrypt cert for your domain.
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    depends_on:
+      - api
+
 volumes:
   postgres_data:
+  npm_data:
+  npm_letsencrypt:
