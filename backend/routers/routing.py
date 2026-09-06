@@ -30,7 +30,15 @@ def road_route(
     ):
         raise HTTPException(status_code=422, detail="Route locations must be within India")
     try:
-        data = route(from_lat, from_lng, to_lat, to_lng, costing="auto_traffic" if traffic else None)
+        if traffic:
+            try:
+                data = route(from_lat, from_lng, to_lat, to_lng, costing="auto_traffic")
+            except RuntimeError:
+                # Traffic routing is plan-dependent. Keep normal routing available
+                # when the configured Stadia plan does not support live traffic.
+                data = route(from_lat, from_lng, to_lat, to_lng, costing="auto")
+        else:
+            data = route(from_lat, from_lng, to_lat, to_lng, costing="auto")
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

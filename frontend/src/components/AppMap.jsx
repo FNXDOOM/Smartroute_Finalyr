@@ -7,6 +7,41 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 const STADIA_STYLE_URL = `${API_BASE_URL}/maps/stadia/style.json`
 
+function applyDarkMapTheme(map) {
+  const layers = map.getStyle()?.layers || []
+  for (const layer of layers) {
+    const sourceLayer = String(layer['source-layer'] || '').toLowerCase()
+    const layerId = layer.id.toLowerCase()
+    try {
+      if (layer.type === 'background') {
+        map.setPaintProperty(layer.id, 'background-color', '#252a28')
+      } else if (layer.type === 'fill' && sourceLayer.includes('water')) {
+        map.setPaintProperty(layer.id, 'fill-color', '#182c2b')
+      } else if (layer.type === 'fill' && (sourceLayer.includes('building') || layerId.includes('building'))) {
+        map.setPaintProperty(layer.id, 'fill-color', '#2b322f')
+        map.setPaintProperty(layer.id, 'fill-outline-color', '#37403b')
+      } else if (layer.type === 'fill') {
+        map.setPaintProperty(layer.id, 'fill-color', '#202624')
+      } else if (layer.type === 'line' && (
+        sourceLayer.includes('road') ||
+        sourceLayer.includes('transport') ||
+        sourceLayer.includes('highway') ||
+        layerId.includes('road') ||
+        layerId.includes('transport')
+      )) {
+        map.setPaintProperty(layer.id, 'line-color', '#56615b')
+        map.setPaintProperty(layer.id, 'line-opacity', .72)
+      } else if (layer.type === 'symbol') {
+        map.setPaintProperty(layer.id, 'text-color', '#d7d4c8')
+        map.setPaintProperty(layer.id, 'text-halo-color', '#141918')
+        map.setPaintProperty(layer.id, 'text-opacity', .78)
+      }
+    } catch {
+      // Some vendor layers expose a layout-only paint property set.
+    }
+  }
+}
+
 function backendMapUrl(url) {
   try {
     const parsed = new URL(url, window.location.origin)
@@ -267,6 +302,7 @@ export default function AppMap({
 
       map.on('load', () => {
         setMapError('')
+        applyDarkMapTheme(map)
         
         // Add neon glowing route layers
         map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
@@ -421,7 +457,7 @@ export default function AppMap({
         @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 15px rgba(0,201,167,0.4) } 50% { box-shadow: 0 0 25px rgba(0,201,167,0.7) } }
       `}</style>
       {mapError && (
-        <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', padding:24, background:'rgba(247,248,246,.94)', color:'#263238', textAlign:'center', zIndex:2, pointerEvents:'none' }}>
+        <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', padding:24, background:'rgba(37,42,40,.96)', color:'#d7d4c8', textAlign:'center', zIndex:2, pointerEvents:'none' }}>
           <span style={{ maxWidth:320, fontSize:12, lineHeight:1.5 }}>{mapError}</span>
         </div>
       )}

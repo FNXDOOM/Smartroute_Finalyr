@@ -34,6 +34,12 @@ import DriverVerificationGate from './components/DriverVerificationGate.jsx'
 // ─── Constants ────────────────────────────────────────────────────────────────
 const authInitStartedAt = Date.now()
 
+// Ported from dev: route-icon brand mark (uses existing RouteIcon import,
+// no new dependency). Replaces the plain "S" boxes.
+function SmartRouteMark({ size = 18 }) {
+  return <RouteIcon aria-hidden="true" size={size} strokeWidth={2.5} />
+}
+
 function initialView() {
   const p = window.location.pathname
   if (p.startsWith('/sign-up')) return 'register'
@@ -101,6 +107,7 @@ function getClerkAppearance(theme) {
         },
     elements: {
       card: 'shadow-none bg-transparent',
+      footerAction: 'hidden',
       formButtonPrimary: 'font-weight:700',
       socialButtonsBlockButton: dark ? 'bg-[#1c2436] border border-[#33405a] text-[#e8eef7]' : undefined,
       socialButtonsBlockButtonText: dark ? 'text-[#e8eef7]' : undefined,
@@ -116,11 +123,33 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme }) {
   const [portal, setPortal] = useState('passenger') // 'passenger' | 'driver'
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-6">
-      <div className="w-full max-w-[450px]">
+    <div className="auth-stage">
+      <div className="auth-city" aria-hidden="true"><span /><span /><span /><span /><span /><span /><span /></div>
+      <div className="auth-frame">
+        <aside className="auth-intro">
+          <div className="auth-intro-mark"><SmartRouteMark size={22} /></div>
+          <p className="auth-kicker">SMART TRANSIT / 01</p>
+          <h1>Smart<br />Transit</h1>
+          <p className="auth-intro-copy">A calmer ride experience for passengers, drivers, and the teams coordinating every route.</p>
+          <div className="auth-feature-panel">
+            <div className="auth-feature-label"><span /> ROUTE INTELLIGENCE / LIVE</div>
+            <div className="auth-feature-grid">
+              <span>Demand forecast</span>
+              <span>Shared matching</span>
+              <span>Fleet visibility</span>
+            </div>
+          </div>
+          <div className="auth-stat-row">
+            <div><strong>0%</strong><span>surge pricing</span></div>
+            <div><strong>24/7</strong><span>route intelligence</span></div>
+          </div>
+          <div className="auth-route-line"><span></span><i></i><span></span><i></i><span></span></div>
+        </aside>
+        <main className="auth-content">
+          <div className="auth-content-inner">
         <div className="mb-5 flex items-start justify-between">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-lg font-extrabold text-primary-foreground shadow">S</span>
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow"><SmartRouteMark size={21} /></span>
             <span>
               <span className="block font-display text-[22px] font-extrabold leading-none tracking-tight">SmartRoute AI</span>
               <span className="mt-1 block text-xs text-muted-foreground">Autonomous Shared Transit Optimization Engine</span>
@@ -185,7 +214,7 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme }) {
           />
         ) : (
           /* Clerk Passenger Sign In / Sign Up Form */
-          <Card>
+          <Card className="auth-passenger-card">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm uppercase tracking-wide text-primary">Passenger & Commuter Sign In</CardTitle>
@@ -207,6 +236,8 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme }) {
           </Card>
         )}
 
+          </div>
+        </main>
       </div>
     </div>
   )
@@ -215,12 +246,16 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme }) {
 // ─── Loading screen (shadcn) ──────────────────────────────────────────────────
 function LoadingScreen({ onGuestLogin }) {
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-4 p-6 text-center">
-      <Loader2 className="h-11 w-11 animate-spin text-primary" />
-      <p className="text-sm text-muted-foreground">Loading SmartRoute AI…</p>
+    <div className="loading-screen flex h-full w-full flex-col items-center justify-center gap-4 p-6 text-center">
+      <div className="loading-orbit" aria-hidden="true">
+        <div className="loading-orbit-ring" />
+        <div className="loading-orbit-core"><SmartRouteMark size={30} /></div>
+      </div>
+      <div className="loading-wordmark">SmartRoute <span>AI</span></div>
+      <p className="loading-caption">Connecting intelligent routes...</p>
 
       {/* Fallback fast pass if Clerk is taking a while or blocked by Brave Shields */}
-      <Card className="w-full max-w-[360px]">
+      <Card className="loading-access-card w-full max-w-[360px]">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Quick Simulation Access</CardTitle>
           <CardDescription className="text-xs">If authentication is slow or blocked, choose which isolated simulation to open:</CardDescription>
@@ -498,7 +533,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
       {/* Sidebar */}
       <aside className="app-sidebar flex w-[220px] shrink-0 flex-col border-r bg-card px-3 py-5">
         <div className="brand mb-7 flex items-center gap-2.5 pl-1">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-[15px] font-extrabold text-primary-foreground shadow">S</span>
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow"><SmartRouteMark size={18} /></span>
           <div className="brand-copy">
             <p className="font-display text-sm font-extrabold leading-none">SmartRoute</p>
             <Badge variant="secondary" className="mt-1 text-[10px] uppercase">{user.role}</Badge>

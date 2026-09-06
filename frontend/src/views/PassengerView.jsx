@@ -474,7 +474,7 @@ export default function PassengerView({ view, setView, toast }) {
             pickup={mapPickup}
             destination={mapDestination}
             routeGeometry={routeGeometry}
-            vehicles={activeRide ? [mapVehicle] : vehicles.filter(v => v.status !== 'offline')}
+            vehicles={activeRide && mapVehicle ? [mapVehicle] : activeRide ? [] : vehicles.filter(v => v.status !== 'offline')}
             vehicleAnimation={mapVehicleAnimation}
             pickupPulse={mapPickupPulse}
             onMapClick={mapPickupMode ? choosePickupOnMap : undefined}
