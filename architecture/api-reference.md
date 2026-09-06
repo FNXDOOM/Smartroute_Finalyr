@@ -58,6 +58,53 @@ Change a user's role. Admin only.
 
 ---
 
+### `POST /auth/driver/apply`
+Apply to become a driver (or update your plate). Sets `role=driver`, `driver_status=pending_verification` (already-`active` drivers keep their status), registers the vehicle, and syncs Clerk `publicMetadata` to `{ role: "pending", license_plate, driver_status: "pending_verification" }`.
+
+**Auth required:** Yes (any signed-in role; admins should not call this — it would demote them)
+
+**Request body:**
+```json
+{ "license_plate": "KA-01-AB-1234", "capacity": 4 }
+```
+
+**Responses:**
+- `200` — Application saved (still pending admin approval)
+- `400` — Empty plate, or plate already registered to another driver
+- `401` — Missing or invalid token
+
+---
+
+### `GET /auth/drivers/pending`
+List driver applications awaiting review.
+
+**Auth required:** Yes (admin)
+
+**Responses:**
+- `200` — Array of pending driver profiles (`driver_status=pending_verification`, newest first)
+- `403` — Not an admin
+
+---
+
+### `POST /auth/driver/{user_id}/verify`
+Approve, suspend, or reject a driver application. Syncs Clerk `publicMetadata` to the confirmed state (`{ role: "driver", license_plate, driver_status }`).
+
+**Auth required:** Yes (admin)
+
+**Request body:**
+```json
+{ "status": "active" }
+```
+`status` must be one of `active` (approve), `suspended`, `rejected` — anything else is a `422`.
+
+**Responses:**
+- `200` — Updated user profile
+- `403` — Not an admin
+- `404` — User not found
+- `422` — Invalid status value
+
+---
+
 ## Rides `/rides`
 
 ---

@@ -150,7 +150,7 @@ identity. Clerk verifies identity; FastAPI still authorizes every operation.
 The current frontend (`frontend/src/`) is Clerk-wired — no mock fallbacks remain in the API layer:
 
 - `frontend/src/services/api.js` attaches the Clerk session JWT via `setAuthTokenGetter()` on every request (Axios interceptor → `Authorization: Bearer <jwt>`); `WS_BASE_URL` is derived from `VITE_API_BASE_URL`. There are no fake-ride/vehicle/analytics fallbacks.
-- Auth uses `@clerk/clerk-react` (`ClerkProvider` in `main.jsx`/`App.jsx`): Passenger portal = `<SignIn/>`/`<SignUp/>` with Google OAuth + password; Driver portal = headless `DriverLoginForm.jsx` (credentials only) → `POST /auth/driver/apply`; pending drivers see `DriverVerificationGate.jsx`.
+- Auth uses `@clerk/clerk-react` (`ClerkProvider` in `main.jsx`/`App.jsx`): Passenger portal = `<SignIn/>`/`<SignUp/>` with Google OAuth + password; Driver portal = headless `DriverLoginForm.jsx` (credentials only, email-code verification when required) → `POST /auth/driver/apply` (plate, explicit per-request token); still-`passenger` sign-ins route to the in-app `DriverApplyView.jsx` to finish applying; pending drivers see `DriverVerificationGate.jsx`.
 - Views are real: `PassengerView.jsx` (book/cancel/history + live map + VRP polyline), `DriverView.jsx` (fleet map, GPS push, Start/Arriving/Complete), `AdminView.jsx` (9 panels), `PresentationDemoView.jsx` (isolated `presentation_demo` runs via `POST /rides/demo-batch` + `POST /jobs/run/auto-dispatch?mode=presentation_demo`).
 - Maps go through the authenticated Stadia proxy (`/maps/stadia/style.json`); geocoding/routing go through `/geocode/*` and `/routing/*` (India-guarded). The Stadia key lives only in `backend/.env` — never in `VITE_*`.
 - WebSockets use the `bearer` subprotocol (`createTrackingWS` / `createNotificationsWS` in `services/api.js`, consumed via `hooks/useWebSocket.js`); `?token=` query params are rejected with `4401` (see `tests/test_health_and_ws_auth.py`).
@@ -214,7 +214,7 @@ it does not automatically replace the route/dispatch logic in FastAPI.
 - [ ] Keep the no-mock-fallback posture: surface API errors instead of fake success.
 - [ ] Keep WebSocket `bearer`-subprotocol auth and reconnect handling (`hooks/useWebSocket.js`).
 - [ ] Set production CORS origins (`ALLOWED_ORIGINS`) + `CLERK_AUTHORIZED_PARTIES` to the public `https://` domain and HTTPS/WSS URLs.
-- [ ] Store secrets in the deployment provider, not Git (note: `backend/.env.example` currently omits `CLERK_SECRET_KEY` — add it wherever `publicMetadata` sync is needed).
+- [ ] Store secrets in the deployment provider, not Git (`CLERK_SECRET_KEY` lives in `backend/.env` / `backend/.env.example` — set a real value wherever `publicMetadata` sync is needed; the backend must be restarted to pick it up).
 - [ ] Run backup/restore and migration tests before switching production traffic.
 
 ## Official references

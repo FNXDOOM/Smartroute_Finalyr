@@ -211,20 +211,24 @@ Accessible via the **👤 Passenger Portal** tab on the login screen.
 Accessible via the **🚗 Driver Portal** tab on the login screen.
 - Custom `DriverLoginForm` using Clerk's headless `useSignIn()` / `useSignUp()` SDK
 - **No social login buttons** — strictly credentials-only (email + password)
+- Sign-up uses Clerk email-code verification (6-digit input with resend) when the instance requires it
 - Driver registration also captures vehicle license plate
 - New drivers are assigned `role=driver, driver_status=pending_verification`
+- Clerk `publicMetadata` reads `{ role: "pending", license_plate, driver_status: "pending_verification" }` until an admin approves, then flips to the confirmed driver state
+- Signing in at the Driver portal with a still-`passenger` account routes to the in-app `DriverApplyView` to finish the application (the login screen unmounts on sign-in, so this step lives inside the app)
 - Drivers see a verification gate screen until an admin approves them
 
 ### Driver Lifecycle
 
 ```
-Driver registers via Driver Portal
-  └─ role="driver", driver_status="pending_verification"
+Driver registers via Driver Portal (email-code verified if required)
+  └─ POST /auth/driver/apply { license_plate } → role="driver", driver_status="pending_verification"
+  └─ Clerk publicMetadata → { role: "pending", license_plate, ... }
   └─ DriverVerificationGate shown instead of dashboard
 
 Admin opens Overview → Pending Driver Verifications widget
-  └─ POST /auth/driver/{id}/verify { status: "active" }
-  └─ DB updated + Clerk publicMetadata synced
+  └─ POST /auth/driver/{id}/verify { status: "active" }  (also "suspended" / "rejected")
+  └─ DB updated + Clerk publicMetadata synced to confirmed driver
   └─ Driver now sees full DriverView dashboard
 ```
 
@@ -238,9 +242,9 @@ Admin opens Overview → Pending Driver Verifications widget
 | `CLERK_AUDIENCE` | `backend/.env` | (Optional) Expected `aud` claim |
 | `CLERK_AUTHORIZED_PARTIES` | `backend/.env` | Must be the public `https://` domain in production (matches `ALLOWED_ORIGINS`) |
 | `CLERK_ALLOW_NATIVE_CLIENTS` | `backend/.env` | Gate native-client tokens (`true` in dev example) |
-| `CLERK_SECRET_KEY` | `backend/.env` | **(Optional but required for instant sync)** Backend API key to sync `publicMetadata` to Clerk in real time — missing from `backend/.env.example`, add it manually |
+| `CLERK_SECRET_KEY` | `backend/.env` | Backend API key to sync `publicMetadata` to Clerk in real time (present in `backend/.env.example` — set a real value; the backend only logs a line and skips the sync if it is missing) |
 
-> **Note:** If `CLERK_SECRET_KEY` is omitted, role changes are saved to the database but not immediately reflected in Clerk session tokens. The role will sync on the user's next login when the JWT is re-issued.
+> **Note:** If `CLERK_SECRET_KEY` is omitted, role changes are saved to the database but Clerk `publicMetadata` is never updated (the sync is skipped silently). The app itself reads roles from the database, so it keeps working — only the Clerk dashboard view goes stale. After adding the key you must restart the backend (`uvicorn --reload` does not watch `.env`), then re-apply/approve once to backfill metadata.
 
 ### Role Reference
 
@@ -250,7 +254,12 @@ Admin opens Overview → Pending Driver Verifications widget
 | `driver` | `pending_verification` | Verification gate only — no dashboard access |
 | `driver` | `active` | Full driver dashboard, fleet map, ride management |
 | `driver` | `suspended` | Verification gate — access blocked |
+| `driver` | `rejected` | Verification gate — must be re-approved (re-apply to return to pending) |
 | `admin` | `active` | All passenger + driver + admin panels |
+
+> **First admin:** `PATCH /auth/users/{id}/role` is admin-only, so bootstrap the first admin with `UPDATE users SET role='admin' WHERE email='you@example.com';` or by setting `{ "role": "admin" }` in the user's Clerk public metadata (requires the session-token JWT template to expose it) and signing in again.
+>
+> **Re-registration:** signing in with the same email but a new Clerk identity links to the existing *passenger* row instead of crashing. Same-email `driver`/`admin` rows are never auto-linked — that login gets a `409` pointing at the original sign-in method.
 
 ### Seed the database (first run)
 

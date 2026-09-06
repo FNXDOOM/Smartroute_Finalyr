@@ -315,8 +315,8 @@ utils/
 - Wildcard `*` with credentials is intentionally blocked (browser would reject it)
 - Clerk controls session expiration and token rotation; `CLERK_ALLOW_NATIVE_CLIENTS` gates native-client tokens
 - FastAPI validates Clerk issuer, signature, and optional audience
-- Passwords are managed by Clerk; FastAPI verifies Clerk session JWTs; `CLERK_SECRET_KEY` (not in `.env.example` — add it to enable real-time `publicMetadata` sync) keeps DB role + Clerk metadata in sync
+- Passwords are managed by Clerk; FastAPI verifies Clerk session JWTs; `CLERK_SECRET_KEY` (in `backend/.env` via `backend/.env.example` — set a real value and restart the backend to load it) keeps DB role + Clerk metadata in sync; without it the sync is silently skipped
 - WebSocket auth uses the `bearer` subprotocol only — `?token=` query params and cookies are rejected (see `get_websocket_token`, tested in `tests/test_health_and_ws_auth.py`)
 - All map/geocode/routing traffic goes through the authenticated Stadia proxy so the `STADIA_API_KEY` never reaches the browser (`VITE_*` must never contain secrets)
 - All geo writes are India-guarded server-side (`utils/geo.py:is_india_location`)
-- Admin role cannot be self-assigned at registration — requires promotion by existing admin via `PATCH /auth/users/{id}/role`
+- Admin role cannot be self-assigned at registration — requires promotion by existing admin via `PATCH /auth/users/{id}/role`; bootstrap the first admin with a direct DB update or a Clerk `publicMetadata` role claim. Same-email re-logins link to the existing passenger row (privileged rows 409 instead of auto-linking).
