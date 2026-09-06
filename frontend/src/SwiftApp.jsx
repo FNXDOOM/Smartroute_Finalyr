@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/clerk-react'
+import { Route } from 'lucide-react'
 import {
   loadAppBootstrap, clearAppBootstrap, setAuthTokenGetter,
   notificationsApi, authApi, createNotificationsWS,
@@ -15,6 +16,10 @@ const PresentationDemoView = lazy(() => import('./views/PresentationDemoView'))
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const authInitStartedAt = Date.now()
+
+function SmartRouteMark({ size = 18 }) {
+  return <Route aria-hidden="true" size={size} strokeWidth={2.5} />
+}
 
 function initialView() {
   const p = window.location.pathname
@@ -45,26 +50,57 @@ function ToastBar({ toasts, dismiss }) {
 
 // ─── Auth screens ─────────────────────────────────────────────────────────────
 const clerkAppearance = {
-  variables: { colorPrimary:'#00c9a7', colorBackground:'#0d1117', colorText:'#dde8f8', colorTextSecondary:'#7a90b0', colorInputBackground:'#111620', colorInputText:'#dde8f8', borderRadius:'10px' },
-  elements: { card:'shadow-none', formButtonPrimary:'font-weight:700', footerAction:'color:#7a90b0' },
+  variables: { colorPrimary:'#00bfa5', colorBackground:'#ffffff', colorText:'#18212f', colorTextSecondary:'#637083', colorInputBackground:'#f5f7fa', colorInputText:'#18212f', borderRadius:'12px' },
+  elements: {
+    card:'shadow-none bg-transparent',
+    headerTitle:'color-[#18212f]',
+    headerSubtitle:'color-[#637083]',
+    socialButtonsBlockButton:'border border-[#dfe5ec] bg-white text-[#18212f] hover:bg-[#f5f7fa]',
+    formFieldLabel:'color-[#263244]',
+    formFieldInput:'border-[#dfe5ec] bg-[#f5f7fa] text-[#18212f]',
+    formButtonPrimary:'font-weight:700 bg-[#00bfa5] hover:bg-[#00a890]',
+    footerAction:'color-[#637083]',
+  },
 }
 
 function AuthScreen({ view, onToggle, onGuestLogin }) {
   return (
-    <div style={s({ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:24 })}>
-      <div style={s({ width:'100%', maxWidth:440 })}>
+    <div className="auth-stage">
+      <div className="auth-city" aria-hidden="true"><span /><span /><span /><span /><span /><span /><span /></div>
+      <div className="auth-frame">
+        <aside className="auth-intro">
+          <div className="auth-intro-mark"><SmartRouteMark size={22} /></div>
+          <p className="auth-kicker">SMART TRANSIT / 01</p>
+          <h1>Smart<br />Transit</h1>
+          <p className="auth-intro-copy">A calmer ride experience for passengers, drivers, and the teams coordinating every route.</p>
+          <div className="auth-feature-panel">
+            <div className="auth-feature-label"><span /> ROUTE INTELLIGENCE / LIVE</div>
+            <div className="auth-feature-grid">
+              <span>Demand forecast</span>
+              <span>Shared matching</span>
+              <span>Fleet visibility</span>
+            </div>
+          </div>
+          <div className="auth-stat-row">
+            <div><strong>0%</strong><span>surge pricing</span></div>
+            <div><strong>24/7</strong><span>route intelligence</span></div>
+          </div>
+          <div className="auth-route-line"><span></span><i></i><span></span><i></i><span></span></div>
+        </aside>
+        <main className="auth-content">
+          <div className="auth-content-inner">
         
         {/* Brand Header */}
-        <div style={s({ textAlign:'center', marginBottom:20 })}>
+        <div className="auth-brand" style={s({ textAlign:'center', marginBottom:20 })}>
           <div style={s({ display:'inline-flex', alignItems:'center', gap:10, marginBottom:6 })}>
-            <div style={s({ width:38, height:38, borderRadius:10, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontWeight:800 })}>S</div>
-            <span style={s({ fontFamily:'Bricolage Grotesque,sans-serif', fontSize:22, fontWeight:800, color:C.text, letterSpacing:'-0.03em' })}>SmartRoute AI</span>
+            <div style={s({ width:38, height:38, borderRadius:10, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center' })}><SmartRouteMark size={21} /></div>
+            <span style={s({ fontFamily:'Playfair Display, Georgia, serif', fontSize:22, fontWeight:700, color:C.text, letterSpacing:'-0.03em' })}>SmartRoute AI</span>
           </div>
           <p style={s({ color:C.muted2, fontSize:12 })}>Autonomous Shared Transit Optimization Engine</p>
         </div>
 
         {/* Simulation mode chooser */}
-        <div style={s({ background:`linear-gradient(135deg, ${C.surface} 0%, ${C.surface2} 100%)`, border:`1.5px solid ${C.accent}66`, borderRadius:14, padding:'14px 16px', marginBottom:20, boxShadow:'0 8px 24px rgba(0,201,167,0.15)' })}>
+        <div className="auth-simulation-card" style={s({ background:`linear-gradient(135deg, ${C.surface} 0%, ${C.surface2} 100%)`, border:`1.5px solid ${C.accent}66`, borderRadius:14, padding:'14px 16px', marginBottom:20, boxShadow:'0 8px 24px rgba(0,201,167,0.15)' })}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
             <span style={s({ color:C.accent, fontSize:11, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.06em' })}>Simulation Mode</span>
             <span style={{ fontSize:14 }}>⇄</span>
@@ -89,7 +125,7 @@ function AuthScreen({ view, onToggle, onGuestLogin }) {
         </div>
 
         {/* Quick Role Fast-Pass */}
-        <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'12px 14px', marginBottom:20 })}>
+        <div className="auth-role-card" style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'12px 14px', marginBottom:20 })}>
           <p style={s({ color:C.muted2, fontSize:10, fontWeight:700, textTransform:'uppercase', marginBottom:8, textAlign:'center' })}>Quick Role Login (One-Click Bypass)</p>
           <div style={{ display:'flex', gap:6 }}>
             <button onClick={() => onGuestLogin?.('passenger', 'home')} style={s({ flex:1, padding:'7px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
@@ -105,7 +141,7 @@ function AuthScreen({ view, onToggle, onGuestLogin }) {
         </div>
 
         {/* Clerk Sign In / Sign Up Form */}
-        <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
+        <div className="auth-clerk-wrap" style={{ borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
           <p style={s({ color:C.muted2, fontSize:11, textAlign:'center', marginBottom:12 })}>{view==='login' ? 'Or sign in with Clerk account' : 'Or create new Clerk account'}</p>
           {view==='login'
             ? <SignIn routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
@@ -120,6 +156,8 @@ function AuthScreen({ view, onToggle, onGuestLogin }) {
         </div>
 
       </div>
+        </main>
+      </div>
     </div>
   )
 }
@@ -127,12 +165,16 @@ function AuthScreen({ view, onToggle, onGuestLogin }) {
 // ─── Loading screen ───────────────────────────────────────────────────────────
 function LoadingScreen({ timeout, onGuestLogin }) {
   return (
-    <div style={s({ width:'100%', height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, padding:24, textAlign:'center' })}>
-      <div style={s({ width:44, height:44, borderRadius:'50%', border:`3px solid ${C.accent}30`, borderTopColor:C.accent, animation:'spin 0.8s linear infinite' })} />
-      <p style={s({ color:C.muted, fontSize:13 })}>Loading SmartRoute AI…</p>
+    <div className="loading-screen" style={s({ width:'100%', height:'100%', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:16, padding:24, textAlign:'center' })}>
+      <div className="loading-orbit" aria-hidden="true">
+        <div className="loading-orbit-ring" />
+        <div className="loading-orbit-core"><SmartRouteMark size={30} /></div>
+      </div>
+      <div className="loading-wordmark">SmartRoute <span>AI</span></div>
+      <p className="loading-caption">Connecting intelligent routes...</p>
       
       {/* Fallback fast pass if Clerk is taking a while or blocked by Brave Shields */}
-      <div style={s({ marginTop:12, maxWidth:360, padding:16, background:C.surface, border:`1px solid ${C.border}`, borderRadius:12 })}>
+      <div className="loading-access-card" style={s({ marginTop:12, maxWidth:360, padding:16, background:C.surface, border:`1px solid ${C.border}`, borderRadius:12 })}>
         <p style={s({ color:C.text, fontSize:13, fontWeight:700, marginBottom:8 })}>Quick Simulation Access</p>
         <p style={s({ color:C.muted2, fontSize:11, lineHeight:1.4, marginBottom:12 })}>If authentication is slow or blocked, choose which isolated simulation to open:</p>
         <div style={{ display:'flex', gap:7 }}>
@@ -373,7 +415,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
       {/* Sidebar */}
       <aside className="app-sidebar" style={s({ width:220, flexShrink:0, background:C.bg2, borderRight:`1px solid ${C.border}`, display:'flex', flexDirection:'column', padding:'20px 12px' })}>
         <div className="brand" style={s({ display:'flex', alignItems:'center', gap:10, marginBottom:28, paddingLeft:4 })}>
-          <div style={s({ width:34, height:34, borderRadius:9, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:800 })}>S</div>
+          <div style={s({ width:34, height:34, borderRadius:9, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center' })}><SmartRouteMark size={18} /></div>
           <div className="brand-copy">
             <p style={s({ color:C.text, fontSize:14, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif' })}>SmartRoute</p>
             <p style={s({ color:C.muted, fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em' })}>{user.role}</p>

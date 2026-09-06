@@ -27,6 +27,7 @@ ALLOWED_ORIGINS = [
 AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "clerk").lower()
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.getenv("CLERK_ISSUER", "")
+CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
 CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "")
 CLERK_ALLOW_NATIVE_CLIENTS = os.getenv("CLERK_ALLOW_NATIVE_CLIENTS", "false").lower() == "true"
 APP_ENV = os.getenv("APP_ENV", "development").lower()

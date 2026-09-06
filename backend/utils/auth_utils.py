@@ -1,6 +1,9 @@
 import bcrypt
 import logging
 import secrets
+import json
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from typing import Optional
 
 import jwt
@@ -16,6 +19,7 @@ from config import (
     CLERK_AUTHORIZED_PARTIES,
     CLERK_ISSUER,
     CLERK_JWKS_URL,
+    CLERK_SECRET_KEY,
 )
 from database import get_db
 from models.user import User
@@ -104,6 +108,44 @@ def decode_clerk_token(token: str) -> dict:
         ) from exc
 
 
+def get_clerk_user_profile(clerk_user_id: str) -> dict:
+    """Fetch profile fields omitted from a standard Clerk session token."""
+    if not CLERK_SECRET_KEY:
+        return {}
+
+    request = Request(
+        f"https://api.clerk.com/v1/users/{clerk_user_id}",
+        headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"},
+    )
+    try:
+        with urlopen(request, timeout=5) as response:
+            return json.load(response)
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        logger.warning("Could not fetch Clerk profile for %s: %s", clerk_user_id, exc)
+        return {}
+
+
+def get_profile_fields(payload: dict, clerk_user_id: str) -> tuple[str, str]:
+    """Resolve display name and email from the token or Clerk's user profile."""
+    email = payload.get("email") or payload.get("email_address")
+    name = payload.get("name") or payload.get("first_name")
+    if email and name:
+        return str(name), str(email)
+
+    profile = get_clerk_user_profile(clerk_user_id)
+    email_addresses = profile.get("email_addresses") or []
+    primary_email_id = profile.get("primary_email_address_id")
+    primary_email = next(
+        (item.get("email_address") for item in email_addresses if item.get("id") == primary_email_id),
+        None,
+    )
+    email = email or primary_email or (email_addresses[0].get("email_address") if email_addresses else None)
+    first_name = profile.get("first_name") or ""
+    last_name = profile.get("last_name") or ""
+    name = name or " ".join(part for part in (first_name, last_name) if part).strip()
+    return name or "Clerk User", email or f"{clerk_user_id}@clerk.local"
+
+
 def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
     """Retrieve or automatically provision a User from a decoded Clerk JWT payload."""
     clerk_user_id = payload.get("sub")
@@ -114,8 +156,7 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
 
     user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
     if user is None:
-        email = payload.get("email") or payload.get("email_address") or f"{clerk_user_id}@clerk.local"
-        name = payload.get("name") or payload.get("first_name") or "Clerk User"
+        name, email = get_profile_fields(payload, clerk_user_id)
         user = User(
             name=name,
             email=email,
@@ -124,6 +165,12 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
             role="passenger",
         )
         db.add(user)
+        db.commit()
+        db.refresh(user)
+    elif user.email.endswith("@clerk.local") or user.name == "Clerk User":
+        name, email = get_profile_fields(payload, clerk_user_id)
+        user.name = name
+        user.email = email
         db.commit()
         db.refresh(user)
     return user
