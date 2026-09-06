@@ -119,7 +119,7 @@ function getClerkAppearance(theme) {
   }
 }
 
-function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme }) {
+function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refreshAuthProfile }) {
   const [portal, setPortal] = useState('passenger') // 'passenger' | 'driver'
 
   return (
@@ -209,7 +209,7 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme }) {
         {/* Dynamic Auth Body depending on active Portal */}
         {portal === 'driver' ? (
           <DriverLoginForm
-            onSuccess={() => {}}
+            onSuccess={refreshAuthProfile}
             onSwitchToPassenger={() => setPortal('passenger')}
           />
         ) : (
@@ -336,6 +336,26 @@ export default function App() {
     setView('login')
     await signOut()
   }, [signOut])
+
+  // Re-fetch the backend profile (e.g. after driver onboarding promotes the
+  // role) and route to the correct home. Replaces the previous no-op.
+  const refreshAuthProfile = useCallback(async () => {
+    const uid = clerkUserRef.current?.id
+    if (!uid) return
+    try {
+      const [profile] = await loadAppBootstrap(uid)
+      const cu = clerkUserRef.current
+      const u = {
+        id: cu?.id || '', name: profile.name || cu?.fullName || cu?.firstName || 'User',
+        email: profile.email || cu?.primaryEmailAddress?.emailAddress || '',
+        phone: profile.phone || cu?.primaryPhoneNumber?.phoneNumber || '',
+        role: profile.role || cu?.publicMetadata?.role || 'passenger',
+        driver_status: profile.driver_status || cu?.publicMetadata?.driver_status || 'active',
+      }
+      setUser(u)
+      setView(roleHome(u.role))
+    } catch { /* keep existing state; background bootstrap already ran once */ }
+  }, [])
 
   // Bootstrap on sign-in
   useEffect(() => {
@@ -483,7 +503,7 @@ export default function App() {
         : bootstrapError
         ? <BootstrapErrorScreen onRetry={() => window.location.reload()} />
         : isAuthView
-        ? <AuthScreen view={view} onToggle={() => setView(view==='login'?'register':'login')} onGuestLogin={handleGuestLogin} theme={theme} onToggleTheme={toggleTheme} />
+        ? <AuthScreen view={view} onToggle={() => setView(view==='login'?'register':'login')} onGuestLogin={handleGuestLogin} theme={theme} onToggleTheme={toggleTheme} refreshAuthProfile={refreshAuthProfile} />
         : <LoadingScreen timeout={false} onGuestLogin={handleGuestLogin} />
       }
     </div>

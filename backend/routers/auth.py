@@ -76,6 +76,16 @@ def apply_for_driver(
         )
         db.add(new_vehicle)
     else:
+        duplicate_plate = (
+            db.query(Vehicle)
+            .filter(Vehicle.license_plate == plate, Vehicle.id != existing_vehicle.id)
+            .first()
+        )
+        if duplicate_plate:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Vehicle license plate '{plate}' is already registered.",
+            )
         existing_vehicle.license_plate = plate
         if apply_in.capacity:
             existing_vehicle.capacity = apply_in.capacity
@@ -86,7 +96,11 @@ def apply_for_driver(
     if current_user.clerk_user_id:
         sync_clerk_user_metadata(
             current_user.clerk_user_id,
-            {"role": "driver", "driver_status": "pending_verification"},
+            {
+                "role": "driver",
+                "driver_status": "pending_verification",
+                "license_plate": plate,
+            },
         )
 
     return current_user
