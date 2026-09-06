@@ -112,20 +112,41 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
             status_code=401, detail="Clerk token missing subject claim", headers={"WWW-Authenticate": "Bearer"}
         )
 
+    # Extract role and driver_status from JWT claims if custom template is configured
+    metadata = payload.get("metadata") or payload.get("public_metadata") or {}
+    token_role = metadata.get("role") or payload.get("role")
+    token_driver_status = metadata.get("driver_status") or payload.get("driver_status")
+
     user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
     if user is None:
         email = payload.get("email") or payload.get("email_address") or f"{clerk_user_id}@clerk.local"
         name = payload.get("name") or payload.get("first_name") or "Clerk User"
+        initial_role = token_role if token_role in {"passenger", "driver", "admin"} else "passenger"
+        initial_driver_status = token_driver_status or ("pending_verification" if initial_role == "driver" else "active")
         user = User(
             name=name,
             email=email,
             password_hash=secrets.token_urlsafe(32),
             clerk_user_id=clerk_user_id,
-            role="passenger",
+            role=initial_role,
+            driver_status=initial_driver_status,
         )
         db.add(user)
         db.commit()
         db.refresh(user)
+    else:
+        # Sync role from Clerk JWT claims if explicitly provided in session token
+        updated = False
+        if token_role and token_role in {"passenger", "driver", "admin"} and user.role != token_role:
+            user.role = token_role
+            updated = True
+        if token_driver_status and user.driver_status != token_driver_status:
+            user.driver_status = token_driver_status
+            updated = True
+        if updated:
+            db.commit()
+            db.refresh(user)
+
     return user
 
 
@@ -140,8 +161,28 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return get_user_from_token(token, db)
 
 
-def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:
-    """Restrict access to admin users."""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin privileges required")
-    return current_user
+def require_roles(allowed_roles: set | list):
+    """Factory creating a FastAPI dependency that enforces role membership."""
+    allowed = set(allowed_roles)
+
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied. Requires one of roles: {', '.join(sorted(allowed))}",
+            )
+        # For driver endpoints, verify driver account is active
+        if current_user.role == "driver" and "driver" in allowed and "passenger" not in allowed:
+            if current_user.driver_status != "active":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Driver account is pending verification or inactive",
+                )
+        return current_user
+
+    return dependency
+
+
+get_current_driver_user = require_roles({"driver", "admin"})
+get_current_passenger_user = require_roles({"passenger", "admin"})
+get_current_admin_user = require_roles({"admin"})

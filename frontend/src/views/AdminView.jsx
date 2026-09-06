@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { C, s } from '../ui/tokens.js'
 import {
   ridesApi, vehiclesApi, clusterApi, routeApi,
-  analyticsApi, jobsApi, predictApi,
+  analyticsApi, jobsApi, predictApi, authApi,
 } from '../services/api.js'
 import AppMap from '../components/AppMap'
 
@@ -43,13 +43,14 @@ function PageHeader({ title, back, onBack }) {
 // ─── Root admin router ────────────────────────────────────────────────────────
 export default function AdminView({ user, view, setView, toast }) {
   const ctx = { setView, toast }
-  if (view === 'admin-rides')     return <RidesPanel     {...ctx} />
-  if (view === 'admin-vehicles')  return <VehiclesPanel  {...ctx} />
-  if (view === 'admin-cluster')   return <ClusterPanel   {...ctx} />
-  if (view === 'admin-routes')    return <RoutesPanel    {...ctx} />
-  if (view === 'admin-analytics') return <AnalyticsPanel {...ctx} />
-  if (view === 'admin-jobs')      return <JobsPanel      {...ctx} />
-  if (view === 'admin-heatmap')   return <HeatmapPanel   {...ctx} />
+  if (view === 'admin-rides')     return <RidesPanel          {...ctx} />
+  if (view === 'admin-vehicles')  return <VehiclesPanel        {...ctx} />
+  if (view === 'admin-cluster')   return <ClusterPanel         {...ctx} />
+  if (view === 'admin-routes')    return <RoutesPanel          {...ctx} />
+  if (view === 'admin-analytics') return <AnalyticsPanel       {...ctx} />
+  if (view === 'admin-jobs')      return <JobsPanel            {...ctx} />
+  if (view === 'admin-heatmap')   return <HeatmapPanel         {...ctx} />
+  if (view === 'admin-drivers')   return <PendingDriversPanel  {...ctx} />
   return <OverviewPanel user={user} {...ctx} />
 }
 
@@ -170,11 +171,65 @@ function OverviewPanel({ user, setView, toast }) {
         </div>
       </div>
 
+      {/* Pending Driver Verification Widget */}
+      <PendingDriversWidget setView={setView} toast={toast} />
+
       <div style={s({ display:'flex', gap:10, flexWrap:'wrap' })}>
-        {(['admin-rides','admin-vehicles','admin-cluster','admin-routes','admin-analytics','admin-jobs','admin-heatmap']).map(v => (
+        {(['admin-rides','admin-vehicles','admin-cluster','admin-routes','admin-analytics','admin-jobs','admin-heatmap','admin-drivers']).map(v => (
           <button key={v} onClick={()=>setView(v)} style={s({ padding:'10px 18px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:9, fontSize:12, fontWeight:600, cursor:'pointer' })}>
             {v.replace('admin-','').charAt(0).toUpperCase()+v.replace('admin-','').slice(1)} →
           </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ─── Pending Drivers Widget (embedded in OverviewPanel) ───────────────────────
+function PendingDriversWidget({ setView, toast }) {
+  const [pending, setPending] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    authApi.getPendingDrivers()
+      .then(data => { setPending(Array.isArray(data) ? data : []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [])
+
+  const verify = async (userId, status) => {
+    try {
+      await authApi.verifyDriver(userId, status)
+      setPending(p => p.filter(d => d.id !== userId))
+      toast('success', status === 'active' ? '✓ Driver Approved' : 'Driver Rejected', `User #${userId} status → ${status}`)
+    } catch (e) {
+      toast('error', 'Action failed', e?.response?.data?.detail || '')
+    }
+  }
+
+  if (loading || pending.length === 0) return null
+
+  return (
+    <div style={s({ background:C.surface, border:`1.5px solid #facc1566`, borderRadius:12, padding:'16px 18px', marginBottom:24 })}>
+      <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 })}>
+        <div style={s({ display:'flex', alignItems:'center', gap:8 })}>
+          <span style={s({ fontSize:16 })}>🚗</span>
+          <p style={s({ color:C.text, fontSize:13, fontWeight:800 })}>Pending Driver Verifications</p>
+          <span style={s({ background:'#facc1530', color:'#facc15', fontSize:10, fontWeight:800, borderRadius:8, padding:'2px 7px' })}>{pending.length}</span>
+        </div>
+        <button onClick={() => setView('admin-drivers')} style={s({ background:'transparent', border:'none', color:C.accent, fontSize:11, fontWeight:700, cursor:'pointer' })}>View All →</button>
+      </div>
+      <div style={s({ display:'flex', flexDirection:'column', gap:7 })}>
+        {pending.slice(0, 3).map(d => (
+          <div key={d.id} style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'9px 12px', background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:9 })}>
+            <div style={{ minWidth:0 }}>
+              <p style={s({ color:C.text, fontSize:12, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' })}>{d.name}</p>
+              <p style={s({ color:C.muted2, fontSize:11 })}>{d.email}</p>
+            </div>
+            <div style={s({ display:'flex', gap:6, flexShrink:0 })}>
+              <button onClick={() => verify(d.id, 'active')} style={s({ padding:'5px 12px', background:'#22c55e22', border:'1px solid #22c55e55', color:'#22c55e', borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>✓ Approve</button>
+              <button onClick={() => verify(d.id, 'rejected')} style={s({ padding:'5px 10px', background:'#f43f5e22', border:'1px solid #f43f5e55', color:'#f43f5e', borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>✕ Reject</button>
+            </div>
+          </div>
         ))}
       </div>
     </div>
@@ -243,16 +298,41 @@ function RidesPanel({ setView, toast }) {
 // ─── Vehicles Panel ───────────────────────────────────────────────────────────
 function VehiclesPanel({ setView, toast }) {
   const [vehicles, setVehicles] = useState([])
+  const [pendingDrivers, setPendingDrivers] = useState([])
   const [loading,  setLoading]  = useState(true)
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState({ license_plate:'', capacity:'4', lat:'12.9784', lng:'77.6408' })
 
+  const loadDrivers = useCallback(async () => {
+    try {
+      const list = await authApi.getPendingDrivers()
+      setPendingDrivers(Array.isArray(list) ? list : [])
+    } catch {
+      // Gracefully ignore if offline/not ready
+    }
+  }, [])
+
   const load = useCallback(async () => {
-    try { const v = await vehiclesApi.list(); setVehicles(Array.isArray(v)?v:[]) }
-    catch(e) { toast('error','Failed',e?.response?.data?.detail||'') }
+    try {
+      const v = await vehiclesApi.list()
+      setVehicles(Array.isArray(v) ? v : [])
+      await loadDrivers()
+    } catch (e) {
+      toast('error', 'Failed to load fleet', e?.response?.data?.detail || '')
+    }
     setLoading(false)
-  }, [toast])
+  }, [toast, loadDrivers])
   useEffect(() => { const timer = setTimeout(() => { void load() }, 0); return () => clearTimeout(timer) }, [load])
+
+  const handleVerifyDriver = async (userId) => {
+    try {
+      await authApi.verifyDriver(userId, 'active')
+      toast('success', 'Driver Verified & Approved!')
+      await load()
+    } catch (err) {
+      toast('error', 'Verification failed', err?.response?.data?.detail || '')
+    }
+  }
 
   const create = async () => {
     if (!form.license_plate.trim()) { toast('warning','Enter a license plate'); return }
@@ -295,8 +375,37 @@ function VehiclesPanel({ setView, toast }) {
           </button>
         </div>
 
-        {/* Vehicle list */}
+        {/* Vehicle list & Driver approvals */}
         <div style={s({ flex:'1 1 340px' })}>
+
+          {/* Pending Driver Approvals */}
+          {pendingDrivers.length > 0 && (
+            <div style={s({ marginBottom: 18, padding: 14, background: 'rgba(234, 179, 8, 0.08)', border: '1px solid rgba(234, 179, 8, 0.3)', borderRadius: 12 })}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <p style={s({ color: '#facc15', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' })}>
+                  ⏳ Pending Driver Verifications ({pendingDrivers.length})
+                </p>
+                <button onClick={loadDrivers} style={s({ background: 'none', border: 'none', color: '#facc15', fontSize: 11, cursor: 'pointer' })}>↻</button>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {pendingDrivers.map(d => (
+                  <div key={d.id} style={s({ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.surface, padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.border}` })}>
+                    <div>
+                      <p style={s({ color: C.text, fontSize: 12, fontWeight: 700 })}>{d.name} <span style={s({ color: C.muted, fontSize: 11 })}>({d.email})</span></p>
+                      <p style={s({ color: '#facc15', fontSize: 10, fontWeight: 600 })}>Awaiting Dispatch Approval</p>
+                    </div>
+                    <button
+                      onClick={() => handleVerifyDriver(d.id)}
+                      style={s({ padding: '6px 12px', background: C.accent, color: C.bg, border: 'none', borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: 'pointer' })}
+                    >
+                      Approve Driver ✓
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 })}>
             <p style={s({ color:C.text, fontSize:13, fontWeight:700 })}>Vehicles ({vehicles.length})</p>
             <button onClick={load} style={s({ background:'none', border:'none', color:C.accent, fontSize:12, cursor:'pointer' })}>↻ Refresh</button>
@@ -810,6 +919,130 @@ function HeatmapPanel({ setView, toast }) {
         </div>
       )}
       {!loading && cells.length===0 && <p style={s({ color:C.muted, fontSize:13 })}>No demand data found. Book some rides first to generate data.</p>}
+    </div>
+  )
+}
+
+// ─── Pending Drivers Panel (full page) ────────────────────────────────────────
+function PendingDriversPanel({ setView, toast }) {
+  const [pending, setPending] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [verifying, setVerifying] = useState({})
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const data = await authApi.getPendingDrivers()
+      setPending(Array.isArray(data) ? data : [])
+    } catch (e) {
+      toast('error', 'Failed to load pending drivers', e?.response?.data?.detail || '')
+    } finally {
+      setLoading(false)
+    }
+  }, [toast])
+
+  useEffect(() => { void load() }, [load])
+
+  const handleVerify = async (userId, status) => {
+    setVerifying(p => ({ ...p, [userId]: status }))
+    try {
+      await authApi.verifyDriver(userId, status)
+      setPending(p => p.filter(d => d.id !== userId))
+      toast('success',
+        status === 'active' ? '✓ Driver Approved' : status === 'rejected' ? '✕ Driver Rejected' : `Driver → ${status}`,
+        `User #${userId} driver_status updated`
+      )
+    } catch (e) {
+      toast('error', 'Verification failed', e?.response?.data?.detail || '')
+    } finally {
+      setVerifying(p => { const n = { ...p }; delete n[userId]; return n })
+    }
+  }
+
+  return (
+    <div style={s({ padding: 28 })}>
+      <div style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:24 })}>
+        <div style={s({ display:'flex', alignItems:'center', gap:12 })}>
+          <button onClick={() => setView('admin-overview')} style={s({ background:'none', border:'none', color:C.muted2, cursor:'pointer', fontSize:13 })}>← Overview</button>
+          <h1 style={s({ color:C.text, fontSize:22, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif' })}>Driver Verification</h1>
+          {pending.length > 0 && (
+            <span style={s({ background:'#facc1530', color:'#facc15', fontSize:11, fontWeight:800, borderRadius:8, padding:'3px 9px' })}>{pending.length} pending</span>
+          )}
+        </div>
+        <button onClick={load} disabled={loading} style={s({ padding:'7px 14px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.muted2, fontSize:12, borderRadius:8, cursor:'pointer' })}>↻ Refresh</button>
+      </div>
+
+      {/* Info Banner */}
+      <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'12px 16px', marginBottom:20 })}>
+        <p style={s({ color:C.muted2, fontSize:12, lineHeight:1.6 })}>
+          Drivers who self-register via the <strong style={{ color:C.text }}>Driver Portal</strong> are automatically placed in <strong style={{ color:'#facc15' }}>pending_verification</strong> status. They cannot access driving features until an admin approves them here. Approving updates their status both in your database and in Clerk's <code style={{ color:C.accent }}>publicMetadata</code>.
+        </p>
+      </div>
+
+      {loading && <p style={s({ color:C.muted, fontSize:13 })}>Loading…</p>}
+
+      {!loading && pending.length === 0 && (
+        <div style={s({ textAlign:'center', padding:'48px 24px', background:C.surface, border:`1px solid ${C.border}`, borderRadius:14 })}>
+          <div style={{ fontSize:32, marginBottom:12 }}>✓</div>
+          <p style={s({ color:C.text, fontSize:15, fontWeight:700, marginBottom:6 })}>No Pending Drivers</p>
+          <p style={s({ color:C.muted2, fontSize:13 })}>All driver applications have been reviewed.</p>
+        </div>
+      )}
+
+      <div style={s({ display:'flex', flexDirection:'column', gap:10 })}>
+        {pending.map(driver => (
+          <div key={driver.id} style={s({ background:C.surface, border:`1.5px solid #facc1530`, borderRadius:12, padding:'16px 18px' })}>
+            <div style={s({ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:12, flexWrap:'wrap' })}>
+              {/* Driver Info */}
+              <div style={{ flex:1, minWidth:200 }}>
+                <div style={s({ display:'flex', alignItems:'center', gap:9, marginBottom:6 })}>
+                  <div style={s({ width:36, height:36, borderRadius:'50%', background:`${C.accent}22`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:15, fontWeight:800, color:C.accent, flexShrink:0 })}>
+                    {driver.name?.charAt(0)?.toUpperCase() || '?'}
+                  </div>
+                  <div>
+                    <p style={s({ color:C.text, fontSize:14, fontWeight:700 })}>{driver.name}</p>
+                    <p style={s({ color:C.muted2, fontSize:12 })}>{driver.email}</p>
+                  </div>
+                </div>
+                <div style={s({ display:'flex', gap:8, flexWrap:'wrap' })}>
+                  <span style={s({ fontSize:10, fontWeight:700, textTransform:'uppercase', color:'#facc15', background:'#facc1520', padding:'2px 8px', borderRadius:5, letterSpacing:'0.06em' })}>
+                    Pending Verification
+                  </span>
+                  {driver.phone && (
+                    <span style={s({ fontSize:11, color:C.muted2 })}>📞 {driver.phone}</span>
+                  )}
+                  <span style={s({ fontSize:11, color:C.muted2 })}>ID: #{driver.id}</span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={s({ display:'flex', gap:8, alignItems:'center', flexShrink:0 })}>
+                <button
+                  onClick={() => handleVerify(driver.id, 'active')}
+                  disabled={!!verifying[driver.id]}
+                  style={s({ padding:'8px 18px', background:'#22c55e22', border:'1px solid #22c55e55', color:'#22c55e', borderRadius:8, fontSize:12, fontWeight:700, cursor:verifying[driver.id]?'not-allowed':'pointer', opacity:verifying[driver.id]?0.6:1 })}
+                >
+                  {verifying[driver.id] === 'active' ? '…' : '✓ Approve'}
+                </button>
+                <button
+                  onClick={() => handleVerify(driver.id, 'suspended')}
+                  disabled={!!verifying[driver.id]}
+                  style={s({ padding:'8px 14px', background:'#f59e0b22', border:'1px solid #f59e0b55', color:'#f59e0b', borderRadius:8, fontSize:12, fontWeight:700, cursor:verifying[driver.id]?'not-allowed':'pointer', opacity:verifying[driver.id]?0.6:1 })}
+                >
+                  Suspend
+                </button>
+                <button
+                  onClick={() => handleVerify(driver.id, 'rejected')}
+                  disabled={!!verifying[driver.id]}
+                  style={s({ padding:'8px 14px', background:'#f43f5e22', border:'1px solid #f43f5e55', color:'#f43f5e', borderRadius:8, fontSize:12, fontWeight:700, cursor:verifying[driver.id]?'not-allowed':'pointer', opacity:verifying[driver.id]?0.6:1 })}
+                >
+                  {verifying[driver.id] === 'rejected' ? '…' : '✕ Reject'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

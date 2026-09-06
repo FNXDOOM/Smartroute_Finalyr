@@ -74,6 +74,9 @@ def create_db_tables(bind_engine=None):
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR"
             ))
             connection.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_status VARCHAR NOT NULL DEFAULT 'active'"
+            ))
+            connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
                 "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
             ))
@@ -110,6 +113,9 @@ def create_db_tables(bind_engine=None):
                     "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
                     "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
                 ))
+        if "driver_status" not in columns:
+            with target_engine.begin() as connection:
+                connection.execute(text("ALTER TABLE users ADD COLUMN driver_status VARCHAR NOT NULL DEFAULT 'active'"))
         vehicle_columns = {column[1] for column in inspect(target_engine).get_columns("vehicles")}
         if "driver_user_id" not in vehicle_columns:
             with target_engine.begin() as connection:

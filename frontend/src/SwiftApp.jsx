@@ -13,6 +13,9 @@ const DriverView = lazy(() => import('./views/DriverView'))
 const AdminView = lazy(() => import('./views/AdminView'))
 const PresentationDemoView = lazy(() => import('./views/PresentationDemoView'))
 
+import DriverLoginForm from './components/DriverLoginForm.jsx'
+import DriverVerificationGate from './components/DriverVerificationGate.jsx'
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const authInitStartedAt = Date.now()
 
@@ -50,12 +53,14 @@ const clerkAppearance = {
 }
 
 function AuthScreen({ view, onToggle, onGuestLogin }) {
+  const [portal, setPortal] = useState('passenger') // 'passenger' | 'driver'
+
   return (
     <div style={s({ minHeight:'100vh', background:C.bg, display:'flex', alignItems:'center', justifyContent:'center', padding:24 })}>
-      <div style={s({ width:'100%', maxWidth:440 })}>
+      <div style={s({ width:'100%', maxWidth:450 })}>
         
         {/* Brand Header */}
-        <div style={s({ textAlign:'center', marginBottom:20 })}>
+        <div style={s({ textAlign:'center', marginBottom:18 })}>
           <div style={s({ display:'inline-flex', alignItems:'center', gap:10, marginBottom:6 })}>
             <div style={s({ width:38, height:38, borderRadius:10, background:C.accent, color:C.bg2, display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, fontWeight:800 })}>S</div>
             <span style={s({ fontFamily:'Bricolage Grotesque,sans-serif', fontSize:22, fontWeight:800, color:C.text, letterSpacing:'-0.03em' })}>SmartRoute AI</span>
@@ -63,25 +68,72 @@ function AuthScreen({ view, onToggle, onGuestLogin }) {
           <p style={s({ color:C.muted2, fontSize:12 })}>Autonomous Shared Transit Optimization Engine</p>
         </div>
 
+        {/* Portal Switcher (Passenger vs Driver) */}
+        <div style={s({ display:'flex', gap:6, background:C.surface, padding:4, borderRadius:12, border:`1px solid ${C.border}`, marginBottom:16 })}>
+          <button
+            type="button"
+            onClick={() => setPortal('passenger')}
+            style={s({
+              flex: 1,
+              padding: '9px 6px',
+              borderRadius: 8,
+              border: 'none',
+              background: portal==='passenger' ? C.surface2 : 'transparent',
+              color: portal==='passenger' ? C.accent : C.muted2,
+              fontWeight: 800,
+              fontSize: 11,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              boxShadow: portal==='passenger' ? '0 2px 8px rgba(0,0,0,0.2)' : 'none',
+              transition: 'all 0.15s ease',
+            })}
+          >
+            <span>👤 Passenger Portal</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPortal('driver')}
+            style={s({
+              flex: 1,
+              padding: '9px 6px',
+              borderRadius: 8,
+              border: 'none',
+              background: portal==='driver' ? C.surface2 : 'transparent',
+              color: portal==='driver' ? '#facc15' : C.muted2,
+              fontWeight: 800,
+              fontSize: 11,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              boxShadow: portal==='driver' ? '0 2px 8px rgba(0,0,0,0.2)' : 'none',
+              transition: 'all 0.15s ease',
+            })}
+          >
+            <span>🚗 Driver Portal</span>
+          </button>
+        </div>
+
         {/* Simulation mode chooser */}
-        <div style={s({ background:`linear-gradient(135deg, ${C.surface} 0%, ${C.surface2} 100%)`, border:`1.5px solid ${C.accent}66`, borderRadius:14, padding:'14px 16px', marginBottom:20, boxShadow:'0 8px 24px rgba(0,201,167,0.15)' })}>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+        <div style={s({ background:`linear-gradient(135deg, ${C.surface} 0%, ${C.surface2} 100%)`, border:`1.5px solid ${C.accent}66`, borderRadius:14, padding:'12px 16px', marginBottom:16, boxShadow:'0 8px 24px rgba(0,201,167,0.15)' })}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6 }}>
             <span style={s({ color:C.accent, fontSize:11, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.06em' })}>Simulation Mode</span>
             <span style={{ fontSize:14 }}>⇄</span>
           </div>
-          <p style={s({ color:C.muted2, fontSize:11, marginBottom:12, lineHeight:1.4 })}>
-            Choose the normal Uber-like ride flow or the isolated college presentation walkthrough.
-          </p>
           <div style={{ display:'flex', gap:7 }}>
             <button
               onClick={() => onGuestLogin?.('passenger', 'home')}
-              style={s({ flex:1, padding:'10px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:9, fontSize:11, fontWeight:800, cursor:'pointer' })}
+              style={s({ flex:1, padding:'8px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:8, fontSize:11, fontWeight:800, cursor:'pointer' })}
             >
               🚕 Normal Ride
             </button>
             <button
               onClick={() => onGuestLogin?.('admin', 'presentation-demo')}
-              style={s({ flex:1, padding:'10px 8px', background:`linear-gradient(135deg, ${C.accent} 0%, #00a887 100%)`, color:C.bg, border:'none', borderRadius:9, fontSize:11, fontWeight:800, cursor:'pointer', boxShadow:'0 4px 14px rgba(0,201,167,0.3)' })}
+              style={s({ flex:1, padding:'8px 8px', background:`linear-gradient(135deg, ${C.accent} 0%, #00a887 100%)`, color:C.bg, border:'none', borderRadius:8, fontSize:11, fontWeight:800, cursor:'pointer', boxShadow:'0 4px 14px rgba(0,201,167,0.3)' })}
             >
               🎓 Presentation
             </button>
@@ -89,35 +141,50 @@ function AuthScreen({ view, onToggle, onGuestLogin }) {
         </div>
 
         {/* Quick Role Fast-Pass */}
-        <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'12px 14px', marginBottom:20 })}>
-          <p style={s({ color:C.muted2, fontSize:10, fontWeight:700, textTransform:'uppercase', marginBottom:8, textAlign:'center' })}>Quick Role Login (One-Click Bypass)</p>
+        <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:12, padding:'10px 14px', marginBottom:16 })}>
+          <p style={s({ color:C.muted2, fontSize:10, fontWeight:700, textTransform:'uppercase', marginBottom:6, textAlign:'center' })}>Quick Role Login (One-Click Bypass)</p>
           <div style={{ display:'flex', gap:6 }}>
-            <button onClick={() => onGuestLogin?.('passenger', 'home')} style={s({ flex:1, padding:'7px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
+            <button onClick={() => onGuestLogin?.('passenger', 'home')} style={s({ flex:1, padding:'6px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
               👤 Passenger
             </button>
-            <button onClick={() => onGuestLogin?.('driver', 'driver-home')} style={s({ flex:1, padding:'7px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
+            <button onClick={() => onGuestLogin?.('driver', 'driver-home')} style={s({ flex:1, padding:'6px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
               🚗 Driver
             </button>
-            <button onClick={() => onGuestLogin?.('admin', 'admin-overview')} style={s({ flex:1, padding:'7px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
+            <button onClick={() => onGuestLogin?.('admin', 'admin-overview')} style={s({ flex:1, padding:'6px 8px', background:C.surface2, border:`1px solid ${C.border2}`, color:C.text, borderRadius:7, fontSize:11, fontWeight:700, cursor:'pointer' })}>
               🛡️ Admin
             </button>
           </div>
         </div>
 
-        {/* Clerk Sign In / Sign Up Form */}
-        <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:16 }}>
-          <p style={s({ color:C.muted2, fontSize:11, textAlign:'center', marginBottom:12 })}>{view==='login' ? 'Or sign in with Clerk account' : 'Or create new Clerk account'}</p>
-          {view==='login'
-            ? <SignIn routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
-            : <SignUp routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
-          }
-          <p style={s({ textAlign:'center', marginTop:16, color:C.muted, fontSize:12 })}>
-            {view==='login' ? "Don't have an account? " : 'Already have an account? '}
-            <button onClick={onToggle} style={s({ background:'none', border:'none', color:C.accent, fontWeight:700, cursor:'pointer', fontSize:12 })}>
-              {view==='login' ? 'Sign up' : 'Sign in'}
-            </button>
-          </p>
-        </div>
+        {/* Dynamic Auth Body depending on active Portal */}
+        {portal === 'driver' ? (
+          <DriverLoginForm
+            onSuccess={() => {}}
+            onSwitchToPassenger={() => setPortal('passenger')}
+          />
+        ) : (
+          /* Clerk Passenger Sign In / Sign Up Form */
+          <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:14, padding:'16px 18px' })}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+              <span style={s({ color:C.accent, fontSize:11, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.04em' })}>
+                Passenger & Commuter Sign In
+              </span>
+              <span style={s({ color:C.muted2, fontSize:10, background:C.surface2, padding:'2px 7px', borderRadius:6 })}>
+                Google OAuth + Pass
+              </span>
+            </div>
+            {view==='login'
+              ? <SignIn routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
+              : <SignUp routing="hash" fallbackRedirectUrl="/" appearance={clerkAppearance} />
+            }
+            <p style={s({ textAlign:'center', marginTop:14, color:C.muted, fontSize:12 })}>
+              {view==='login' ? "Don't have an account? " : 'Already have an account? '}
+              <button onClick={onToggle} style={s({ background:'none', border:'none', color:C.accent, fontWeight:700, cursor:'pointer', fontSize:12 })}>
+                {view==='login' ? 'Sign up' : 'Sign in'}
+              </button>
+            </p>
+          </div>
+        )}
 
       </div>
     </div>
@@ -232,6 +299,7 @@ export default function App() {
           email: cu?.primaryEmailAddress?.emailAddress || '',
           phone: cu?.primaryPhoneNumber?.phoneNumber || '',
           role: cu?.publicMetadata?.role || 'passenger',
+          driver_status: cu?.publicMetadata?.driver_status || 'active',
         }
         if (!token) {
           fetchedRef.current = null
@@ -245,6 +313,7 @@ export default function App() {
               email: profile.email || fallbackUser.email,
               phone: profile.phone || fallbackUser.phone,
               role: profile.role || fallbackUser.role,
+              driver_status: profile.driver_status || fallbackUser.driver_status,
             }
             setUser(u)
             const notifs = notifData?.notifications || []
@@ -298,6 +367,31 @@ export default function App() {
     toast('success', `Welcome, ${guestUser.name}!`, 'All transit simulations and features are active.')
   }, [toast])
 
+  // Route protection guard ensuring users cannot access views unauthorized for their role
+  const safeSetView = useCallback((targetView) => {
+    if (!user) {
+      setView(targetView)
+      return
+    }
+
+    const driverOnlyViews = ['driver-home', 'driver-map', 'driver-routes']
+    const adminOnlyViews = ['admin-overview', 'admin-rides', 'admin-vehicles', 'admin-cluster', 'admin-routes', 'admin-analytics', 'admin-jobs', 'admin-heatmap', 'admin-drivers']
+
+    if (user.role === 'passenger' && (driverOnlyViews.includes(targetView) || adminOnlyViews.includes(targetView))) {
+      toast('warning', 'Role Guard Enforced', 'Driver or Administrator credentials required to access this portal.')
+      setView('home')
+      return
+    }
+
+    if (user.role === 'driver' && adminOnlyViews.includes(targetView)) {
+      toast('warning', 'Admin Guard Enforced', 'Administrator credentials required.')
+      setView('driver-home')
+      return
+    }
+
+    setView(targetView)
+  }, [user, toast])
+
   const isBootstrapping = isLoaded && isSignedIn && !user && !bootstrapError
   const isAuthView      = view === 'login' || view === 'register'
   const unreadCount     = notifications.filter((n) => !n.is_read).length
@@ -319,7 +413,15 @@ export default function App() {
       <ToastBar toasts={toasts} dismiss={id => setToasts(p => p.filter(t => t.id !== id))} />
 
       {user
-        ? <AppShell user={user} view={view} setView={setView} unreadCount={unreadCount} onLogout={handleLogout} notifications={notifications} setNotifications={setNotifications} toast={toast} />
+        ? (user.role === 'driver' && user.driver_status === 'pending_verification'
+            ? <DriverVerificationGate
+                user={user}
+                onRefreshProfile={(updated) => setUser(prev => ({ ...prev, ...updated }))}
+                onLogout={handleLogout}
+                toast={toast}
+              />
+            : <AppShell user={user} view={view} setView={safeSetView} unreadCount={unreadCount} onLogout={handleLogout} notifications={notifications} setNotifications={setNotifications} toast={toast} />
+          )
         : (!isLoaded || isBootstrapping)
         ? <LoadingScreen timeout={authTimeout && !isBootstrapping} onGuestLogin={handleGuestLogin} />
         : bootstrapError
@@ -360,6 +462,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
     { v:'presentation-demo', icon:'⚡', label:'Presentation Demo' },
     { v:'admin-rides',       icon:'▤', label:'Rides' },
     { v:'admin-vehicles',    icon:'□', label:'Fleet' },
+    { v:'admin-drivers',     icon:'🚗', label:'Drivers' },
     { v:'admin-cluster',     icon:'⌘', label:'Cluster' },
     { v:'admin-routes',      icon:'⌁', label:'Routes' },
     { v:'admin-analytics',   icon:'↗', label:'Analytics' },

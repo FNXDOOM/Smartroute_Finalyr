@@ -202,6 +202,11 @@ def update_vehicle(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can update vehicles",
         )
+    if current_user.role == "driver" and getattr(current_user, "driver_status", "active") != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Driver account is pending verification or inactive",
+        )
 
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:

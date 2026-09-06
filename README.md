@@ -10,6 +10,7 @@ An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HD
 - [Prerequisites](#prerequisites)
 - [Tech Stack](#tech-stack)
 - [Running the Project](#running-the-project)
+- [Authentication & Role System](#authentication--role-system)
 - [What Works Right Now](#what-works-right-now-)
 - [What Still Needs to Be Built](#what-still-needs-to-be-built-)
 - [Architecture Overview](#architecture-overview)
@@ -33,7 +34,7 @@ cd finalyr_project
 cd backend
 pip install -r ../requirements.txt
 cp .env.example .env
-# Edit .env with your DATABASE_URL, CLERK credentials, and STADIA_API_KEY
+# Edit .env with DATABASE_URL, CLERK_SECRET_KEY, and STADIA_API_KEY
 
 # Run migrations
 alembic -c ../alembic.ini upgrade head
@@ -92,7 +93,8 @@ Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartroutea
 |---|---|
 | Frontend | React 19 + Vite, MapLibre GL, Clerk (auth) |
 | Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (Supabase) |
-| Auth | Clerk (JWT RS256 via JWKS) |
+| Auth | Clerk (JWT RS256 via JWKS) + dual-role isolation (Passenger / Driver) |
+| Role Sync | Clerk `publicMetadata` patched via Backend API on every role change |
 | Algorithms | HDBSCAN clustering, OR-Tools CVRP, Hungarian algorithm (scipy), H3 spatial indexing |
 | ML | XGBoost demand model (heuristic fallback if model file absent) |
 | Maps | Stadia Maps via MapLibre, with OSMnx road graph support for dispatch distances |
@@ -186,10 +188,65 @@ frontend calls FastAPI for geocoding, road snapping, routing, matrix, traffic,
 and map matching; never place the Stadia secret in a `VITE_*` variable because
 Vite publishes those values in the browser bundle.
 
-Configure the private Stadia API key in `backend/.env` as `STADIA_API_KEY`.
 The frontend map uses the authenticated FastAPI Stadia proxy, so no Stadia key
 is required in `frontend/.env`. The map is Stadia-only and has no tile
 fallback.
+
+---
+
+## Authentication & Role System
+
+SmartRoute AI uses **Clerk** for authentication with two completely isolated login portals.
+
+### Passenger Portal
+
+Accessible via the **👤 Passenger Portal** tab on the login screen.
+- Full Clerk `<SignIn />` / `<SignUp />` component with **Google OAuth + Email/Password**
+- First-time sign-up auto-provisions a DB user with `role=passenger`
+- Role is stored in the database and synced to Clerk `publicMetadata`
+
+### Driver Portal
+
+Accessible via the **🚗 Driver Portal** tab on the login screen.
+- Custom `DriverLoginForm` using Clerk's headless `useSignIn()` / `useSignUp()` SDK
+- **No social login buttons** — strictly credentials-only (email + password)
+- Driver registration also captures vehicle license plate
+- New drivers are assigned `role=driver, driver_status=pending_verification`
+- Drivers see a verification gate screen until an admin approves them
+
+### Driver Lifecycle
+
+```
+Driver registers via Driver Portal
+  └─ role="driver", driver_status="pending_verification"
+  └─ DriverVerificationGate shown instead of dashboard
+
+Admin opens Overview → Pending Driver Verifications widget
+  └─ POST /auth/driver/{id}/verify { status: "active" }
+  └─ DB updated + Clerk publicMetadata synced
+  └─ Driver now sees full DriverView dashboard
+```
+
+### Environment Variables for Auth
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `VITE_CLERK_PUBLISHABLE_KEY` | `frontend/.env` | Initializes the Clerk frontend SDK |
+| `CLERK_JWKS_URL` | `backend/.env` | URL to Clerk's JWKS endpoint for JWT verification |
+| `CLERK_ISSUER` | `backend/.env` | Expected `iss` claim in Clerk JWTs |
+| `CLERK_SECRET_KEY` | `backend/.env` | **(Optional)** Backend API key to sync `publicMetadata` to Clerk in real time |
+
+> **Note:** If `CLERK_SECRET_KEY` is omitted, role changes are saved to the database but not immediately reflected in Clerk session tokens. The role will sync on the user's next login when the JWT is re-issued.
+
+### Role Reference
+
+| Role | `driver_status` | Access |
+|---|---|---|
+| `passenger` | `active` | Passenger ride booking, tracking, history |
+| `driver` | `pending_verification` | Verification gate only — no dashboard access |
+| `driver` | `active` | Full driver dashboard, fleet map, ride management |
+| `driver` | `suspended` | Verification gate — access blocked |
+| `admin` | `active` | All passenger + driver + admin panels |
 
 ### Seed the database (first run)
 
@@ -203,11 +260,18 @@ python seed.py --reset  # wipe and re-seed
 
 ## What Works Right Now ✅
 
-### Authentication
-- Clerk sign-up / sign-in with JWT verification on every backend request
-- Auto-provisions a DB user on first login (role = `passenger` by default)
+### Authentication & Role Isolation
+- **Dual-portal login screen** — tabbed switcher between Passenger Portal and Driver Portal
+- **Passenger Portal** — Clerk `<SignIn />` with Google OAuth + Email/Password
+- **Driver Portal** — credentials-only custom form (zero social login buttons) via `useSignIn()` / `useSignUp()`
+- Clerk JWT verification (RS256 via JWKS) on every backend request
+- Auto-provisions DB user on first login (`role=passenger` by default)
 - Role-based access control: `passenger`, `driver`, `admin`
+- `driver_status` lifecycle: `pending_verification → active | suspended | rejected`
+- **DriverVerificationGate** — pending drivers see a status gate instead of the dashboard
+- **Clerk `publicMetadata` sync** — role + driver_status written back to Clerk on every admin action (requires `CLERK_SECRET_KEY`)
 - WebSocket auth via the `bearer` subprotocol; tokens are not placed in URLs
+- Frontend route guard (`safeSetView`) blocks passengers from driver/admin views with toast warnings
 
 ### Passenger
 - Book a ride — creates a `RideRequest` in DB, fires notification
@@ -219,7 +283,7 @@ python seed.py --reset  # wipe and re-seed
 
 ### Driver
 - Dashboard with fleet stats pulled from real DB
-- Drivers only see and update vehicles assigned to their application user; admins assign a vehicle with `PATCH /vehicle/{id}` and `{ "driver_user_id": <driver-user-id> }`
+- Drivers only see and update vehicles assigned to their user; admins assign a vehicle with `PATCH /vehicles/{id}` and `{ "driver_user_id": <id> }`
 - Live fleet map — WebSocket connection to `/tracking/ws`, updates every 2 seconds
 - Push own GPS location to backend (uses device geolocation, falls back to simulated coords)
 - View and manage assigned rides — Start / Arriving / Complete buttons
@@ -231,10 +295,11 @@ python seed.py --reset  # wipe and re-seed
 - **Route polyline rendering** — Displays optimized VRP route path on map once vehicle is assigned to a ride group
 - **Automatic ride status progression** — Simulation job advances rides through pipeline (`pending → clustered → assigned → arriving → in_progress → completed`) every 5 seconds with WebSocket push
 
-### Admin (8 panels)
-- **Overview** — real-time stats: total rides, vehicles, clusters, routes, utilisation %
+### Admin (9 panels)
+- **Overview** — real-time stats: total rides, vehicles, clusters, routes, utilisation %; inline pending driver verification widget
 - **Rides** — list all rides with status filter, manually advance any ride through the pipeline
 - **Fleet** — create vehicles, set idle/active/offline, view GPS positions
+- **Drivers** — full driver verification panel; approve / suspend / reject pending driver applications with Clerk metadata sync
 - **Cluster** — run HDBSCAN clustering on pending rides, view run history with summaries; also auto-triggers on new ride bookings
 - **Routes** — run OR-Tools VRP optimization with real road distances (via Stadia routing API + OSM fallback), view waypoint maps for each route
 - **Analytics** — daily bar chart + table (7/14/30 day), overview metrics
@@ -266,14 +331,14 @@ python seed.py --reset  # wipe and re-seed
   - Enhancement: Add persistent cache layer to avoid repeated road graph loads on restart
   - Or: Replace in-memory OSM graph with cached GeoParquet dataset for faster initialization
 
-- [ ] **Role management UI**
-  - `PATCH /auth/users/{user_id}/role` endpoint exists (admin only)
-  - No frontend UI to promote a user to `driver` or `admin`
-  - Add a User Management page in Admin panel that lists users and lets you change their role
-  - **Effort:** Medium (4-5 hours)
+- [x] **Role management & driver verification UI**
+  - `POST /auth/driver/apply`, `POST /auth/driver/{id}/verify`, `PATCH /auth/users/{id}/role` endpoints implemented
+  - Admin **Drivers** panel lists all pending applications with one-click Approve / Suspend / Reject
+  - Inline **Pending Driver Verifications** widget on the Admin Overview page
+  - Clerk `publicMetadata` automatically synced on every role or status change
 
 - [ ] **Driver assignment UI**
-  - Backend supports assigning a vehicle with `driver_user_id` (see `PATCH /vehicle/{id}`)
+  - Backend supports assigning a vehicle with `driver_user_id` (see `PATCH /vehicles/{id}`)
   - Add an admin-facing dropdown in Fleet panel to assign drivers
   - **Effort:** Low (2-3 hours)
 
@@ -324,6 +389,29 @@ python seed.py --reset  # wipe and re-seed
 
 ## Architecture Overview
 
+### Authentication Flow
+
+```
+Login Screen
+├── 👤 Passenger Portal (tab)
+│   └── Clerk <SignIn /> — Google OAuth + Email/Password
+│       └── JWT decoded → role defaults to "passenger"
+│       └── DB user auto-provisioned
+│
+└── 🚗 Driver Portal (tab)
+    └── DriverLoginForm (useSignIn / useSignUp — credentials only)
+        └── POST /auth/driver/apply
+        └── role="driver", driver_status="pending_verification"
+        └── DriverVerificationGate shown
+
+Admin → Drivers Panel
+└── POST /auth/driver/{id}/verify { status: "active" }
+    └── DB updated + Clerk publicMetadata synced
+    └── Driver sees full dashboard on next load
+```
+
+### Ride Dispatch Pipeline
+
 ```
 Passenger books ride
         ↓
@@ -346,13 +434,25 @@ Passenger tracking   ──→  Live map updates in browser
 
 Full interactive docs available at `http://localhost:8000/docs` when backend is running.
 
-Key endpoint groups:
+### Authentication & Role Endpoints
+- `GET /auth/me` — return current user profile
+- `PATCH /auth/me` — update profile (name, phone)
+- `POST /auth/driver/apply` — apply to become a driver (any authenticated user)
+- `GET /auth/drivers/pending` — list pending driver applications (admin only)
+- `POST /auth/driver/{user_id}/verify` — approve / reject / suspend a driver (admin only)
+- `PATCH /auth/users/{user_id}/role?role=...` — override any user's role (admin only)
+
+### Ride Endpoints
 - `POST /rides/request` — book a ride
 - `GET /rides/my-rides` — passenger trip history
 - `POST /cluster/run` — run HDBSCAN clustering (admin/driver)
 - `POST /route/optimize` — run VRP route optimization (admin/driver)
+
+### Real-Time
 - `WS /tracking/ws` with the `bearer` subprotocol — live vehicle tracking stream
 - `WS /notifications/ws` with the `bearer` subprotocol — per-user notification stream
+
+### Analytics & ML
 - `GET /analytics/overview` — fleet-wide statistics
 - `GET /predict/heatmap` — demand prediction over a bounding box
 
@@ -361,15 +461,19 @@ Key endpoint groups:
 ## Security and Production Notes
 
 - All protected REST and WebSocket endpoints require a verified Clerk session token.
+- **Driver Portal isolation**: The Driver Portal login form uses Clerk's headless `useSignIn()` — Google OAuth buttons are never rendered. Social logins are architecturally excluded, not just hidden.
+- **Role enforcement is defence-in-depth**: Roles are checked at three layers — frontend route guard, FastAPI `require_roles()` dependency, and Clerk `publicMetadata` claims in the JWT.
+- **`driver_status` guard**: Even if a user has `role=driver`, driver-only API endpoints reject requests if `driver_status` is not `active`.
 - Tracking data is scoped server-side: passengers see only their assigned ride vehicle, drivers see only their assigned vehicle, and admins see the fleet.
-- Admins assign a driver to a vehicle with `PATCH /vehicle/{vehicle_id}`:
+- Admins assign a driver to a vehicle with `PATCH /vehicles/{vehicle_id}`:
 
   ```json
   { "driver_user_id": 123 }
   ```
 
+- `CLERK_SECRET_KEY` in `backend/.env` enables real-time `publicMetadata` sync to Clerk. Without it, role updates are stored in the DB and synced on the user's next sign-in.
 - Keep database credentials, Clerk secrets, and Supabase service-role keys out of the frontend and all `VITE_*` variables.
-- Set explicit production `ALLOWED_ORIGINS` values and serve the frontend/backend over HTTPS/WSS.
+- Set explicit production `ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` values and serve the frontend/backend over HTTPS/WSS.
 - Run database migrations before deployment and rotate any credentials that have been exposed during development.
 
 ### Running behind Nginx Proxy Manager
