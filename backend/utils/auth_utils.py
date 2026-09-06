@@ -6,6 +6,8 @@ from typing import Optional
 import jwt
 from fastapi import Depends, HTTPException, WebSocket, status
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config import (
@@ -118,35 +120,73 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
     token_driver_status = metadata.get("driver_status") or payload.get("driver_status")
 
     user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
+    changed = False
     if user is None:
-        email = payload.get("email") or payload.get("email_address") or f"{clerk_user_id}@clerk.local"
-        name = payload.get("name") or payload.get("first_name") or "Clerk User"
-        initial_role = token_role if token_role in {"passenger", "driver", "admin"} else "passenger"
-        initial_driver_status = token_driver_status or ("pending_verification" if initial_role == "driver" else "active")
-        user = User(
-            name=name,
-            email=email,
-            password_hash=secrets.token_urlsafe(32),
-            clerk_user_id=clerk_user_id,
-            role=initial_role,
-            driver_status=initial_driver_status,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    else:
-        # Sync role from Clerk JWT claims if explicitly provided in session token
-        updated = False
-        if token_role and token_role in {"passenger", "driver", "admin"} and user.role != token_role:
-            user.role = token_role
-            updated = True
-        if token_driver_status and user.driver_status != token_driver_status:
-            user.driver_status = token_driver_status
-            updated = True
-        if updated:
+        email = payload.get("email") or payload.get("email_address")
+        name = payload.get("name") or payload.get("first_name")
+        if email:
+            # Same email, different Clerk identity (re-registered account or a
+            # second sign-in method): link instead of crashing on the email
+            # unique constraint. Privileged rows are never auto-linked — a
+            # mismatched login for those gets a clear 409, otherwise anyone
+            # could hijack e.g. the seeded admin by re-registering its email.
+            existing = (
+                db.query(User)
+                .filter(func.lower(User.email) == email.strip().lower())
+                .first()
+            )
+            if existing is not None:
+                if existing.role != "passenger":
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "This email is already registered with a different "
+                            "sign-in method. Please sign in with your original "
+                            "method or contact support."
+                        ),
+                    )
+                existing.clerk_user_id = clerk_user_id
+                existing.email = email.strip()
+                if name:
+                    existing.name = name
+                user = existing
+                changed = True
+        if user is None:
+            email = email or f"{clerk_user_id}@clerk.local"
+            name = name or "Clerk User"
+            initial_role = token_role if token_role in {"passenger", "driver", "admin"} else "passenger"
+            initial_driver_status = token_driver_status or ("pending_verification" if initial_role == "driver" else "active")
+            user = User(
+                name=name,
+                email=email,
+                password_hash=secrets.token_urlsafe(32),
+                clerk_user_id=clerk_user_id,
+                role=initial_role,
+                driver_status=initial_driver_status,
+            )
+            db.add(user)
+            changed = True
+    # Sync role from Clerk JWT claims if explicitly provided in session token.
+    # Runs for linked, freshly created, and returning users alike.
+    if token_role and token_role in {"passenger", "driver", "admin"} and user.role != token_role:
+        user.role = token_role
+        changed = True
+    if token_driver_status and user.driver_status != token_driver_status:
+        user.driver_status = token_driver_status
+        changed = True
+    if changed:
+        try:
             db.commit()
-            db.refresh(user)
-
+        except IntegrityError:
+            # Lost a creation race with a concurrent first login: use whoever won.
+            db.rollback()
+            user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
+            if user is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Account already exists. Please sign in with your original method.",
+                )
+    db.refresh(user)
     return user
 
 

@@ -27,6 +27,7 @@ const PassengerView = lazy(() => import('./views/PassengerView'))
 const DriverView = lazy(() => import('./views/DriverView'))
 const AdminView = lazy(() => import('./views/AdminView'))
 const PresentationDemoView = lazy(() => import('./views/PresentationDemoView'))
+const DriverApplyView = lazy(() => import('./views/DriverApplyView'))
 
 import DriverLoginForm from './components/DriverLoginForm.jsx'
 import DriverVerificationGate from './components/DriverVerificationGate.jsx'
@@ -273,7 +274,7 @@ function LoadingScreen({ onGuestLogin }) {
   )
 }
 
-function BootstrapErrorScreen({ onRetry }) {
+function BootstrapErrorScreen({ onRetry, message }) {
   return (
     <div className="flex h-full w-full items-center justify-center p-6 text-center">
       <Card className="w-full max-w-[420px]">
@@ -282,7 +283,7 @@ function BootstrapErrorScreen({ onRetry }) {
             <XCircle className="h-5 w-5 text-destructive" />
           </div>
           <CardTitle>Unable to load your account</CardTitle>
-          <CardDescription>The backend could not verify your session or load your profile. Try again after checking that the API is running.</CardDescription>
+          <CardDescription>{message || 'The backend could not verify your session or load your profile. Try again after checking that the API is running.'}</CardDescription>
         </CardHeader>
         <CardContent>
           <Button className="w-full" onClick={onRetry}>Retry</Button>
@@ -338,8 +339,9 @@ export default function App() {
   }, [signOut])
 
   // Re-fetch the backend profile (e.g. after driver onboarding promotes the
-  // role) and route to the correct home. Replaces the previous no-op.
-  const refreshAuthProfile = useCallback(async () => {
+  // role) and route to the correct home. An explicit targetView overrides
+  // the role-based home (used to land on the in-app driver application).
+  const refreshAuthProfile = useCallback(async (targetView) => {
     const uid = clerkUserRef.current?.id
     if (!uid) return
     try {
@@ -353,7 +355,7 @@ export default function App() {
         driver_status: profile.driver_status || cu?.publicMetadata?.driver_status || 'active',
       }
       setUser(u)
-      setView(roleHome(u.role))
+      setView(targetView || roleHome(u.role))
     } catch { /* keep existing state; background bootstrap already ran once */ }
   }, [])
 
@@ -401,9 +403,10 @@ export default function App() {
             const unread = notifs.filter((n) => !n.is_read).length
             toast('success', `Welcome back, ${u.name.split(' ')[0]}!`, unread > 0 ? `${unread} unread notification${unread===1?'':'s'}` : '')
           })
-          .catch(() => {
+          .catch((err) => {
             fetchedRef.current = null
-            setBootstrapError(true)
+            const detail = err?.response?.data?.detail
+            setBootstrapError(typeof detail === 'string' && detail ? detail : true)
           })
       })()
     } else if (isLoaded && !isSignedIn) {
@@ -496,12 +499,12 @@ export default function App() {
                 onLogout={handleLogout}
                 toast={toast}
               />
-            : <AppShell user={user} view={view} setView={safeSetView} unreadCount={unreadCount} onLogout={handleLogout} notifications={notifications} setNotifications={setNotifications} toast={toast} theme={theme} onToggleTheme={toggleTheme} />
+            : <AppShell user={user} view={view} setView={safeSetView} unreadCount={unreadCount} onLogout={handleLogout} notifications={notifications} setNotifications={setNotifications} toast={toast} theme={theme} onToggleTheme={toggleTheme} onRefreshProfile={refreshAuthProfile} />
           )
         : (!isLoaded || isBootstrapping)
         ? <LoadingScreen timeout={authTimeout && !isBootstrapping} onGuestLogin={handleGuestLogin} />
         : bootstrapError
-        ? <BootstrapErrorScreen onRetry={() => window.location.reload()} />
+        ? <BootstrapErrorScreen onRetry={() => window.location.reload()} message={typeof bootstrapError === 'string' ? bootstrapError : undefined} />
         : isAuthView
         ? <AuthScreen view={view} onToggle={() => setView(view==='login'?'register':'login')} onGuestLogin={handleGuestLogin} theme={theme} onToggleTheme={toggleTheme} refreshAuthProfile={refreshAuthProfile} />
         : <LoadingScreen timeout={false} onGuestLogin={handleGuestLogin} />
@@ -517,7 +520,7 @@ function roleHome(role) {
 }
 
 // ─── App Shell (shadcn) ─────────────────────────────────────────────────────────
-function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast, theme, onToggleTheme }) {
+function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast, theme, onToggleTheme, onRefreshProfile }) {
   const passengerNav = [
     { v: 'home', Icon: Home, label: 'Home' },
     { v: 'trips', Icon: ClipboardList, label: 'My Trips' },
@@ -615,7 +618,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
 
       {/* Main — full height flex column so map views can fill all space */}
       <main className="app-main flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <RoleRouter user={user} view={view} setView={setView} notifications={notifications} setNotifications={setNotifications} toast={toast} />
+        <RoleRouter user={user} view={view} setView={setView} notifications={notifications} setNotifications={setNotifications} toast={toast} onRefreshProfile={onRefreshProfile} />
       </main>
     </div>
   )
@@ -625,12 +628,13 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
 // Views that need full-height (contain maps)
 const FULLHEIGHT_VIEWS = ['home','tracking','driver-map','driver-routes','presentation-demo']
 
-function RoleRouter({ user, view, setView, notifications, setNotifications, toast }) {
+function RoleRouter({ user, view, setView, notifications, setNotifications, toast, onRefreshProfile }) {
   const ctx = { user, view, setView, toast }
   const fullH = FULLHEIGHT_VIEWS.includes(view)
 
   const inner = (() => {
     if (view === 'presentation-demo') return <PresentationDemoView {...ctx} />
+    if (view === 'driver-apply') return <DriverApplyView {...ctx} onApplied={onRefreshProfile} />
     if (view === 'inbox')   return <InboxView notifications={notifications} setNotifications={setNotifications} toast={toast} />
     if (view === 'profile') return <ProfileView user={user} />
     if (user.role === 'passenger') return <PassengerView {...ctx} />

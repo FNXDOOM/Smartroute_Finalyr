@@ -28,15 +28,19 @@ const client = axios.create({
 });
 
 client.interceptors.request.use(async (config) => {
-  const token = authTokenGetter ? await authTokenGetter() : null;
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  // Per-request explicit tokens win: the global getter is only registered
+  // after sign-in completes, so auth-screen flows attach their own token.
+  if (!config.headers.Authorization) {
+    const token = authTokenGetter ? await authTokenGetter() : null;
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+  }
   return config;
 }, (error) => Promise.reject(error));
 
 export const authApi = {
   getProfile: async () => (await client.get('/auth/me')).data,
   updateProfile: async (fields) => (await client.patch('/auth/me', fields)).data,
-  applyDriver: async (payload) => (await client.post('/auth/driver/apply', payload)).data,
+  applyDriver: async (payload, token) => (await client.post('/auth/driver/apply', payload, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)).data,
   verifyDriver: async (userId, status = 'active') => (await client.post(`/auth/driver/${userId}/verify`, { status })).data,
   getPendingDrivers: async () => (await client.get('/auth/drivers/pending')).data,
   updateUserRole: async (userId, role) => (await client.patch(`/auth/users/${userId}/role?role=${encodeURIComponent(role)}`)).data,

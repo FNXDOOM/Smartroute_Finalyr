@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -24,7 +24,9 @@ class DriverApplyRequest(BaseModel):
 
 
 class DriverVerifyRequest(BaseModel):
-    status: Optional[str] = Field("active", description="active | rejected | suspended")
+    status: Optional[Literal["active", "rejected", "suspended"]] = Field(
+        "active", description="active | rejected | suspended"
+    )
 
 
 class UserResponse(UserBase):

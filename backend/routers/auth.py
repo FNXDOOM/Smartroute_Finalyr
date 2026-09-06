@@ -56,10 +56,22 @@ def apply_for_driver(
     Submit application to become a driver.
     Role changes to 'driver' with 'pending_verification' status until verified by an admin.
     """
-    current_user.role = "driver"
-    current_user.driver_status = "pending_verification"
-
     plate = apply_in.license_plate.strip().upper()
+    if not plate:
+        raise HTTPException(status_code=400, detail="Vehicle license plate must not be empty.")
+
+    was_active_driver = (
+        current_user.role == "driver" and current_user.driver_status == "active"
+    )
+    current_user.role = "driver"
+    if not was_active_driver:
+        # First-time and returning (rejected/suspended) applicants go through
+        # admin review. An already-active driver re-applying (e.g. plate
+        # change) must NOT be demoted and locked out of dispatch.
+        # NOTE: fresh passengers default to driver_status "active", so the
+        # role check is required — status alone cannot tell them apart.
+        current_user.driver_status = "pending_verification"
+
     existing_vehicle = db.query(Vehicle).filter(Vehicle.driver_user_id == current_user.id).first()
     if not existing_vehicle:
         duplicate_plate = db.query(Vehicle).filter(Vehicle.license_plate == plate).first()
@@ -94,10 +106,13 @@ def apply_for_driver(
     db.refresh(current_user)
 
     if current_user.clerk_user_id:
+        # Dashboard-facing state: applicants read as "pending" until an admin
+        # approves them. ("pending" is not a real app role, so the token-claim
+        # sync ignores it; the DB below stays driver/pending_verification.)
         sync_clerk_user_metadata(
             current_user.clerk_user_id,
             {
-                "role": "driver",
+                "role": "pending",
                 "driver_status": "pending_verification",
                 "license_plate": plate,
             },
@@ -138,10 +153,13 @@ def verify_driver(
     db.refresh(target)
 
     if target.clerk_user_id:
-        sync_clerk_user_metadata(
-            target.clerk_user_id,
-            {"role": "driver", "driver_status": target.driver_status},
-        )
+        # Approval flips the dashboard state from "pending" to confirmed
+        # driver; rejections/suspensions mirror the stored status truthfully.
+        vehicle = db.query(Vehicle).filter(Vehicle.driver_user_id == target.id).first()
+        confirmed_metadata = {"role": "driver", "driver_status": target.driver_status}
+        if vehicle:
+            confirmed_metadata["license_plate"] = vehicle.license_plate
+        sync_clerk_user_metadata(target.clerk_user_id, confirmed_metadata)
 
     return target
 
