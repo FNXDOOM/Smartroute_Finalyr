@@ -300,8 +300,9 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
           onClick={onToggleSim}
           style={s({
             padding: '8px 16px',
-            background: simActive ? C.accent2 : `linear-gradient(135deg, ${C.accent} 0%, #00a887 100%)`,
-            color: C.bg,
+            // Fixed brand-teal gradient + white text: C.accent is black in light mode, which made this button unreadable there.
+            background: simActive ? '#5b5b5b' : 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+            color: '#ffffff',
             border: 'none',
             borderRadius: 8,
             fontSize: 12,
@@ -332,17 +333,17 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
           followCamera={simActive}
         />
 
-        {/* Floating Speedometer & Status HUD */}
+        {/* Floating Speedometer & Status HUD — background is intentionally always dark (map overlay), so text uses fixed light colors, NOT theme tokens */}
         {simActive && (
-          <div style={{ position: 'absolute', bottom: 24, left: 24, background: 'rgba(15,23,42,0.85)', backdropFilter: 'blur(8px)', border: `1px solid ${C.accent}55`, borderRadius: 14, padding: '12px 18px', zIndex: 500, display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
+          <div style={{ position: 'absolute', bottom: 24, left: 24, background: 'rgba(15,23,42,0.85)', backdropFilter: 'blur(8px)', border: '1px solid rgba(45,212,191,0.35)', borderRadius: 14, padding: '12px 18px', zIndex: 500, display: 'flex', alignItems: 'center', gap: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
             <div>
-              <p style={{ color: C.muted2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' }}>SPEED</p>
-              <p style={{ color: C.accent, fontSize: 24, fontWeight: 800, fontFamily: 'Bricolage Grotesque,sans-serif' }}>{simSpeed} <span style={{ fontSize: 12 }}>km/h</span></p>
+              <p style={{ color: '#94a3b8', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' }}>SPEED</p>
+              <p style={{ color: '#5eead4', fontSize: 24, fontWeight: 800, fontFamily: 'Bricolage Grotesque,sans-serif' }}>{simSpeed} <span style={{ fontSize: 12 }}>km/h</span></p>
             </div>
-            <div style={{ height: 30, width: 1, background: C.border }} />
+            <div style={{ height: 30, width: 1, background: 'rgba(148,163,184,0.3)' }} />
             <div>
-              <p style={{ color: C.muted2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' }}>NEXT STOP</p>
-              <p style={{ color: C.text, fontSize: 12, fontWeight: 700 }}>Indiranagar 100 Ft Rd (Stop 1)</p>
+              <p style={{ color: '#94a3b8', fontSize: 10, fontWeight: 700, textTransform: 'uppercase' }}>NEXT STOP</p>
+              <p style={{ color: '#f1f5f9', fontSize: 12, fontWeight: 700 }}>Indiranagar 100 Ft Rd (Stop 1)</p>
             </div>
           </div>
         )}

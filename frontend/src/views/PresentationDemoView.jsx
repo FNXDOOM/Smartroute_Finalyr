@@ -686,8 +686,9 @@ export default function PresentationDemoView({ toast }) {
             style={s({
               flex: 2,
               padding: '12px 18px',
-              background: isPlaying ? C.accent2 : `linear-gradient(135deg, ${C.accent} 0%, #00a887 100%)`,
-              color: C.bg,
+              // Fixed brand-teal gradient + white text: C.accent is black in light mode, which made this button unreadable there.
+              background: isPlaying ? '#5b5b5b' : 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
+              color: '#ffffff',
               border: 'none',
               borderRadius: 10,
               fontSize: 13,
@@ -877,16 +878,16 @@ export default function PresentationDemoView({ toast }) {
           followCamera={followCamera && isPlaying}
         />
 
-        {/* Floating Instruction Banner */}
-        <div style={{ position: 'absolute', top: 20, left: 24, right: 24, background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(8px)', border: `1px solid ${C.accent}55`, borderRadius: 12, padding: '12px 18px', zIndex: 500, display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
+        {/* Floating Instruction Banner — background is intentionally always dark (map overlay), so text uses fixed light colors, NOT theme tokens */}
+        <div style={{ position: 'absolute', top: 20, left: 24, right: 24, background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(8px)', border: '1px solid rgba(45,212,191,0.35)', borderRadius: 12, padding: '12px 18px', zIndex: 500, display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
           <span style={{ fontSize: 20 }}>⚡</span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ color: C.accent, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI Dispatch Instruction</p>
-            <p style={{ color: C.text, fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{simData.currentInstruction}</p>
+            <p style={{ color: '#5eead4', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI Dispatch Instruction</p>
+            <p style={{ color: '#f1f5f9', fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{simData.currentInstruction}</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: isPlaying ? '#22c55e' : C.muted2, animation: isPlaying ? 'pulse-glow 1.5s infinite' : 'none' }} />
-            <span style={{ color: isPlaying ? '#22c55e' : C.muted2, fontSize: 11, fontWeight: 700 }}>{isPlaying ? 'LIVE SIM' : 'STANDBY'}</span>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: isPlaying ? '#22c55e' : '#94a3b8', animation: isPlaying ? 'pulse-glow 1.5s infinite' : 'none' }} />
+            <span style={{ color: isPlaying ? '#22c55e' : '#94a3b8', fontSize: 11, fontWeight: 700 }}>{isPlaying ? 'LIVE SIM' : 'STANDBY'}</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { useSignIn, useSignUp } from '@clerk/clerk-react'
-import { C, s } from '../ui/tokens.js'
+import { CarFront, Loader2, Lock } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 
 export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   const { isLoaded: isSignInLoaded, signIn, setActive: setSignInActive } = useSignIn()
@@ -24,7 +29,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
     try {
       const result = await signIn.create({
         identifier: identifier.trim(),
-        password: password,
+        password,
       })
 
       if (result.status === 'complete') {
@@ -54,9 +59,9 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
 
       const result = await signUp.create({
         emailAddress: identifier.trim(),
-        password: password,
+        password,
         firstName: firstName || 'Driver',
-        lastName: lastName,
+        lastName,
       })
 
       if (result.status === 'complete') {
@@ -76,128 +81,74 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   }
 
   return (
-    <div style={s({ background: C.surface, border: `1px solid ${C.border2}`, borderRadius: 14, padding: 22, boxShadow: '0 12px 32px rgba(0,0,0,0.25)' })}>
-      {/* Header Banner */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 18 }}>🚗</span>
-          <span style={s({ color: C.accent, fontSize: 13, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.06em' })}>
-            Driver & Fleet Portal
-          </span>
+    <Card className="shadow-lg">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-sm uppercase tracking-wide">
+            <CarFront className="h-4 w-4 text-primary" /> Driver & Fleet Portal
+          </CardTitle>
+          <Badge variant="secondary">Credentials only</Badge>
         </div>
-        <span style={s({ fontSize: 10, color: C.muted2, background: C.surface2, border: `1px solid ${C.border}`, padding: '2px 8px', borderRadius: 999, fontWeight: 700 })}>
-          CREDENTIALS ONLY
-        </span>
-      </div>
-
-      {/* Strict Isolation Notice */}
-      <div style={s({ background: 'rgba(234, 179, 8, 0.08)', border: '1px solid rgba(234, 179, 8, 0.25)', borderRadius: 9, padding: '9px 12px', marginBottom: 16 })}>
-        <p style={s({ color: '#facc15', fontSize: 11, lineHeight: 1.4, margin: 0, display: 'flex', alignItems: 'center', gap: 6 })}>
-          <span>🔒</span>
-          <span><strong>Authentication Isolation:</strong> Social logins are restricted. Drivers must authenticate using verified company/fleet credentials.</span>
-        </p>
-      </div>
-
-      {errorMsg && (
-        <div style={s({ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 9, padding: '9px 12px', marginBottom: 14 })}>
-          <p style={s({ color: '#f87171', fontSize: 11, margin: 0 })}>✕ {errorMsg}</p>
-        </div>
-      )}
-
-      <form onSubmit={mode === 'signin' ? handleDriverSignIn : handleDriverSignUp}>
-        {mode === 'signup' && (
-          <div style={{ marginBottom: 12 }}>
-            <label style={s({ display: 'block', color: C.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 })}>Full Legal Name</label>
-            <input
-              type="text"
-              required
-              placeholder="e.g. Rajesh Kumar"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              style={s({ width: '100%', padding: '10px 12px', background: C.surface2, border: `1px solid ${C.border2}`, color: C.text, borderRadius: 8, fontSize: 12, outline: 'none' })}
-            />
-          </div>
+        <CardDescription className="flex items-center gap-1.5 pt-1 text-xs">
+          <Lock className="h-3 w-3" /> Social logins are disabled here — fleet credentials only.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {errorMsg && (
+          <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{errorMsg}</p>
         )}
 
-        <div style={{ marginBottom: 12 }}>
-          <label style={s({ display: 'block', color: C.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 })}>
-            {mode === 'signin' ? 'Driver Email or Username' : 'Driver Email'}
-          </label>
-          <input
-            type="text"
-            required
-            placeholder="driver@smartroute.ai"
-            value={identifier}
-            onChange={e => setIdentifier(e.target.value)}
-            style={s({ width: '100%', padding: '10px 12px', background: C.surface2, border: `1px solid ${C.border2}`, color: C.text, borderRadius: 8, fontSize: 12, outline: 'none' })}
-          />
-        </div>
+        <form onSubmit={mode === 'signin' ? handleDriverSignIn : handleDriverSignUp} className="space-y-3.5">
+          {mode === 'signup' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="driver-name">Full Legal Name</Label>
+              <Input id="driver-name" required placeholder="e.g. Rajesh Kumar" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+          )}
 
-        <div style={{ marginBottom: 14 }}>
-          <label style={s({ display: 'block', color: C.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 })}>Password</label>
-          <input
-            type="password"
-            required
-            placeholder="••••••••••••"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            style={s({ width: '100%', padding: '10px 12px', background: C.surface2, border: `1px solid ${C.border2}`, color: C.text, borderRadius: 8, fontSize: 12, outline: 'none' })}
-          />
-        </div>
-
-        {mode === 'signup' && (
-          <div style={{ marginBottom: 14 }}>
-            <label style={s({ display: 'block', color: C.muted, fontSize: 11, fontWeight: 700, marginBottom: 5 })}>Vehicle License Plate</label>
-            <input
-              type="text"
-              required
-              placeholder="KA-01-AB-1234"
-              value={licensePlate}
-              onChange={e => setLicensePlate(e.target.value.toUpperCase())}
-              style={s({ width: '100%', padding: '10px 12px', background: C.surface2, border: `1px solid ${C.border2}`, color: C.text, borderRadius: 8, fontSize: 12, outline: 'none', letterSpacing: '0.05em' })}
-            />
+          <div className="space-y-1.5">
+            <Label htmlFor="driver-id">{mode === 'signin' ? 'Driver Email or Username' : 'Driver Email'}</Label>
+            <Input id="driver-id" required placeholder="driver@smartroute.ai" value={identifier} onChange={(e) => setIdentifier(e.target.value)} />
           </div>
-        )}
 
-        <button
-          type="submit"
-          disabled={loading}
-          style={s({
-            width: '100%',
-            padding: '11px 14px',
-            background: `linear-gradient(135deg, ${C.accent} 0%, #00a887 100%)`,
-            color: C.bg,
-            border: 'none',
-            borderRadius: 9,
-            fontSize: 12,
-            fontWeight: 800,
-            cursor: loading ? 'not-allowed' : 'pointer',
-            boxShadow: '0 4px 14px rgba(0,201,167,0.35)',
-            opacity: loading ? 0.7 : 1,
-            transition: 'all 0.2s ease',
-          })}
-        >
-          {loading ? 'Authenticating…' : mode === 'signin' ? 'Sign In to Driver Portal' : 'Register Driver Profile'}
-        </button>
-      </form>
+          <div className="space-y-1.5">
+            <Label htmlFor="driver-pass">Password</Label>
+            <Input id="driver-pass" type="password" required placeholder="••••••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
-        <button
-          type="button"
-          onClick={() => setMode(m => m === 'signin' ? 'signup' : 'signin')}
-          style={s({ background: 'none', border: 'none', color: C.muted2, fontSize: 11, cursor: 'pointer', textDecoration: 'underline' })}
-        >
-          {mode === 'signin' ? 'Apply as a new Driver' : 'Already a registered driver?'}
-        </button>
+          {mode === 'signup' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="driver-plate">Vehicle License Plate</Label>
+              <Input
+                id="driver-plate"
+                required
+                placeholder="KA-01-AB-1234"
+                value={licensePlate}
+                onChange={(e) => setLicensePlate(e.target.value.toUpperCase())}
+                className="uppercase tracking-widest"
+              />
+            </div>
+          )}
 
-        <button
-          type="button"
-          onClick={onSwitchToPassenger}
-          style={s({ background: 'none', border: 'none', color: C.accent, fontSize: 11, fontWeight: 700, cursor: 'pointer' })}
-        >
-          ← Passenger Login
-        </button>
-      </div>
-    </div>
+          <Button type="submit" className="w-full" disabled={loading}>
+            {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+            {loading ? 'Authenticating…' : mode === 'signin' ? 'Sign In to Driver Portal' : 'Register Driver Profile'}
+          </Button>
+        </form>
+
+        <div className="mt-4 flex items-center justify-between border-t pt-3 text-xs">
+          <button
+            type="button"
+            onClick={() => setMode((m) => (m === 'signin' ? 'signup' : 'signin'))}
+            className="text-muted-foreground underline hover:text-foreground"
+          >
+            {mode === 'signin' ? 'Apply as a new Driver' : 'Already a registered driver?'}
+          </button>
+          <button type="button" onClick={onSwitchToPassenger} className="font-semibold text-primary hover:underline">
+            ← Passenger Login
+          </button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

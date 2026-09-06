@@ -1,6 +1,10 @@
 import { useState } from 'react'
-import { C, s } from '../ui/tokens.js'
+import { Hourglass, Loader2, RefreshCw } from 'lucide-react'
 import { authApi } from '../services/api.js'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
 
 export default function DriverVerificationGate({ user, onRefreshProfile, onLogout, toast }) {
   const [checking, setChecking] = useState(false)
@@ -23,97 +27,53 @@ export default function DriverVerificationGate({ user, onRefreshProfile, onLogou
   }
 
   return (
-    <div style={s({ minHeight: '100vh', background: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 })}>
-      <div style={s({ width: '100%', maxWidth: 480, background: C.surface, border: `1.5px solid ${C.border2}`, borderRadius: 16, padding: 28, boxShadow: '0 20px 48px rgba(0,0,0,0.3)', textAlign: 'center' })}>
-        
-        {/* Status Icon & Header */}
-        <div style={s({ width: 64, height: 64, borderRadius: '50%', background: 'rgba(234, 179, 8, 0.12)', border: '2px solid rgba(234, 179, 8, 0.4)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, marginBottom: 16 })}>
-          ⏳
-        </div>
-
-        <h2 style={s({ fontFamily: 'Bricolage Grotesque, sans-serif', color: C.text, fontSize: 20, fontWeight: 800, marginBottom: 6 })}>
-          Driver Verification Required
-        </h2>
-
-        <p style={s({ color: C.muted2, fontSize: 13, lineHeight: 1.5, marginBottom: 20 })}>
-          Welcome, <strong style={{ color: C.text }}>{user?.name || 'Partner'}</strong>! Your driver profile has been created and is currently awaiting dispatch verification.
-        </p>
-
-        {/* Verification Status Details Card */}
-        <div style={s({ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: '16px 18px', textAlign: 'left', marginBottom: 22 })}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={s({ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: 'uppercase' })}>Account Role</span>
-            <span style={s({ color: C.accent, fontSize: 12, fontWeight: 800 })}>Driver / Fleet Partner</span>
+    <div className="flex min-h-screen items-center justify-center bg-background p-6">
+      <Card className="w-full max-w-[480px] text-center shadow-xl">
+        <CardHeader>
+          <span className="mx-auto mb-2 flex h-16 w-16 items-center justify-center rounded-full border-2 border-amber-400/40 bg-amber-400/10">
+            <Hourglass className="h-7 w-7 text-amber-500" />
+          </span>
+          <CardTitle className="font-display text-xl">Driver Verification Required</CardTitle>
+          <CardDescription>
+            Welcome, <strong className="text-foreground">{user?.name || 'Partner'}</strong>! Your driver profile is awaiting dispatch verification.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 text-left">
+          <div className="space-y-2.5 rounded-lg border p-4 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase text-muted-foreground">Account Role</span>
+              <span className="text-xs font-extrabold">Driver / Fleet Partner</span>
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase text-muted-foreground">Approval Status</span>
+              <Badge variant="secondary" className="border-amber-400/30 bg-amber-400/10 text-amber-600 dark:text-amber-400">Pending Verification</Badge>
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase text-muted-foreground">Email Verified</span>
+              <span className="text-xs font-semibold">{user?.email || 'N/A'}</span>
+            </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span style={s({ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: 'uppercase' })}>Approval Status</span>
-            <span style={s({ color: '#facc15', background: 'rgba(234, 179, 8, 0.15)', padding: '2px 8px', borderRadius: 6, fontSize: 11, fontWeight: 800 })}>
-              Pending Verification
-            </span>
+          <div className="rounded-lg border border-primary/25 bg-primary/[0.05] p-3.5">
+            <p className="mb-1.5 text-[11px] font-extrabold uppercase tracking-wider text-primary">Verification Checklist</p>
+            <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+              <li>License plate and vehicle allocation under review.</li>
+              <li>City transit route permissions pending clearance.</li>
+              <li>Background safety credential check in progress.</li>
+            </ul>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={s({ color: C.muted, fontSize: 11, fontWeight: 700, textTransform: 'uppercase' })}>Email Verified</span>
-            <span style={s({ color: C.text, fontSize: 12, fontWeight: 600 })}>{user?.email || 'N/A'}</span>
+          <div className="flex flex-col gap-2">
+            <Button onClick={handleCheckStatus} disabled={checking}>
+              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {checking ? 'Checking Status…' : 'Check Approval Status'}
+            </Button>
+            <Button variant="outline" onClick={onLogout}>Sign Out</Button>
           </div>
-        </div>
-
-        {/* Security / Requirements checklist */}
-        <div style={s({ background: 'rgba(0, 201, 167, 0.06)', border: `1px solid ${C.accent}33`, borderRadius: 10, padding: '12px 14px', textAlign: 'left', marginBottom: 24 })}>
-          <p style={s({ color: C.accent, fontSize: 11, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6, letterSpacing: '0.04em' })}>
-            Verification Checklist
-          </p>
-          <p style={s({ color: C.muted2, fontSize: 11, lineHeight: 1.5, margin: 0 })}>
-            • License plate and vehicle allocation under review.<br />
-            • City transit route permissions pending clearance.<br />
-            • Background safety credential check in progress.
-          </p>
-        </div>
-
-        {/* Action Buttons */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <button
-            type="button"
-            onClick={handleCheckStatus}
-            disabled={checking}
-            style={s({
-              width: '100%',
-              padding: '12px 16px',
-              background: `linear-gradient(135deg, ${C.accent} 0%, #00a887 100%)`,
-              color: C.bg,
-              border: 'none',
-              borderRadius: 10,
-              fontSize: 13,
-              fontWeight: 800,
-              cursor: checking ? 'not-allowed' : 'pointer',
-              boxShadow: '0 4px 14px rgba(0,201,167,0.3)',
-              opacity: checking ? 0.7 : 1,
-            })}
-          >
-            {checking ? 'Checking Status…' : 'Check Approval Status ↻'}
-          </button>
-
-          <button
-            type="button"
-            onClick={onLogout}
-            style={s({
-              width: '100%',
-              padding: '10px 16px',
-              background: C.surface2,
-              border: `1px solid ${C.border2}`,
-              color: C.muted,
-              borderRadius: 10,
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: 'pointer',
-            })}
-          >
-            Sign Out
-          </button>
-        </div>
-
-      </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
