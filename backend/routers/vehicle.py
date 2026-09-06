@@ -103,7 +103,15 @@ def assign_idle_vehicles_to_routes(
         for index, vehicle in enumerate(located_vehicles)
     } if road_costs is not None else {}
 
+    # Capacity-aware costs: a vehicle must never be matched to a route it
+    # cannot seat. Infeasible pairs get a prohibitive cost so the Hungarian
+    # solver avoids them whenever a feasible alternative exists; any
+    # infeasible pair it still returns (e.g. more routes than vehicles) is
+    # filtered out below and reported via the unassigned lists.
+    # passenger_count=0 means "unknown" and stays feasible for all vehicles.
+    INFEASIBLE_COST = 10**12
     cost_matrix = []
+    feasible_matrix = []
     for vehicle in vehicles:
         if vehicle.id in located_costs:
             vehicle_costs = located_costs[vehicle.id]
@@ -118,7 +126,15 @@ def assign_idle_vehicles_to_routes(
                     int(haversine_meters(vehicle.lat, vehicle.lng, route.lat, route.lng))
                     for route in routes
                 ]
-        cost_matrix.append(vehicle_costs)
+        feasible = [
+            vehicle.capacity >= (route.passenger_count or 0)
+            for route in routes
+        ]
+        feasible_matrix.append(feasible)
+        cost_matrix.append([
+            cost if ok else INFEASIBLE_COST
+            for cost, ok in zip(vehicle_costs, feasible)
+        ])
 
     matched_pairs = assign_vehicles(cost_matrix)
     assignments: List[VehicleAssignmentItem] = []
@@ -126,6 +142,9 @@ def assign_idle_vehicles_to_routes(
     matched_route_indices = set()
 
     for vehicle_idx, route_idx in matched_pairs:
+        if not feasible_matrix[vehicle_idx][route_idx]:
+            # Over capacity: leave both the vehicle and the route unassigned.
+            continue
         vehicle = vehicles[vehicle_idx]
         route = routes[route_idx]
         vehicle.assigned_route_id = route.route_id

@@ -423,8 +423,9 @@ Update vehicle status, location, or assigned route.
 
 ### `POST /vehicle/assign`
 Run Hungarian algorithm to optimally assign idle vehicles to route candidates.
+Capacity-aware: pairs where `vehicle.capacity < route.passenger_count` are never matched — over-capacity routes stay in `unassigned_route_ids` (`passenger_count=0` means unknown and stays feasible for all vehicles).
 
-**Auth required:** Yes (admin or driver)
+**Auth required:** Yes (admin or driver; drivers are scoped to their own `driver_user_id` idle vehicles)
 
 **Request body:**
 ```json
