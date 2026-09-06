@@ -68,7 +68,7 @@ Passenger App / Driver App / Admin Dashboard
 
 ### Why H3 Spatial Grid?
 
-- Divides Bengaluru into hexagonal cells at a fixed resolution (res=9 = ~75 sq km per cell)
+- Divides Bengaluru into hexagonal cells at a fixed resolution (res=9 ≈ 0.105 km² per cell, ~200 m across)
 - Clustering only happens within a cell (or adjacent cells), reducing computational cost
 - Enables efficient demand prediction (one prediction per H3 cell)
 - Makes caching and incremental updates easier
@@ -77,7 +77,8 @@ Passenger App / Driver App / Admin Dashboard
 
 - Google's production-grade solver handles complex constraints (vehicle capacity, time windows, etc.)
 - Significantly better routes than greedy algorithms
-- Reasonable solve time for our fleet size (< 1 second for most instances)
+- Distance matrix is 3-tier: Stadia road matrix (≤25×25) → local OSM road graph (Dijkstra) → haversine fallback (`backend/services/routing/vrp_solver.py`)
+- Reasonable solve time for our fleet size (10 s hard limit via `GUIDED_LOCAL_SEARCH` + `PATH_CHEAPEST_ARC`)
 - Alternative: Local search (LKH) or Genetic Algorithms, but those have longer solve times
 
 ### Why Hungarian Algorithm for Vehicle Assignment?
@@ -118,40 +119,41 @@ Passenger App / Driver App / Admin Dashboard
 
 ```
 1. User opens map on passenger app
-2. FE: User clicks "Book Ride" → Selects destination → Chooses tier (SwiftX, Lux Black, etc.)
-3. FE: POST /rides/request { passenger_location, destination, tier, ... }
-4. BE: Validate Clerk token → Extract user_id (passenger)
-5. BE: Create RideRequest record { status='pending', passenger_user_id, from_lat, from_lng, ... }
+2. FE: User clicks "Book Ride" → Selects destination → Chooses tier (SwiftX, SwiftXL, Lux Black, Moto)
+3. FE: POST /rides/request { pickup_lat, pickup_lng, dest_lat, dest_lng, pickup_label, destination_label, ride_option_* }
+4. BE: Validate Clerk token → resolve user_id; reject points outside India (`is_india_location`)
+5. BE: Create RideRequest record { status='pending', mode='live', user_id, h3_index (res 9) }
 6. BE: Broadcast notification via /notifications/ws to passenger: "Ride booking confirmed, waiting for vehicle assignment"
 7. BE: Return response with ride_id to FE
-8. [Repeat every 5s] FE polls GET /rides/{ride_id} or subscribes to /notifications/ws for status updates
-9. [Every 60s] Worker runs clustering job
+8. [Repeat every 5s] FE polls GET /rides/my-rides (live mode only) or subscribes to /notifications/ws for status updates
+9. [Every 60s] Worker runs clustering job (live scope)
    → Finds all pending rides in passenger's H3 cell
    → Runs HDBSCAN to group nearby passengers
    → Creates VirtualStop + ClusterRun records { status='clustered' }
-   → Updates RideRequest.status='clustered', cluster_run_id=X
-10. [Admin or auto-trigger] Worker runs VRP optimization
-    → Reads all clustered rides in a cell
-    → Builds distance matrix (Stadia routing)
-    → Calls OR-Tools solver with vehicle/rider locations + capacity
-    → Creates RoutePlan + RouteWaypoint records
+   → Updates RideRequest.status='clustered', virtual_stop_id=X
+10. [Admin/driver trigger POST /route/optimize, or POST /jobs/run/auto-dispatch] Worker runs VRP optimization
+    → Reads all clustered rides in live scope
+    → Builds distance matrix (Stadia ≤25×25 → OSM Dijkstra → haversine fallback)
+    → Calls OR-Tools solver with per-vehicle capacities
+    → Creates RoutePlan + RouteWaypoint records (geometry via Stadia `route_many` when configured)
     → Assigns RideRequest.status='assigned'
-11. [Hungarian assignment] Worker runs assignment
-    → Matches idle vehicles to routes
-    → Updates Vehicle.assigned_route_id = route_id
-12. [Every 5s] Simulation advances ride status
-    → Vehicle.status = 'arriving'
+11. [Hungarian assignment] Matches idle vehicles to routes (drivers only see/optimise their own `driver_user_id` vehicles)
+    → Updates Vehicle.assigned_route_id = route_id, status='active'
+12. [Every 5s] Simulation advances assigned → arriving → in_progress → completed (pending/clustered are NOT touched by sim job)
+    → Vehicle.status = 'arriving' / returns to 'idle' when its stop completes
     → Broadcasts /tracking/ws update to passenger (vehicle location, ETA)
     → Eventually completes ride
 13. FE: Passenger sees live vehicle tracking on map, arrival notification
 ```
 
+> Live vs presentation data never mix: every dispatch table carries `ride_mode` (`live` | `presentation_demo`) + `demo_run_id`. Live endpoints default to `mode=live`; the isolated demo flow uses `PresentationDemoView.jsx` + `POST /rides/demo-batch` and `POST /jobs/run/auto-dispatch?mode=presentation_demo`.
+
 ### Admin Viewing Fleet Analytics
 
 ```
 1. Admin navigates to Admin → Analytics
-2. FE: GET /analytics/overview (no date params = today)
-3. BE: Query database for today's stats:
+2. FE: GET /analytics/overview (fleet-wide aggregate, no date params)
+3. BE: Query database for fleet stats:
    - Total ride requests (all statuses)
    - Total unique vehicles
    - Total clusters created
@@ -159,8 +161,8 @@ Passenger App / Driver App / Admin Dashboard
    - Total routes planned
    - Fleet utilization %
 4. BE: Return JSON { total_rides, total_vehicles, ... }
-5. FE: Render bar chart (today + last 30 days)
-6. FE: GET /analytics/daily?start_date=...&end_date=... for detailed breakdown
+5. FE: Render overview metrics + bar chart
+6. FE: GET /analytics/daily?days=14 (1–90) for per-day breakdown
 7. BE: Group RideRequest by date, compute stats per day
 8. FE: Render table + chart
 ```
@@ -195,18 +197,19 @@ Passenger App / Driver App / Admin Dashboard
 
 ### Running a Background Job
 
-1. Define the job function in `backend/services/` (e.g., `cluster_pending_rides()`)
-2. Wire it into the scheduler in `backend/worker.py` with a cron or interval
-3. Use `logger` for observability
-4. Handle exceptions gracefully (don't crash the worker)
-5. Update relevant database records with results
+1. Define the job function in `backend/services/background_jobs.py` (e.g., `run_cluster_job()`, `run_auto_dispatch_pipeline()`)
+2. Wire it into the asyncio scheduler (`start_background_jobs()` in the same file; intervals: cluster 60 s, demand 300 s, rebalance 300 s, sim 5 s) — jobs run in `backend/worker.py`, optionally in-API via `ENABLE_BACKGROUND_JOBS_IN_API=true` for single-process dev
+3. Scope every query with `apply_ride_scope(query, mode, demo_run_id)` so `live` and `presentation_demo` never mix
+4. Use `logger` for observability
+5. Handle exceptions gracefully (rollback, mark `job_runs.status='failed'`, don't crash the worker)
+6. Update relevant database records with results + write a `job_runs` audit row (`is_scheduled=False` for manual `POST /jobs/run/*` triggers)
 
 ### Broadcasting Real-Time Updates
 
 1. Identify which WebSocket endpoint should receive the update (`/tracking/ws` for vehicle positions, `/notifications/ws` for ride status changes)
-2. Collect the target audience (which user_ids should see this?)
-3. Use the broadcast manager: `broadcast_manager.broadcast(channel, message, user_ids=[...])`
-4. Frontend subscribes and handles the message (update state, show notification, etc.)
+2. Collect the target audience (which user_ids should see this?) — tracking is scoped server-side (admin=fleet, driver=own vehicle, passenger=own ride vehicle); notifications are keyed by `user_id`
+3. Use the managers: `ConnectionManager.broadcast()` in `backend/routers/tracking.py` and `NotificationConnectionManager` in `backend/services/notifications.py` (dead connections are pruned silently)
+4. Frontend subscribes via `frontend/src/hooks/useWebSocket.js` / `services/api.js:createTrackingWS|createNotificationsWS` with `['bearer', clerkJwt]` subprotocol and handles the message (update state, show notification, etc.)
 
 ---
 
@@ -214,47 +217,59 @@ Passenger App / Driver App / Admin Dashboard
 
 ```
 backend/
-├── config.py                    # Settings (env vars, defaults)
-├── database.py                  # SQLAlchemy engine + session factory
-├── main.py                      # FastAPI app + WebSocket routes
-├── worker.py                    # APScheduler + job definitions
-├── seed.py                      # Demo data for development
+├── config.py                    # Settings (env vars, defaults; Stadia + Clerk + CORS)
+├── database.py                  # SQLAlchemy engine + session factory + PortableGeometry + compat migrations
+├── main.py                      # FastAPI app + CORS + security headers + lifespan (tracking broadcast loop)
+├── worker.py                    # Dedicated asyncio worker (start_background_jobs loop)
+├── seed.py                      # Demo data for development (see also scripts/seed_db.py)
 │
-├── models/                      # SQLAlchemy ORM models
-│   ├── user.py, vehicle.py, ride_request.py, etc.
+├── models/                      # SQLAlchemy ORM models (12 tables)
+│   ├── user.py, vehicle.py, ride_request.py, virtual_stop.py, cluster_run.py
+│   ├── route_plan.py, route_waypoint.py, tracking_event.py, notification.py
+│   ├── job_run.py, demand_snapshot.py, vehicle_rebalance_suggestion.py
 │
 ├── routers/                     # API endpoints (one file per resource)
-│   ├── auth.py, rides.py, cluster.py, route.py, etc.
+│   ├── auth.py, rides.py, cluster.py, route.py, vehicle.py
+│   ├── tracking.py, notifications.py, analytics.py, predict.py, jobs.py
+│   ├── routing.py, geocode.py, maps.py   # Stadia-backed road/geocode/tile proxy (India-only)
 │
 ├── schemas/                     # Pydantic request/response validators
-│   ├── user.py, ride_request.py, route.py, etc.
+│   ├── user.py, ride_request.py, route.py, vehicle.py, virtual_stop.py
+│   ├── cluster.py, tracking.py, notification.py, analytics.py, predict.py, jobs.py
 │
 ├── services/                    # Business logic + algorithms
+│   ├── background_jobs.py       # asyncio scheduler + run_cluster/demand/rebalance/simulate/auto-dispatch
+│   ├── stadia_client.py         # Server-side Stadia/Valhalla client (geocode, route, matrix, tiles)
+│   ├── clerk_service.py         # Clerk publicMetadata sync (requires CLERK_SECRET_KEY)
 │   ├── clustering/
+│   │   ├── h3_partitioner.py
 │   │   └── hdbscan_clusterer.py
 │   ├── routing/
-│   │   ├── vrp_solver.py        # OR-Tools optimization
-│   │   └── astar_router.py      # A* pathfinding (unused)
+│   │   ├── vrp_solver.py        # OR-Tools optimization (Stadia → OSM → haversine matrix, 10 s limit)
+│   │   └── astar_router.py      # A* pathfinding (implemented, currently unused by pipeline)
 │   ├── prediction/
-│   │   ├── demand_model.py      # XGBoost loader
+│   │   ├── demand_model.py      # XGBoost loader (ml/models/demand_model.pkl + heuristic fallback)
 │   │   └── feature_engineering.py
 │   ├── assignment/
 │   │   └── hungarian_assigner.py
 │   ├── stops/
-│   │   └── virtual_stop_generator.py
-│   ├── background_jobs.py       # Job definitions
-│   └── notifications.py         # WebSocket broadcast
+│   │   ├── virtual_stop_generator.py  # K-Medoids
+│   │   └── road_snapper.py            # OSMnx snapping
+│   └── notifications.py         # WebSocket broadcast helpers
 │
 ├── utils/                       # Helpers
-│   ├── auth_utils.py, geo.py, ride_scope.py
+│   ├── auth_utils.py (Clerk JWKS verify, get_current_user, require_roles, WS bearer token)
+│   ├── geo.py (haversine_meters, is_india_location 6.5–35.7 / 68.1–97.4)
+│   ├── ride_scope.py (LIVE_MODE / PRESENTATION_DEMO_MODE, apply_ride_scope)
 │
-├── alembic/                     # Database migrations
+├── ../alembic/                  # Database migrations (project root)
 │   ├── env.py
 │   └── versions/
 │       ├── 0001_initial_schema.py
-│       └── 0002_...py
+│       └── 0002_separate_presentation_demo_runs.py  # ride_mode + demo_run_id
 │
-└── requirements.txt
+├── ../ml/models/demand_model.pkl
+└── ../requirements.txt          # Project-root pip requirements
 ```
 
 ---
@@ -268,7 +283,8 @@ backend/
 
 ### VRP Optimization (OR-Tools)
 - Time: typically 100-500ms for 10-15 stops per route
-- Timeout set to 1s to prevent long-running solves
+- Timeout set to 10s (`params.time_limit.seconds = 10` in `vrp_solver.py`) to prevent long-running solves
+- Matrix build order: Stadia (≤25×25) → OSM Dijkstra → haversine; geometry enrichment via Stadia `route_many` is best-effort only
 - Quality degrades gracefully if timeout reached
 
 ### Road Snapping (OSMnx)

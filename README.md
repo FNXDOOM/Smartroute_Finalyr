@@ -91,14 +91,15 @@ Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartroutea
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 19 + Vite, MapLibre GL, Clerk (auth) |
+| Frontend | React 19 + Vite, MapLibre GL (Stadia-only via authenticated backend proxy), Clerk (auth) |
 | Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (Supabase) |
 | Auth | Clerk (JWT RS256 via JWKS) + dual-role isolation (Passenger / Driver) |
-| Role Sync | Clerk `publicMetadata` patched via Backend API on every role change |
-| Algorithms | HDBSCAN clustering, OR-Tools CVRP, Hungarian algorithm (scipy), H3 spatial indexing |
-| ML | XGBoost demand model (heuristic fallback if model file absent) |
-| Maps | Stadia Maps via MapLibre, with OSMnx road graph support for dispatch distances |
-| Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications |
+| Role Sync | Clerk `publicMetadata` patched via Backend API on every role change (requires `CLERK_SECRET_KEY` — note: add it to `backend/.env`; it is missing from `.env.example`) |
+| Algorithms | HDBSCAN clustering, OR-Tools CVRP (Stadia ≤25×25 → OSM Dijkstra → haversine), Hungarian algorithm (scipy), H3 spatial indexing (res 9 ≈ 0.1 km²) |
+| ML | XGBoost demand model (`ml/models/demand_model.pkl`, heuristic fallback if absent) |
+| Maps | Stadia Maps via authenticated MapLibre proxy (`/maps/stadia/*`, `/geocode/*`, `/routing/*`), OSMnx road graph; all geo endpoints India-guarded (`is_india_location`) |
+| Isolation | `ride_mode` (`live` \| `presentation_demo`) + `demo_run_id` on rides/stops/runs/plans/vehicles (Alembic `0002_demo_scope`); `PresentationDemoView` keeps demos off live fleet |
+| Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications (bearer subprotocol only; `?token=` rejected with 4401) |
 
 ---
 
@@ -234,7 +235,10 @@ Admin opens Overview → Pending Driver Verifications widget
 | `VITE_CLERK_PUBLISHABLE_KEY` | `frontend/.env` | Initializes the Clerk frontend SDK |
 | `CLERK_JWKS_URL` | `backend/.env` | URL to Clerk's JWKS endpoint for JWT verification |
 | `CLERK_ISSUER` | `backend/.env` | Expected `iss` claim in Clerk JWTs |
-| `CLERK_SECRET_KEY` | `backend/.env` | **(Optional)** Backend API key to sync `publicMetadata` to Clerk in real time |
+| `CLERK_AUDIENCE` | `backend/.env` | (Optional) Expected `aud` claim |
+| `CLERK_AUTHORIZED_PARTIES` | `backend/.env` | Must be the public `https://` domain in production (matches `ALLOWED_ORIGINS`) |
+| `CLERK_ALLOW_NATIVE_CLIENTS` | `backend/.env` | Gate native-client tokens (`true` in dev example) |
+| `CLERK_SECRET_KEY` | `backend/.env` | **(Optional but required for instant sync)** Backend API key to sync `publicMetadata` to Clerk in real time — missing from `backend/.env.example`, add it manually |
 
 > **Note:** If `CLERK_SECRET_KEY` is omitted, role changes are saved to the database but not immediately reflected in Clerk session tokens. The role will sync on the user's next login when the JWT is re-issued.
 
@@ -274,26 +278,27 @@ python seed.py --reset  # wipe and re-seed
 - Frontend route guard (`safeSetView`) blocks passengers from driver/admin views with toast warnings
 
 ### Passenger
-- Book a ride — creates a `RideRequest` in DB, fires notification
+- Book a ride — creates a `RideRequest` (`mode=live`, `status=pending`) in DB, fires notification; pickup/destination must be within India
+- Batch + demo booking — `POST /rides/batch`, `POST /rides/demo-batch` (Indiranagar/Koramangala presets or custom coords), `POST /rides/demo-shared-batch`, `DELETE /rides/demo-runs/{id}` (isolated `presentation_demo` scope via `PresentationDemoView`)
 - Select ride tier (SwiftX, SwiftXL, Lux Black, Moto) with flat fare display
-- Cancel pending/clustered rides
-- Trip history with status badges
-- Live tracking map — polls vehicle GPS every 5 seconds
+- Cancel pending/clustered rides (passengers may only set `cancelled` on their own rides)
+- Trip history with status badges (`GET /rides/my-rides`, live scope only)
+- Live tracking map — polls vehicle GPS every 5 seconds; `GET /rides/{id}/vehicle` resolves the assigned vehicle (null until routed)
 - Trip detail view showing assigned vehicle, cluster ID, H3 cell
 
 ### Driver
 - Dashboard with fleet stats pulled from real DB
-- Drivers only see and update vehicles assigned to their user; admins assign a vehicle with `PATCH /vehicles/{id}` and `{ "driver_user_id": <id> }`
-- Live fleet map — WebSocket connection to `/tracking/ws`, updates every 2 seconds
+- Drivers only see and update vehicles assigned to their user (`driver_user_id` scoping in `POST /route/optimize` + fleet views); admins assign a vehicle with `PATCH /vehicles/{id}` and `{ "driver_user_id": <id> }`
+- Live fleet map — WebSocket connection to `/tracking/ws` (`bearer` subprotocol; `?token=` rejected with 4401), updates every 2 seconds
 - Push own GPS location to backend (uses device geolocation, falls back to simulated coords)
-- View and manage assigned rides — Start / Arriving / Complete buttons
-- Route waypoint detail with map overlay showing optimized stops
+- View and manage assigned rides — Start / Arriving / Complete buttons (drives the same `assigned → arriving → in_progress → completed` transitions as the sim job)
+- Route waypoint detail with map overlay showing optimized stops (Stadia geometry when configured)
 
 ### Passenger Real-Time Features
-- **Notifications WebSocket** — Connected to `/notifications/ws` for instant ride status changes (assigned, vehicle arriving, completed)
+- **Notifications WebSocket** — Connected to `/notifications/ws` (bearer subprotocol) for instant ride status changes (assigned, vehicle arriving, completed)
 - **Live route tracking** — WebSocket connection updates vehicle GPS every 5 seconds with real-time vehicle animation on map
-- **Route polyline rendering** — Displays optimized VRP route path on map once vehicle is assigned to a ride group
-- **Automatic ride status progression** — Simulation job advances rides through pipeline (`pending → clustered → assigned → arriving → in_progress → completed`) every 5 seconds with WebSocket push
+- **Route polyline rendering** — Displays optimized VRP route path (Stadia geometry when configured, else local road matrix) once a vehicle is assigned
+- **Automatic ride status progression** — Simulation job every 5 seconds advances only `assigned → arriving → in_progress → completed` (plus driver buttons); `pending → clustered → assigned` is driven by clustering / VRP / auto-dispatch. Live and `presentation_demo` scopes are isolated by `ride_mode` + `demo_run_id`
 
 ### Admin (9 panels)
 - **Overview** — real-time stats: total rides, vehicles, clusters, routes, utilisation %; inline pending driver verification widget
@@ -306,12 +311,12 @@ python seed.py --reset  # wipe and re-seed
 - **Jobs** — scheduler status, manual trigger for clustering/demand/rebalance jobs, run history
 - **Heatmap** — XGBoost demand predictions (pre-trained model deployed) visualized on MapLibre map using H3 cells
 
-### Background Jobs (auto-run on backend startup)
-- **Auto-dispatch pipeline** — on new ride booking, immediately queues clustering + VRP optimization + Hungarian assignment (no admin intervention needed)
+### Background Jobs (auto-run on backend startup via `backend/worker.py`; opt-in in-API with `ENABLE_BACKGROUND_JOBS_IN_API=true`)
+- **Auto-dispatch pipeline** (`POST /jobs/run/auto-dispatch`) — one call runs cluster → VRP → Hungarian assign (live) or isolated demo dispatch (`?mode=presentation_demo&demo_run_id=...` with reserved `DEMO-PRESENTATION-01` vehicle)
 - Clustering every 60 seconds — groups `pending` rides into virtual stops via HDBSCAN + K-Medoids + OSMnx road snapping
 - Demand refresh every 300 seconds — updates DemandSnapshot table with XGBoost predictions (trained model at `ml/models/demand_model.pkl`)
 - Fleet rebalance every 300 seconds — generates VehicleRebalanceSuggestion records for idle vehicles
-- **Ride simulation every 5 seconds** — automatically advances active rides through the status pipeline and pushes WebSocket notifications
+- **Ride simulation every 5 seconds** — advances only `assigned → arriving → in_progress → completed` and pushes WebSocket notifications (frees the vehicle to `idle` on stop completion)
 
 ---
 
@@ -375,8 +380,7 @@ python seed.py --reset  # wipe and re-seed
   - Add `<ErrorBoundary>` wrappers around each view
 
 - [x] **Backend tests**
-  - Pytest coverage includes schema/model checks, health probes, protected routes,
-    and WebSocket token handling
+  - Pytest coverage: `test_health_and_ws_auth` (probes, 401s, bearer-only WS), `test_role_rbac` (passenger provisioning, role guards), `test_pipeline_and_batch` (HDBSCAN → VRP → assign integration), `test_maps_and_routing` (Stadia proxy / India guard), plus `scripts/test_models_schemas.py`
   - Continue expanding coverage for ride status transitions and VRP solver output
 
 - [x] **Production deployment foundation**
@@ -413,20 +417,22 @@ Admin → Drivers Panel
 ### Ride Dispatch Pipeline
 
 ```
-Passenger books ride
+Passenger books ride (India-guarded)
         ↓
-POST /rides/request  ──→  RideRequest (status=pending)
-        ↓  [background job every 60s]
+POST /rides/request  ──→  RideRequest (status=pending, mode=live)
+        ↓  [every 60s, or POST /jobs/run/auto-dispatch|clustering]
 HDBSCAN clustering   ──→  VirtualStop + ClusterRun (status=clustered)
-        ↓  [admin triggers or background job]
-OR-Tools VRP         ──→  RoutePlan + RouteWaypoints (status=assigned)
-        ↓  [Hungarian algorithm]
-Vehicle assignment   ──→  Vehicle.assigned_route_id set
-        ↓  [simulation job every 5s]
-Status progression   ──→  arriving → in_progress → completed
+        ↓  [POST /route/optimize (drivers scoped to own vehicles) or auto-dispatch]
+OR-Tools VRP (Stadia ≤25×25 → OSM Dijkstra → haversine, 10 s)  ──→  RoutePlan + RouteWaypoints (status=assigned)
+        ↓  [Hungarian algorithm inside auto-dispatch / POST /vehicle/assign]
+Vehicle assignment   ──→  Vehicle.assigned_route_id set, status=active
+        ↓  [simulation job every 5s: assigned → arriving → in_progress → completed]
+Status progression   ──→  arriving → in_progress → completed (pending/clustered never touched by sim)
         ↓  [WebSocket broadcast every 2s]
 Passenger tracking   ──→  Live map updates in browser
 ```
+
+Live and `presentation_demo` rows are isolated by `ride_mode` + `demo_run_id` (Alembic `0002_demo_scope`); demo flow uses `PresentationDemoView` + `DEMO-PRESENTATION-01`.
 
 ---
 
@@ -443,13 +449,25 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 - `PATCH /auth/users/{user_id}/role?role=...` — override any user's role (admin only)
 
 ### Ride Endpoints
-- `POST /rides/request` — book a ride
-- `GET /rides/my-rides` — passenger trip history
-- `POST /cluster/run` — run HDBSCAN clustering (admin/driver)
-- `POST /route/optimize` — run VRP route optimization (admin/driver)
+- `POST /rides/request` — book a ride (India-guarded, `mode=live`)
+- `POST /rides/batch` — batch live booking
+- `POST /rides/demo-batch` / `POST /rides/demo-shared-batch` / `DELETE /rides/demo-runs/{demo_run_id}` — isolated presentation demos
+- `GET /rides/my-rides` — passenger trip history (live scope)
+- `GET /rides/{ride_id}/vehicle` — assigned vehicle or null
+- `POST /cluster/run` — run HDBSCAN clustering (admin/driver; `mode`/`demo_run_id` supported via jobs endpoints)
+- `POST /route/optimize` — run VRP route optimization (admin/driver; drivers scoped to own `driver_user_id` vehicles)
+
+### Maps / Geo (Stadia-backed, India-only, auth required)
+- `GET /maps/stadia/style.json` + `GET /maps/stadia/resource/{path}` — authenticated tile proxy (no key in browser)
+- `GET /geocode/suggest|search|reverse` — autocomplete / forward / reverse geocode
+- `GET /routing/route` / `GET /routing/nearest-road` / `POST /routing/map-match` / `POST /routing/matrix` (matrix: admin/driver, 1–25 points per side)
+
+### Jobs
+- `POST /jobs/run/auto-dispatch` — full cluster → VRP → assign pipeline (`?mode=live|presentation_demo`)
+- `POST /jobs/run/clustering` — same `mode`/`demo_run_id` query support
 
 ### Real-Time
-- `WS /tracking/ws` with the `bearer` subprotocol — live vehicle tracking stream
+- `WS /tracking/ws` with the `bearer` subprotocol — live vehicle tracking stream (`?token=` query rejected with 4401; scoped: admin=fleet, driver=own vehicle, passenger=own ride vehicle)
 - `WS /notifications/ws` with the `bearer` subprotocol — per-user notification stream
 
 ### Analytics & ML
@@ -460,7 +478,8 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 
 ## Security and Production Notes
 
-- All protected REST and WebSocket endpoints require a verified Clerk session token.
+- All protected REST and WebSocket endpoints require a verified Clerk session token. WebSocket `?token=` query params are rejected — use `['bearer', jwt]` (covered by `tests/test_health_and_ws_auth.py`).
+- **India service area**: all ride/geocode/routing writes are guarded by `is_india_location` (6.5–35.7 / 68.1–97.4); out-of-area requests return `422`.
 - **Driver Portal isolation**: The Driver Portal login form uses Clerk's headless `useSignIn()` — Google OAuth buttons are never rendered. Social logins are architecturally excluded, not just hidden.
 - **Role enforcement is defence-in-depth**: Roles are checked at three layers — frontend route guard, FastAPI `require_roles()` dependency, and Clerk `publicMetadata` claims in the JWT.
 - **`driver_status` guard**: Even if a user has `role=driver`, driver-only API endpoints reject requests if `driver_status` is not `active`.
@@ -622,9 +641,10 @@ Uvicorn is already started with `--proxy-headers --forwarded-allow-ips=*` (see `
 
 **Backend**:
 ```bash
-cd backend
+# from project root (tests/ live at root, backend on sys.path)
 pytest tests/ -v  # verbose output
-pytest tests/test_health_and_ws_auth.py::test_health_live  # single test
+pytest tests/test_health_and_ws_auth.py -v  # single file
+python scripts/test_models_schemas.py  # schema/model sanity check
 ```
 
 **Frontend**:
@@ -638,31 +658,35 @@ npm run build  # verify production build works
 
 ```
 backend/
-├── main.py              # FastAPI app initialization
-├── models/              # SQLAlchemy ORM models
-├── routers/             # API endpoint groups (auth, rides, vehicles, etc.)
+├── main.py              # FastAPI app initialization (+ lifespan broadcast loop)
+├── worker.py            # Dedicated asyncio worker (scheduled jobs)
+├── models/              # SQLAlchemy ORM models (12 tables)
+├── routers/             # API endpoint groups (auth, rides, cluster, route, vehicle, tracking, notifications, analytics, predict, jobs, routing, geocode, maps)
 ├── schemas/             # Pydantic request/response validators
-├── services/            # Business logic (clustering, routing, ML, etc.)
-├── utils/               # Helper functions (auth, geo, etc.)
+├── services/            # Business logic (clustering, routing/vrp_solver, assignment, prediction, stadia_client, clerk_service, background_jobs, etc.)
+├── utils/               # Helper functions (auth_utils, geo [haversine + India guard], ride_scope [live/demo])
 ├── config.py            # Settings and environment variables
-├── database.py          # SQLAlchemy engine and session
-└── seed.py              # Demo data insertion
+├── database.py          # SQLAlchemy engine and session (+ PortableGeometry)
+└── seed.py              # Demo data insertion (see also scripts/seed_db.py)
 
 frontend/
 ├── src/
 │   ├── App.jsx          # Main router
 │   ├── SwiftApp.jsx     # App shell with sidebar
-│   ├── views/           # Full-page views (PassengerView, DriverView, etc.)
-│   ├── components/      # Reusable UI components
+│   ├── views/           # Full-page views (PassengerView, DriverView, AdminView, PresentationDemoView)
+│   ├── components/      # Reusable UI components (AppMap, DriverLoginForm, DriverVerificationGate)
 │   ├── hooks/           # Custom React hooks (useWebSocket, etc.)
-│   ├── services/        # API clients (api.js)
-│   └── config/          # Frontend constants
+│   ├── services/        # API clients (api.js — Clerk JWT interceptor, bearer WS factories)
+│   └── config/          # Frontend constants (demoPresets, etc.)
+
+ml/models/demand_model.pkl  # Trained XGBoost demand model (see scripts/train_demand_model_synthetic.py)
 
 architecture/            # Detailed technical documentation
 ├── system-design.md
 ├── api-reference.md
 ├── db-schema.md
 ├── algorithms.md
+├── background-jobs.md
 ├── websockets.md
 └── supabase.md
 ```

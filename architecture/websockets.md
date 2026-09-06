@@ -93,7 +93,7 @@ Triggered by `POST /tracking/vehicles/{id}/location`:
 
 ### Frontend usage
 ```javascript
-const token = localStorage.getItem("access_token");
+const token = await getClerkSessionToken(); // Clerk session JWT, never in URL
 const ws = new WebSocket("ws://localhost:8000/tracking/ws", ["bearer", token]);
 
 ws.onmessage = (event) => {

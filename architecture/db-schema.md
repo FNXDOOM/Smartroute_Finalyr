@@ -2,6 +2,8 @@
 
 12 tables. Supabase PostgreSQL + PostGIS in production, SQLite only when explicitly configured for local development.
 
+Live vs presentation isolation: `ride_requests`, `cluster_runs`, `route_plans`, `virtual_stops`, and `vehicles` carry `ride_mode` (`live` | `presentation_demo`, indexed) + `demo_run_id` (nullable, indexed) — see Alembic `0002_demo_scope` and `backend/utils/ride_scope.py`. Live queries default to `mode=live`.
+
 ---
 
 ## Entity Relationship Overview
@@ -45,7 +47,9 @@ Stores all user accounts — passengers, drivers, and admins.
 | `email` | VARCHAR | NOT NULL, UNIQUE, index | Login identifier |
 | `phone` | VARCHAR | default `""` | Optional contact |
 | `password_hash` | VARCHAR | NOT NULL | Legacy seed placeholder; user passwords are managed by Clerk |
+| `clerk_user_id` | VARCHAR | UNIQUE, index, nullable | Clerk `sub` claim; added by compat migration + Alembic; partial unique index where NOT NULL |
 | `role` | VARCHAR | NOT NULL, default `"passenger"` | `passenger` / `driver` / `admin` |
+| `driver_status` | VARCHAR | NOT NULL, default `"active"` | `active` / `pending_verification` / `suspended` (verify endpoint also accepts admin-set values such as `rejected`) |
 | `created_at` | TIMESTAMPTZ | server default NOW() | |
 
 **Relationships:**
@@ -67,6 +71,8 @@ Every passenger ride request — from creation through completion.
 | `dest_lat` | FLOAT | NOT NULL | Destination latitude |
 | `dest_lng` | FLOAT | NOT NULL | Destination longitude |
 | `status` | VARCHAR | NOT NULL, default `"pending"` | See status flow below |
+| `mode` (`ride_mode` col) | VARCHAR | NOT NULL, default `"live"`, index | `live` / `presentation_demo` (Alembic 0002) |
+| `demo_run_id` | VARCHAR | nullable, index | Set only for presentation runs |
 | `h3_index` | VARCHAR | index, nullable | H3 cell at resolution 9 |
 | `cluster_id` | INTEGER | nullable | Set after clustering |
 | `virtual_stop_id` | INTEGER | FK → virtual_stops.id, nullable | Set after clustering |
@@ -82,8 +88,9 @@ Every passenger ride request — from creation through completion.
 **Status flow:**
 ```
 pending → clustered → assigned → arriving → in_progress → completed
-                                                        ↘ cancelled
+                                                         ↘ cancelled
 ```
+Only `assigned → arriving → in_progress → completed` is advanced by the 5 s simulation job; `pending → clustered → assigned` is advanced by clustering / route optimization / auto-dispatch.
 
 **Relationships:**
 - `user` → many-to-one (belongs to user)
@@ -99,6 +106,8 @@ Computed pickup points — one per passenger cluster, snapped to a real road nod
 |---|---|---|---|
 | `id` | INTEGER | PK, index | |
 | `cluster_id` | INTEGER | NOT NULL | Links to cluster group (not FK, logical) |
+| `mode` (`ride_mode` col) | VARCHAR | NOT NULL, default `"live"`, index | `live` / `presentation_demo` |
+| `demo_run_id` | VARCHAR | nullable, index | Presentation run isolation |
 | `h3_index` | VARCHAR | index, nullable | H3 cell this stop belongs to |
 | `lat` | FLOAT | NOT NULL | Snapped latitude |
 | `lng` | FLOAT | NOT NULL | Snapped longitude |
@@ -127,6 +136,8 @@ Audit log of every HDBSCAN clustering execution.
 | `clusters_formed` | INTEGER | NOT NULL, default 0 | |
 | `noise_requests_count` | INTEGER | NOT NULL, default 0 | Outlier rides not grouped |
 | `created_by_user_id` | INTEGER | FK → users.id, nullable | Who triggered it |
+| `mode` (`ride_mode` col) | VARCHAR | NOT NULL, default `"live"`, index | `live` / `presentation_demo` |
+| `demo_run_id` | VARCHAR | nullable, index | Presentation run isolation |
 | `cluster_summary` | JSON | nullable | Array of cluster details — see below |
 | `created_at` | TIMESTAMPTZ | server default NOW() | |
 
@@ -164,7 +175,9 @@ One record per optimized vehicle route produced by OR-Tools VRP.
 | `total_distance_meters` | FLOAT | NOT NULL, default 0.0 | Sum of all legs |
 | `estimated_duration_seconds` | FLOAT | NOT NULL, default 0.0 | distance / 8.33 m/s (~30 km/h) |
 | `created_by_user_id` | INTEGER | FK → users.id, nullable | Who triggered optimization |
-| `metadata` | JSON | nullable | `{ vehicle_capacity, assigned_stop_ids[], source_cluster_run_id }` |
+| `mode` (`ride_mode` col) | VARCHAR | NOT NULL, default `"live"`, index | `live` / `presentation_demo` |
+| `demo_run_id` | VARCHAR | nullable, index | Presentation run isolation |
+| `metadata` | JSON | nullable | `{ vehicle_capacity, assigned_stop_ids[], source_cluster_run_id, geometry[], maneuvers[], routing_provider: "stadia" | "local-road-matrix" }` |
 | `created_at` | TIMESTAMPTZ | server default NOW() | |
 
 **Relationships:**
@@ -199,12 +212,15 @@ The fleet — one record per physical vehicle.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | INTEGER | PK, index | |
-| `license_plate` | VARCHAR | NOT NULL, UNIQUE, index | |
+| `license_plate` | VARCHAR | NOT NULL, UNIQUE, index | Upper-cased on driver apply; `DEMO-PRESENTATION-01` reserved for demo mode |
 | `capacity` | INTEGER | NOT NULL | Max passenger seats |
+| `mode` (`ride_mode` col) | VARCHAR | NOT NULL, default `"live"`, index | `live` / `presentation_demo` |
+| `demo_run_id` | VARCHAR | nullable, index | Presentation run isolation |
 | `status` | VARCHAR | NOT NULL, default `"idle"` | `idle` / `active` / `en_route` / `offline` |
 | `lat` | FLOAT | nullable | Current GPS latitude |
 | `lng` | FLOAT | nullable | Current GPS longitude |
 | `assigned_route_id` | VARCHAR | nullable | route_plans.route_id (string FK) |
+| `driver_user_id` | INTEGER | FK → users.id, nullable, index | Owner driver; drivers are scoped to their own vehicles in `/route/optimize` |
 | `current_location` | PortableGeometry | nullable | PostGIS POINT |
 | `created_at` | TIMESTAMPTZ | server default NOW() | |
 
@@ -332,12 +348,12 @@ All geospatial computation (distance, clustering, snapping) is done in Python, n
 
 | Table | Indexed Columns |
 |---|---|
-| `users` | id, email |
-| `ride_requests` | id, h3_index |
-| `virtual_stops` | id, h3_index |
-| `cluster_runs` | id, run_uuid |
-| `route_plans` | id, route_id |
-| `vehicles` | id, license_plate |
+| `users` | id, email, clerk_user_id (partial unique where NOT NULL) |
+| `ride_requests` | id, h3_index, ride_mode, demo_run_id |
+| `virtual_stops` | id, h3_index, ride_mode, demo_run_id |
+| `cluster_runs` | id, run_uuid, ride_mode, demo_run_id |
+| `route_plans` | id, route_id, ride_mode, demo_run_id |
+| `vehicles` | id, license_plate, driver_user_id, ride_mode, demo_run_id |
 | `tracking_events` | id, vehicle_id, ride_request_id, route_plan_id, created_at |
 | `notifications` | id, user_id, notification_type, related_entity_id, created_at |
 | `job_runs` | id, job_name |

@@ -148,11 +148,15 @@ Subject to: each stop visited exactly once
 ```
 
 ### Distance matrix
-A symmetric N×N matrix of haversine distances between all stops (including depot at index 0):
+3-tier cascade in `build_stadia_distance_matrix` → `build_road_distance_matrix` → `build_distance_matrix`:
+1. Stadia road matrix when all sides have ≤25 points and `STADIA_API_KEY` is set (distances converted km → m)
+2. Local OSM road graph (Dijkstra from `build_road_graph` radius, `max(3000, span*1.35)` m) — per-pair fallback keeps haversine where a node is unreachable
+3. Haversine great-circle fallback (always available):
 ```python
 matrix[i][j] = haversine_meters(stops[i]["lat"], stops[i]["lng"],
                                 stops[j]["lat"], stops[j]["lng"])
 ```
+Route geometry enrichment (`route_many`) is best-effort only and recorded as `routing_provider: "stadia" | "local-road-matrix"` in `route_plans.route_metadata`.
 
 ### Search strategy
 ```python

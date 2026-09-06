@@ -147,23 +147,15 @@ identity. Clerk verifies identity; FastAPI still authorizes every operation.
 
 ## 6. Frontend changes required
 
-The current frontend is not fully production-wired to the backend:
+The current frontend (`frontend/src/`) is Clerk-wired — no mock fallbacks remain in the API layer:
 
-- `frontend/src/services/api.js` falls back to fake rides, vehicles, analytics,
-  and history when requests fail.
-- `AuthContext.jsx` currently creates mock users and mock JWTs when login fails;
-  this must be removed when Clerk is enabled.
-- Notifications and trip history pages render hard-coded mock data.
-- `updateProfile()` only updates React state; it does not call `/auth/me`.
-- `useVehicleTracking.js` connects without the backend-required `token` query
-  parameter, so the WebSocket is rejected with code `4401`.
-- `RideBooking.jsx` creates a payload shape that must be converted to the
-  backend's required `pickup_lat`, `pickup_lng`, `dest_lat`, and `dest_lng`
-  fields before calling `/rides/request`.
+- `frontend/src/services/api.js` attaches the Clerk session JWT via `setAuthTokenGetter()` on every request (Axios interceptor → `Authorization: Bearer <jwt>`); `WS_BASE_URL` is derived from `VITE_API_BASE_URL`. There are no fake-ride/vehicle/analytics fallbacks.
+- Auth uses `@clerk/clerk-react` (`ClerkProvider` in `main.jsx`/`App.jsx`): Passenger portal = `<SignIn/>`/`<SignUp/>` with Google OAuth + password; Driver portal = headless `DriverLoginForm.jsx` (credentials only) → `POST /auth/driver/apply`; pending drivers see `DriverVerificationGate.jsx`.
+- Views are real: `PassengerView.jsx` (book/cancel/history + live map + VRP polyline), `DriverView.jsx` (fleet map, GPS push, Start/Arriving/Complete), `AdminView.jsx` (9 panels), `PresentationDemoView.jsx` (isolated `presentation_demo` runs via `POST /rides/demo-batch` + `POST /jobs/run/auto-dispatch?mode=presentation_demo`).
+- Maps go through the authenticated Stadia proxy (`/maps/stadia/style.json`); geocoding/routing go through `/geocode/*` and `/routing/*` (India-guarded). The Stadia key lives only in `backend/.env` — never in `VITE_*`.
+- WebSockets use the `bearer` subprotocol (`createTrackingWS` / `createNotificationsWS` in `services/api.js`, consumed via `hooks/useWebSocket.js`); `?token=` query params are rejected with `4401` (see `tests/test_health_and_ws_auth.py`).
 
-Before production, remove silent fake-success fallbacks. Show an error state
-when FastAPI or Supabase is unavailable so failed bookings cannot look
-successful.
+Before production, keep this posture: surface API errors in the UI (no silent success), and keep all secrets out of `frontend/.env`.
 
 Frontend environment variables should be public-only:
 
@@ -200,12 +192,11 @@ bypass RLS, so application authorization must remain explicit.
 ## 8. Realtime and WebSockets
 
 Keep the current FastAPI WebSocket for live vehicle tracking if the client needs
-the existing server-side simulation and event format. Construct its URL with the
-Supabase access token:
+the existing server-side simulation and event format. Authenticate with the Clerk session JWT via the `bearer` subprotocol (never a query param):
 
 ```js
 const wsBase = import.meta.env.VITE_API_BASE_URL.replace(/^http/, 'ws');
-const ws = new WebSocket(`${wsBase}/tracking/ws`, ['bearer', accessToken]);
+const ws = new WebSocket(`${wsBase}/tracking/ws`, ['bearer', clerkSessionJwt]);
 ```
 
 Supabase Realtime can be introduced later for database change notifications, but
@@ -215,15 +206,15 @@ it does not automatically replace the route/dispatch logic in FastAPI.
 
 - [ ] Create staging and production Supabase projects.
 - [ ] Enable PostGIS in both projects.
-- [ ] Use Alembic migrations; do not depend on automatic table creation.
-- [ ] Decide UUID migration versus integer-to-UUID mapping.
-- [ ] Migrate login/signup to Clerk.
-- [ ] Verify Supabase JWTs in FastAPI and load roles from server-side profiles.
+- [ ] Use Alembic migrations (`0001_initial_schema`, `0002_demo_scope` for `ride_mode`/`demo_run_id`); do not depend on automatic table creation.
+- [ ] Decide UUID migration versus integer-to-UUID mapping (current `users.id` is integer + unique `clerk_user_id` text).
+- [ ] Migrate login/signup to Clerk (already wired: dual-portal + `publicMetadata` sync via `CLERK_SECRET_KEY`).
+- [ ] Verify Clerk JWTs in FastAPI and load roles from server-side profiles.
 - [ ] Add RLS policies or keep tables inaccessible to direct browser queries.
-- [ ] Remove frontend mock-success fallbacks.
-- [ ] Add the WebSocket JWT query token and reconnect handling.
-- [ ] Set production CORS origins and HTTPS/WSS URLs.
-- [ ] Store secrets in the deployment provider, not Git.
+- [ ] Keep the no-mock-fallback posture: surface API errors instead of fake success.
+- [ ] Keep WebSocket `bearer`-subprotocol auth and reconnect handling (`hooks/useWebSocket.js`).
+- [ ] Set production CORS origins (`ALLOWED_ORIGINS`) + `CLERK_AUTHORIZED_PARTIES` to the public `https://` domain and HTTPS/WSS URLs.
+- [ ] Store secrets in the deployment provider, not Git (note: `backend/.env.example` currently omits `CLERK_SECRET_KEY` — add it wherever `publicMetadata` sync is needed).
 - [ ] Run backup/restore and migration tests before switching production traffic.
 
 ## Official references

@@ -63,35 +63,35 @@ Change a user's role. Admin only.
 ---
 
 ### `POST /rides/request`
-Submit a new ride request. Authenticated user becomes the passenger.
+Submit a new ride request. Authenticated user becomes the passenger. Always created with `mode="live"`.
 
 **Auth required:** Yes (any role)
 
 **Request body:**
 ```json
 {
-  "pickup_lat": 25.2048,
-  "pickup_lng": 55.2708,
-  "dest_lat": 25.1972,
-  "dest_lng": 55.2796,
-  "pickup_label": "Dubai Mall",
-  "destination_label": "Dubai Airport",
-  "ride_option_id": "shared",
-  "ride_option_name": "Shared Ride",
-  "ride_option_price": "8 AED"
+  "pickup_lat": 12.9719,
+  "pickup_lng": 77.6412,
+  "dest_lat": 12.9756,
+  "dest_lng": 77.6066,
+  "pickup_label": "Indiranagar 100 Feet Rd",
+  "destination_label": "MG Road Metro",
+  "ride_option_id": "swift-x",
+  "ride_option_name": "SwiftX",
+  "ride_option_price": "₹12–15"
 }
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| pickup_lat / pickup_lng | yes | Range: lat ±90, lng ±180 |
-| dest_lat / dest_lng | yes | |
+| pickup_lat / pickup_lng | yes | Range: lat ±90, lng ±180; must be within India (`is_india_location`) |
+| dest_lat / dest_lng | yes | Must be within India |
 | pickup_label / destination_label | no | Human-readable names |
 | ride_option_* | no | Display metadata only, not used in routing |
 
 **Responses:**
-- `201` — Ride created with `status: "pending"` and computed `h3_index`
-- `422` — Coordinates out of range
+- `201` — Ride created with `status: "pending"`, `mode: "live"` and computed `h3_index` (res 9)
+- `422` — Coordinates out of range or outside India
 
 ---
 
@@ -119,8 +119,20 @@ Get a single ride request by ID.
 
 ---
 
+### `GET /rides/{ride_id}/vehicle`
+Passenger-scoped lookup of the vehicle currently assigned to a ride (via `virtual_stop_id → route_waypoints.passenger_ids → route_plans.vehicle_id`). Returns `null` when no route is optimized yet.
+
+**Auth required:** Yes (owner passenger or admin)
+
+**Responses:**
+- `200` — `VehicleSnapshot` or `null`
+- `403` — Not your ride (and not admin)
+- `404` — Ride not found
+
+---
+
 ### `GET /rides/`
-List all ride requests system-wide.
+List all ride requests system-wide (live scope by default).
 
 **Auth required:** Yes (admin or driver only)
 
@@ -128,6 +140,8 @@ List all ride requests system-wide.
 | Param | Type | Default | Notes |
 |---|---|---|---|
 | status | string | — | Filter: `pending`, `clustered`, `assigned`, `arriving`, `in_progress`, `completed`, `cancelled` |
+| mode | string | `live` | `live` \| `presentation_demo` (demo requires `demo_run_id`) |
+| demo_run_id | string | — | Required when `mode=presentation_demo` |
 | h3_index | string | — | Filter by H3 cell |
 | limit | int | 50 | Max 500 |
 | offset | int | 0 | Pagination |
@@ -136,13 +150,46 @@ List all ride requests system-wide.
 - `200` — List of rides
 - `400` — Invalid status value
 - `403` — Passenger access blocked
+- `422` — Invalid mode / missing `demo_run_id`
+
+---
+
+### `POST /rides/batch`
+Create multiple live ride requests in one transaction (same validation as `/rides/request`).
+
+**Auth required:** Yes (any role) — all rows owned by caller, `mode="live"`
+
+**Request body:** `{ "requests": [RideRequestCreate, ...] }`
+
+**Responses:** `201` — List of created rides
+
+---
+
+### `POST /rides/demo-batch?zone=indiranagar|koramangala`
+Create 3 isolated presentation riders (`mode="presentation_demo"`) for 1-click HDBSCAN/CVRP demos. Accepts optional custom `pickup_lat|pickup_lng|dest_lat|dest_lng` + labels, or preset zones (Indiranagar default, H3 `8961892eddbffff`).
+
+**Auth required:** Yes (any role)
+
+---
+
+### `POST /rides/demo-shared-batch`
+Create up to 3 presentation riders joining one shared-auto route (`{ demo_run_id, riders[] }`).
+
+**Auth required:** Yes (any role)
+
+---
+
+### `DELETE /rides/demo-runs/{demo_run_id}`
+Delete one presentation run (rides, virtual stops, route plans, waypoints, tracking events, related notifications) and release any demo vehicle (`DEMO-PRESENTATION-01` → idle). Non-admins can only reset their own runs.
+
+**Auth required:** Yes (owner or admin)
 
 ---
 
 ### `PATCH /rides/{ride_id}/status`
-Update ride status. Validates against allowed statuses.
+Update ride status. Validates against allowed statuses. Passengers may only set `cancelled` on their own rides.
 
-**Auth required:** Yes (passenger for own rides, driver/admin for any)
+**Auth required:** Yes (passenger for own rides → `cancelled` only, driver/admin for any)
 
 **Request body:**
 ```json
@@ -243,7 +290,7 @@ Get full detail of a cluster run including `cluster_summary` JSON.
 ---
 
 ### `POST /route/optimize`
-Solve the Capacitated VRP and assign vehicle routes.
+Solve the Capacitated VRP and assign vehicle routes (live scope). Drivers can only optimise vehicles they own (`vehicles.driver_user_id == self`); admins can use any vehicles.
 
 **Auth required:** Yes (admin or driver)
 
@@ -252,18 +299,20 @@ Solve the Capacitated VRP and assign vehicle routes.
 {
   "vehicle_ids": [1, 2, 3],
   "virtual_stop_ids": [1, 2, 3, 4],
-  "depot_lat": 25.2048,
-  "depot_lng": 55.2708,
+  "depot_lat": 12.9784,
+  "depot_lng": 77.6408,
   "source_cluster_run_id": 5
 }
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| vehicle_ids | yes | Must be non-empty |
-| virtual_stop_ids | yes | Can be empty → returns `no_virtual_stops` |
+| vehicle_ids | yes | Must be non-empty; driver calls are filtered to own vehicles (missing → 404) |
+| virtual_stop_ids | yes | Can be empty → returns `no_virtual_stops`; must be live-scope stops |
 | depot_lat / depot_lng | yes | Starting/ending point for all routes |
-| source_cluster_run_id | no | Links route to a cluster run for audit |
+| source_cluster_run_id | no | Must be a live-scope cluster run when supplied |
+
+Distance matrix: Stadia (≤25×25) → OSM Dijkstra → haversine; response includes `geometry`/`maneuvers` and `routing_provider: "stadia" | "local-road-matrix"` when Stadia is configured.
 
 **Responses:**
 - `200` — Optimization result
@@ -705,7 +754,7 @@ Recent job execution records.
 
 **Auth required:** Yes (admin or driver)
 
-**Query params:** `?limit=20`
+**Query params:** `?limit=20` (1–100)
 
 **Responses:**
 - `200` — List of JobRunResponse
@@ -717,7 +766,7 @@ Recent demand prediction snapshots.
 
 **Auth required:** Yes (admin or driver)
 
-**Query params:** `?limit=50`
+**Query params:** `?limit=50` (1–200)
 
 **Responses:**
 - `200` — List of DemandSnapshotResponse
@@ -729,17 +778,28 @@ Recent vehicle rebalancing suggestions.
 
 **Auth required:** Yes (admin or driver)
 
-**Query params:** `?limit=50`
+**Query params:** `?limit=50` (1–200)
 
 **Responses:**
 - `200` — List of VehicleRebalanceSuggestionResponse
 
 ---
 
-### `POST /jobs/run/clustering`
-Manually trigger the cluster job immediately.
+### `POST /jobs/run/auto-dispatch?mode=live&demo_run_id=...`
+Run the full pipeline (cluster → VRP → Hungarian assign) in one call. Default depot `12.9784, 77.6408`; demo mode uses/creates `DEMO-PRESENTATION-01`.
 
-**Auth required:** Yes (admin or driver)
+**Auth required:** admin/driver for `mode=live`; any authenticated user for `mode=presentation_demo` (+ `demo_run_id` required)
+
+**Responses:**
+- `200` — `{ "job_run_id", "clusters_formed", "routes_optimized", "assigned_rides" }`
+- `422` — Invalid mode / missing `demo_run_id`
+
+---
+
+### `POST /jobs/run/clustering?mode=live&demo_run_id=...`
+Manually trigger the cluster job immediately (same `mode` access rules as auto-dispatch).
+
+**Auth required:** See above
 
 **Responses:**
 - `200` — `{ "job_run_id": 5, "cluster_run_id": 3, "processed_requests": 24, "clusters_formed": 3, "noise_requests_count": 0 }`
@@ -763,6 +823,61 @@ Manually trigger the vehicle rebalancing job.
 
 **Responses:**
 - `200` — `{ "job_run_id": 7, "suggestions_created": 4, "idle_vehicles": 4, "candidate_zones": 10 }`
+
+---
+
+## Road Routing `/routing` (Stadia-backed, India-only)
+
+All points must satisfy `is_india_location` (6.5–35.7 / 68.1–97.4); Stadia key stays server-side.
+
+### `GET /routing/route?from_lat&from_lng&to_lat&to_lng&traffic=false`
+Drivable route with `geometry`, `distanceMeters`, `durationSeconds`, `maneuvers`. `traffic=true` uses `auto_traffic` costing.
+
+**Auth:** any role. `422` outside India, `502` no drivable route / Stadia failure.
+
+### `GET /routing/nearest-road?lat&lng`
+Snap a point to the nearest road (`{ lat, lng, ... }`).
+
+**Auth:** any role. `404` no nearby road.
+
+### `POST /routing/map-match` (body: 2–100 `{ lat, lng|lon }`)
+Map-match a GPS trace → route details.
+
+**Auth:** any role. `422` unless 2–100 India points.
+
+### `POST /routing/matrix` (body: `{ sources[], targets[], costing? }`)
+Stadia cost matrix; each side must contain 1–25 India points.
+
+**Auth:** admin/driver only (`403` otherwise).
+
+---
+
+## Geocoding `/geocode` (Stadia-backed, India-filtered)
+
+### `GET /geocode/suggest?query&lat&lng`
+Autocomplete (query ≥3 chars; `lat`+`lng` must come together for focus point). Returns `[{ lat, lng, label, raw }]`, India-only.
+
+### `GET /geocode/search?query`
+Forward geocode (query ≥2 chars). Returns India-only list; frontend `search()` throws `Location not found` when empty.
+
+### `GET /geocode/reverse?lat&lng`
+Reverse geocode → `{ lat, lng, label }`. `422` outside India, `404` when no feature.
+
+**Auth (all three):** any role. Stadia failures surface as `502`.
+
+---
+
+## Map Tiles `/maps/stadia` (authenticated Stadia proxy)
+
+Prevents `api_key` leakage: style JSON is rewritten so every Stadia URL points at `/maps/stadia/resource/*`.
+
+### `GET /maps/stadia/style.json`
+Proxied MapLibre style (`Cache-Control: private, max-age=300`).
+
+### `GET /maps/stadia/resource/{resource_path:path}`
+Proxied tiles/sprites/glyphs (`Cache-Control: public, max-age=86400`; JSON bodies rewritten).
+
+**Auth (both):** any role (required — this is why the map needs login). Stadia failures surface as `502`.
 
 ---
 

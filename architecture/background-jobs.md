@@ -1,18 +1,21 @@
 # Background Jobs
 
-Four async workers start automatically when the server starts and run continuously.
+Five async workers start automatically when the server starts and run continuously (`backend/services/background_jobs.py`; dedicated `backend/worker.py` process, or opt-in in-API via `ENABLE_BACKGROUND_JOBS_IN_API=true` for single-process dev).
+
+Every dispatch query is scoped with `apply_ride_scope(query, mode, demo_run_id)` so `live` and `presentation_demo` rows never mix.
 
 ---
 
 ## How It Works
 
-Jobs are managed by `backend/services/background_jobs.py`. On startup (`lifespan` in `main.py`), four asyncio Tasks are created:
+Jobs are managed by `backend/services/background_jobs.py`. On startup (`lifespan` in `main.py` for the broadcast loop, `worker.py` for jobs), asyncio Tasks are created:
 
 ```python
 loop.create_task(_run_periodic("cluster_pending_rides",    60,  run_cluster_job))
 loop.create_task(_run_periodic("refresh_demand_snapshots", 300, run_demand_refresh_job))
 loop.create_task(_run_periodic("rebalance_idle_vehicles",  300, run_vehicle_rebalance_job))
 loop.create_task(_run_periodic("simulate_ride_dispatch",   5,   run_simulate_ride_dispatch_job))
+# plus on-demand only: run_auto_dispatch_pipeline (POST /jobs/run/auto-dispatch)
 ```
 
 Each task:
@@ -164,13 +167,11 @@ Vehicles are NOT automatically repositioned. The suggestions appear in `GET /job
 
 ### What it does
 
-Advances the status of active rides through the lifecycle for demo purposes. This simulates a real dispatch system without requiring actual driver apps.
+Advances only the tail of the lifecycle for demo purposes (`assigned → arriving → in_progress → completed`). It never touches `pending` or `clustered` — those are advanced by clustering / route optimization / auto-dispatch. Completed vehicles return to `idle` once no active rides remain on their stop.
 
-### Transition table
+### Transition table (exact)
 
 ```
-pending      → assigned
-clustered    → assigned
 assigned     → arriving
 arriving     → in_progress
 in_progress  → completed
@@ -180,22 +181,41 @@ in_progress  → completed
 
 ```
 1. Query all RideRequests where status IN
-   (pending, clustered, assigned, arriving, in_progress)
+   (assigned, arriving, in_progress) — live AND demo scopes
 
 2. For each ride:
    a. Apply transition
    b. Create notification for passenger:
       "Your ride request #N changed from X to Y"
 
-3. Commit all changes
+3. On completed: if no other active rides share the stop, reset vehicle to idle + assigned_route_id=None
+
+4. Commit all changes
 ```
 
 ### Writes to
-- `ride_requests` — updates status for all active rides
+- `ride_requests` — updates status for active tail rides only
+- `vehicles` — idle reset on stop completion
 - `notifications` — one per ride per cycle
 - `job_runs` — execution record
 
-> This job runs every 5 seconds so in a live demo, a freshly submitted ride will go from `pending` → `completed` in about 25 seconds.
+> This job runs every 5 seconds so in a live demo, a freshly assigned ride will go from `assigned` → `completed` in about 15 seconds.
+
+---
+
+## Job 5 (on-demand): `auto_dispatch_pipeline`
+
+**Interval:** none (manual only)  
+**Function:** `run_auto_dispatch_pipeline(db, depot_lat=12.9784, depot_lng=77.6408, mode, demo_run_id)`  
+**Manual trigger:** `POST /jobs/run/auto-dispatch?mode=live|presentation_demo&demo_run_id=...` (live = admin/driver only; demo = any authenticated user)
+
+### What it does
+
+Runs the full end-to-end pipeline in one call: cluster pending → collect clustered stops without an active route → solve VRP → Hungarian-assign idle vehicles → mark rides `assigned`. Demo mode uses/creates the reserved `DEMO-PRESENTATION-01` vehicle (capacity 4) so presentations never consume live fleet.
+
+### Writes to
+- Same tables as Job 1 plus `route_plans`, `route_waypoints`, `vehicles`, `notifications`
+- `job_runs` with `job_name="auto_dispatch_pipeline"` (`is_scheduled=False` for manual triggers)
 
 ---
 
@@ -230,9 +250,9 @@ Nothing — read-only query, broadcast only.
 ### Via API
 ```
 GET /jobs/status         → scheduler running state + last run times
-GET /jobs/runs           → execution history (last N job_runs)
-GET /jobs/demand-snapshots     → demand prediction results
-GET /jobs/rebalance-suggestions → rebalancing advice
+GET /jobs/runs?limit=20           → execution history (1–100)
+GET /jobs/demand-snapshots?limit=50     → demand prediction results (1–200)
+GET /jobs/rebalance-suggestions?limit=50 → rebalancing advice (1–200)
 ```
 
 ### Scheduler state object
@@ -250,8 +270,9 @@ STATE = SchedulerState(
 ### Manual trigger
 All jobs (except the dispatch simulation) can be triggered on-demand:
 ```
-POST /jobs/run/clustering   → runs run_cluster_job immediately
+POST /jobs/run/auto-dispatch?mode=live|presentation_demo&demo_run_id=... → full pipeline
+POST /jobs/run/clustering?mode=live|presentation_demo&demo_run_id=...   → runs run_cluster_job immediately
 POST /jobs/run/demand       → runs run_demand_refresh_job immediately
 POST /jobs/run/rebalance    → runs run_vehicle_rebalance_job immediately
 ```
-Manual triggers set `is_scheduled=False` in the `job_runs` record for auditability.
+Manual triggers set `is_scheduled=False` in the `job_runs` record for auditability. Live triggers require admin/driver; `presentation_demo` triggers accept any authenticated user (with `demo_run_id`).
