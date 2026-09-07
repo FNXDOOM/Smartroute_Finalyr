@@ -460,7 +460,7 @@ export default function DriverView({ user, view, setView, toast }) {
                 <p className="max-w-[260px] text-xs text-muted-foreground">New pooled pickups from dispatch will appear here automatically.</p>
               </div>
             ) : (
-              manifest.map((ride, idx) => (
+              manifest.map((ride) => (
                 <div key={ride.id} className="rounded-lg border bg-card p-3.5 shadow-sm transition-colors hover:border-primary/30">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
@@ -648,11 +648,13 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
       : [simCoords[1], simCoords[0]]
   const mapZoom = contextRide && !simActive ? 14.5 : 14
 
-  const boardAt = Math.min(3 / (activePath.length - 1), 0.9)
+  const boardAt = contextRide?.plat != null
+    ? Math.min(nearestSegIndex(contextRide.plng, contextRide.plat, activePath) / (activePath.length - 1), 0.9)
+    : Math.min(3 / (activePath.length - 1), 0.9)
   const totalKm = contextRide?.stopOrder === 2 ? 3.6 : contextRide?.stopOrder === 3 ? 3.9 : 4.2
-  let navInstruction = 'Head South on 100 Feet Rd towards Virtual Stop #1'
-  let nextStopLabel = '100 Ft Rd · Stop 1'
-  let nextStopShort = 'Virtual Stop #1'
+  let navInstruction
+  let nextStopLabel
+  let nextStopShort
   if (contextRide) {
     const destShort = String(contextRide.dest).split(',')[0]
     if (simProgress >= 1) {
