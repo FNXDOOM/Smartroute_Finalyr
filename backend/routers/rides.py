@@ -543,6 +543,18 @@ def update_ride_request_status(
             detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_RIDE_STATUSES))}",
         )
     ride.status = status_update.status
+    if current_user.role in ("admin", "driver") and status_update.status in (
+        "assigned",
+        "arriving",
+        "in_progress",
+        "completed",
+    ):
+        # Manual takeover: a driver/admin driving the stages by hand owns the
+        # trip from here on. Dropping the pipeline linkage stops the
+        # auto-dispatch simulator (which only advances route-linked rides)
+        # from racing these taps and finishing the ride in seconds.
+        ride.virtual_stop_id = None
+        ride.cluster_id = None
     create_notification(
         db,
         user_id=ride.user_id,

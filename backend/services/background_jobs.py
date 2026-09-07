@@ -664,11 +664,18 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
     """
     Simulates the active ride lifecycle (assigned -> arriving -> in_progress -> completed)
     every few seconds to feed real-time WebSocket events to the frontend.
+
+    Only pipeline-owned rides (with a virtual stop from clustering / route
+    optimization) are advanced. Rides a driver accepted and drives by hand
+    have no virtual stop — auto-advancing those would race the driver's taps
+    and finish the trip within seconds, before the passenger ever sees the
+    pickup-to-destination stages.
     """
     job_run = _start_job_run(db, "simulate_ride_dispatch", None, is_scheduled)
     try:
         active_rides = db.query(RideRequest).filter(
-            RideRequest.status.in_(["assigned", "arriving", "in_progress"])
+            RideRequest.status.in_(["assigned", "arriving", "in_progress"]),
+            RideRequest.virtual_stop_id.isnot(None),
         ).all()
 
         transitions = {

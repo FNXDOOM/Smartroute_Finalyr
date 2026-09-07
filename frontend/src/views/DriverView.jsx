@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import {
-  ArrowLeft, ArrowUp, BatteryCharging, CarFront, CheckCircle2, ChevronRight,
-  CircleDot, Clock, CornerUpRight, Flag, Gauge, Loader2, LocateFixed, MapPin,
-  Navigation, Pause, Play, RefreshCw, Route as RouteIcon, Satellite, Users,
+  ArrowLeft, ArrowUp, BatteryCharging, BellRing, CarFront, Check,
+  CircleDot, Clock, CornerUpRight, Flag, Gauge, Inbox, Loader2, LocateFixed, MapPin,
+  Navigation, Pause, Play, RefreshCw, Route as RouteIcon, Satellite, Users, X,
 } from 'lucide-react'
 import { ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
 import { useAuth } from '@clerk/clerk-react'
@@ -74,7 +74,6 @@ export default function DriverView({ user, view, setView, toast }) {
   const [vehicles,   setVehicles]   = useState([])
   const [rides,      setRides]      = useState([])
   const [routes,     setRoutes]     = useState([])
-  const [tracking,   setTracking]   = useState({ vehicles:[], events:[] })
   const [loading,    setLoading]    = useState(true)
   const [myVehicle,  setMyVehicle]  = useState(null)
   const [updatingLoc,setUpdatingLoc]= useState(false)
@@ -88,20 +87,57 @@ export default function DriverView({ user, view, setView, toast }) {
   const simTimerRef = useRef(null)
   const simFiredRef = useRef(new Set())
   const simPathRef = useRef(null)
+  const knownPendingRef = useRef(new Set())
+  const pollInitRef = useRef(false)
   const wsRef = useRef(null)
 
   const loadData = useCallback(async () => {
     try {
-      const [v, r, ro] = await Promise.all([vehiclesApi.list(), ridesApi.getAll({ status:'assigned', limit:20 }), routeApi.history(10)])
+      // No status filter: the driver needs incoming (pending/clustered) as
+      // well as active trips on one screen.
+      const [v, r, ro] = await Promise.all([vehiclesApi.list(), ridesApi.getAll({ limit: 50 }), routeApi.history(10)])
+      const list = Array.isArray(r) ? r : []
       setVehicles(Array.isArray(v)?v:[])
-      setRides(Array.isArray(r)?r:[])
+      setRides(list)
       setRoutes(ro?.routes || [])
+      knownPendingRef.current = new Set(list.filter((x) => ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
+      pollInitRef.current = true
       if (Array.isArray(v) && v.length) setMyVehicle(v[0])
     } catch(e) { toast('error','Failed to load data', e?.response?.data?.detail||'') }
     setLoading(false)
   }, [toast])
 
+  // Light poll so a passenger's normal-mode request lands in Incoming within
+  // seconds. Only the ride list refreshes; vehicles/routes stay as loaded.
+  const refreshRides = useCallback(async () => {
+    try {
+      const r = await ridesApi.getAll({ limit: 50 })
+      const list = Array.isArray(r) ? r : []
+      if (!pollInitRef.current) {
+        knownPendingRef.current = new Set(list.filter((x) => ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
+        pollInitRef.current = true
+      } else {
+        const current = new Set()
+        list.forEach((x) => {
+          if (!['pending', 'clustered'].includes(x.status)) return
+          current.add(x.id)
+          if (!knownPendingRef.current.has(x.id)) {
+            toast('info', 'New ride request', `${x.pickup_label || 'Pickup'} → ${x.destination_label || 'Destination'}`)
+          }
+        })
+        knownPendingRef.current = current
+      }
+      setRides(list)
+    } catch { /* keep the last good list; next tick retries */ }
+  }, [toast])
+
   useEffect(() => { const timer = setTimeout(() => { void loadData() }, 0); return () => clearTimeout(timer) }, [loadData])
+
+  useEffect(() => {
+    if (view !== 'driver-home' || loading) return undefined
+    const id = setInterval(() => { void refreshRides() }, 6000)
+    return () => clearInterval(id)
+  }, [view, loading, refreshRides])
 
   // Live tracking WebSocket
   useEffect(() => {
@@ -112,15 +148,9 @@ export default function DriverView({ user, view, setView, toast }) {
         if (!token || dead) return
         wsRef.current = createTrackingWS(token, (msg) => {
           if (dead) return
-          if (msg.type === 'tracking_snapshot') {
-            setTracking({ vehicles: msg.vehicles || [], events: msg.events || [] })
-          } else if (msg.type === 'vehicle_location_update' && msg.vehicle) {
-            setTracking(prev => ({
-              vehicles: prev.vehicles.some(vehicle => vehicle.id === msg.vehicle.id)
-                ? prev.vehicles.map(vehicle => vehicle.id === msg.vehicle.id ? { ...vehicle, ...msg.vehicle } : vehicle)
-                : [...prev.vehicles, msg.vehicle],
-              events: msg.event ? [msg.event, ...prev.events].slice(0, 50) : prev.events,
-            }))
+          // Only the driver's own vehicle matters here; the fleet snapshot
+          // isn't displayed on this panel.
+          if (msg.type === 'vehicle_location_update' && msg.vehicle) {
             setMyVehicle(prev => prev?.id === msg.vehicle.id ? { ...prev, ...msg.vehicle } : prev)
           }
         }, () => { if (!dead) setTimeout(connect, 3000) })
@@ -148,8 +178,41 @@ export default function DriverView({ user, view, setView, toast }) {
     try {
       await ridesApi.updateStatus(rideId, status)
       setRides(prev => prev.map(r => r.id===rideId ? {...r, status} : r))
-      toast('success', `Ride #${rideId} → ${status}`)
+      // Trip over (done or cancelled): free the driver's own vehicle again.
+      // Route-linked rides are idled by the backend; hand-driven ones need it
+      // from here, otherwise the fleet leaks 'active' vehicles forever.
+      if ((status === 'completed' || status === 'cancelled') && myVehicle) {
+        try {
+          await vehiclesApi.update(myVehicle.id, { status: 'idle' })
+          setMyVehicle((prev) => (prev ? { ...prev, status: 'idle' } : prev))
+        } catch { /* non-fatal: vehicle keeps its last status */ }
+      }
+      toast('success', `Ride #${rideId} → ${status.replace(/_/g, ' ')}`)
     } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
+  }
+
+  // Accept a passenger's normal-mode request: mark the driver's vehicle
+  // active, then take the ride. The backend notifies the passenger instantly.
+  const acceptRide = async (rideId) => {
+    if (myVehicle) {
+      try {
+        await vehiclesApi.update(myVehicle.id, { status: 'active' })
+        setMyVehicle((prev) => (prev ? { ...prev, status: 'active' } : prev))
+      } catch { /* accepting still proceeds without the vehicle flip */ }
+    }
+    try {
+      await ridesApi.updateStatus(rideId, 'assigned')
+      setRides((prev) => prev.map((r) => (r.id === rideId ? { ...r, status: 'assigned' } : r)))
+      toast('success', `Ride #${rideId} accepted`, myVehicle ? `Passenger notified · ${myVehicle.license_plate} is on the way` : 'Passenger notified')
+    } catch(e) { toast('error','Could not accept', e?.response?.data?.detail||'') }
+  }
+
+  const declineRide = async (rideId) => {
+    try {
+      await ridesApi.updateStatus(rideId, 'cancelled')
+      setRides((prev) => prev.map((r) => (r.id === rideId ? { ...r, status: 'cancelled' } : r)))
+      toast('info', `Ride #${rideId} declined`, 'The passenger was notified')
+    } catch(e) { toast('error','Could not decline', e?.response?.data?.detail||'') }
   }
 
   // Interactive Driver Route Drive Simulation.
@@ -321,8 +384,8 @@ export default function DriverView({ user, view, setView, toast }) {
 
   // Driver dashboard home
   const firstName = user?.name?.split(' ')[0] || 'Driver'
-  const activeVehicles = tracking.vehicles.filter((v) => v.status !== 'idle').length
-  const pendingRides = rides.filter((r) => r.status === 'assigned').length
+  const incoming = rides.filter((r) => ['pending', 'clustered'].includes(r.status))
+  const activeTrips = rides.filter((r) => ['assigned', 'arriving', 'in_progress'].includes(r.status))
   const usingDemoManifest = rides.length === 0
   // Pooled thresholds for the full 11-segment roadPath: sequential boardings
   // at three distinct pins (Priya Stop C → Rohan Stop B → Ananya Stop A),
@@ -333,7 +396,7 @@ export default function DriverView({ user, view, setView, toast }) {
   const demoBoardAt = { 101: demoBoardSeg[101] / 11, 102: demoBoardSeg[102] / 11, 103: demoBoardSeg[103] / 11 }
   const runBoardAt = runRide ? Math.min(nearestSegIndex(runRide.plng, runRide.plat, pathForRide(runRide)) / (pathForRide(runRide).length - 1), 0.9) : 3 / 11
   const manifest = rides.length > 0
-    ? rides.slice(0, 6).map((r) => ({
+    ? activeTrips.slice(0, 6).map((r) => ({
         id: r.id,
         name: r.passenger_name || r.rider_name || `Rider #${r.id}`,
         pickup: r.pickup_label || 'Pickup stop',
@@ -345,6 +408,7 @@ export default function DriverView({ user, view, setView, toast }) {
         dlat: r.dest_lat,
         dlng: r.dest_lng,
         stopOrder: null,
+        request_time: r.request_time,
       }))
     : DEMO_RIDES.map((r) => {
         if (simProgress <= 0) return r
@@ -413,8 +477,8 @@ export default function DriverView({ user, view, setView, toast }) {
       ) : (
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatCard icon={CarFront} label="My Vehicle" value={myVehicle?.license_plate || 'Unassigned'} sub={myVehicle ? `${myVehicle.status || 'ready'} · cap ${myVehicle.capacity || 4}` : 'Contact dispatch'} />
-          <StatCard icon={Satellite} label="Active Vehicles" value={String(activeVehicles)} sub="On fleet network" />
-          <StatCard icon={Users} label="Assigned Rides" value={String(pendingRides)} sub={pendingRides === 1 ? '1 pickup waiting' : `${pendingRides} pickups waiting`} />
+          <StatCard icon={Inbox} label="Incoming Requests" value={String(incoming.length)} sub={incoming.length === 1 ? '1 rider waiting' : `${incoming.length} riders waiting`} />
+          <StatCard icon={Users} label="Active Trips" value={String(activeTrips.length)} sub={activeTrips.length === 1 ? '1 trip in motion' : `${activeTrips.length} trips in motion`} />
           <StatCard icon={RouteIcon} label="My Routes" value={String(routes.length)} sub={routes.length ? 'Optimized by AI' : 'No routes yet'} />
         </div>
       )}
@@ -439,15 +503,78 @@ export default function DriverView({ user, view, setView, toast }) {
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        {/* Assigned rides */}
+        <div className="min-w-0 space-y-4">
+        {/* Incoming requests — normal-mode passenger bookings land here live */}
+        {!usingDemoManifest && (
+          <Card className={cn(incoming.length > 0 && 'border-primary/40')}>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <CardTitle className="flex items-center gap-2 text-sm">
+                    {incoming.length > 0 && (
+                      <span className="relative flex h-2 w-2">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+                      </span>
+                    )}
+                    Incoming Requests
+                  </CardTitle>
+                  <CardDescription>Accept fast — the passenger is notified instantly</CardDescription>
+                </div>
+                <Badge variant="secondary">{incoming.length} waiting</Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {loading ? (
+                [0, 1].map((i) => <div key={i} className="h-[104px] animate-pulse rounded-lg bg-muted/60" />)
+              ) : incoming.length === 0 ? (
+                <p className="rounded-lg border border-dashed px-3 py-5 text-center text-xs text-muted-foreground">
+                  No waiting requests — new passenger bookings pop up here automatically.
+                </p>
+              ) : (
+                incoming.slice(0, 5).map((r) => (
+                  <div key={r.id} className="rounded-lg border border-primary/25 bg-card p-3.5 shadow-sm">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Avatar className="h-7 w-7">
+                          <AvatarFallback className="bg-primary/10 text-[11px] font-bold text-primary">
+                            <BellRing className="h-3.5 w-3.5" />
+                          </AvatarFallback>
+                        </Avatar>
+                        <p className="truncate text-[13px] font-semibold">Ride #{r.id}</p>
+                        {r.request_time && <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo(r.request_time)}</span>}
+                      </div>
+                      <StatusBadge status={r.status} />
+                    </div>
+                    <p className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                      <MapPin className="h-3.5 w-3.5 shrink-0 text-primary" /> {r.pickup_label || 'Pickup stop'}
+                    </p>
+                    <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                      <Flag className="h-3.5 w-3.5 shrink-0 text-rose-500" /> {r.destination_label || 'Destination'}
+                    </p>
+                    <div className="mt-2.5 flex gap-2">
+                      <Button size="sm" className="h-8 flex-1 gap-1.5" onClick={() => acceptRide(r.id)}>
+                        <Check className="h-3.5 w-3.5" /> Accept ride
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-8 gap-1 text-destructive hover:text-destructive" onClick={() => declineRide(r.id)}>
+                        <X className="h-3.5 w-3.5" /> Decline
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        )}
+        {/* Active trips */}
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <CardTitle className="text-sm">Passenger Manifest</CardTitle>
-                <CardDescription>Board and drop off in stop order</CardDescription>
+                <CardTitle className="text-sm">{usingDemoManifest ? 'Passenger Manifest' : 'My Active Trips'}</CardTitle>
+                <CardDescription>{usingDemoManifest ? 'Board and drop off in stop order' : 'Drive each stage — the passenger follows along live'}</CardDescription>
               </div>
-              <Badge variant="secondary">{usingDemoManifest ? `${manifest.length} pooled · demo` : `${manifest.length} pooled`}</Badge>
+              <Badge variant="secondary">{usingDemoManifest ? `${manifest.length} pooled · demo` : `${manifest.length} active`}</Badge>
             </div>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -456,8 +583,8 @@ export default function DriverView({ user, view, setView, toast }) {
             ) : manifest.length === 0 ? (
               <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed py-10 text-center">
                 <CircleDot className="h-6 w-6 text-muted-foreground" />
-                <p className="text-sm font-semibold">No assigned rides</p>
-                <p className="max-w-[260px] text-xs text-muted-foreground">New pooled pickups from dispatch will appear here automatically.</p>
+                <p className="text-sm font-semibold">No active trips</p>
+                <p className="max-w-[260px] text-xs text-muted-foreground">Accepted requests appear here — drive them stage by stage.</p>
               </div>
             ) : (
               manifest.map((ride) => (
@@ -484,12 +611,14 @@ export default function DriverView({ user, view, setView, toast }) {
                     <Flag className="h-3.5 w-3.5 shrink-0 text-rose-500" /> {ride.dest}
                   </p>
                   {!usingDemoManifest && (
-                    <div className="mt-2.5 flex gap-2">
-                      <Button size="sm" variant="secondary" className="h-8 flex-1" onClick={() => updateRideStatus(ride.id, 'in_progress')}>
-                        <CheckCircle2 className="h-3.5 w-3.5" /> Board
-                      </Button>
-                      <Button size="sm" variant="outline" className="h-8 flex-1" onClick={() => updateRideStatus(ride.id, 'completed')}>
-                        Dropoff <ChevronRight className="h-3.5 w-3.5" />
+                    <div className="mt-2.5 flex flex-wrap gap-2">
+                      {(DRIVER_NEXT[ride.status] || []).map(({ status, label, variant, Icon }) => (
+                        <Button key={status} size="sm" variant={variant} className="h-8 flex-1 gap-1.5" onClick={() => updateRideStatus(ride.id, status)}>
+                          <Icon className="h-3.5 w-3.5" /> {label}
+                        </Button>
+                      ))}
+                      <Button size="sm" variant="ghost" className="h-8 gap-1 text-destructive hover:text-destructive" onClick={() => updateRideStatus(ride.id, 'cancelled')}>
+                        <X className="h-3.5 w-3.5" /> Cancel
                       </Button>
                     </div>
                   )}
@@ -515,6 +644,7 @@ export default function DriverView({ user, view, setView, toast }) {
             )}
           </CardContent>
         </Card>
+        </div>
 
         {/* Vehicle diagnostics */}
         <div className="space-y-4">
@@ -939,4 +1069,28 @@ function StatusBadge({ status }) {
       {String(key).replace(/_/g, ' ')}
     </Badge>
   )
+}
+
+// Stage buttons for a live trip: each tap moves the ride one step and the
+// backend notifies the passenger, whose stepper + map follow along.
+const DRIVER_NEXT = {
+  assigned: [
+    { status: 'arriving', label: 'Arrived at pickup', variant: 'secondary', Icon: MapPin },
+    { status: 'in_progress', label: 'Start trip', variant: 'default', Icon: Play },
+  ],
+  arriving: [
+    { status: 'in_progress', label: 'Start trip', variant: 'default', Icon: Play },
+  ],
+  in_progress: [
+    { status: 'completed', label: 'Complete dropoff', variant: 'default', Icon: Check },
+  ],
+}
+
+function timeAgo(ts) {
+  if (!ts) return ''
+  const s = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 1000))
+  if (s < 60) return 'just now'
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} min ago`
+  return `${Math.floor(m / 60)} hr ago`
 }
