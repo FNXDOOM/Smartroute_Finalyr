@@ -39,6 +39,7 @@ export default function PassengerView({ view, setView, toast }) {
   const [mapPickupLoading, setMapPickupLoading] = useState(false)
   const [trafficRouting, setTrafficRouting] = useState(false)
   const pollRef = useRef(null)
+  const dismissTimeoutRef = useRef(null)
   const gpsWatchRef = useRef(null)
   const gpsReverseDoneRef = useRef(false)
   const { getToken } = useAuth()
@@ -205,20 +206,42 @@ export default function PassengerView({ view, setView, toast }) {
     return () => { cancelled = true }
   }, [activeDestinationLat, activeDestinationLng, activePickupLat, activePickupLng, activeRideId, trafficRouting])
 
+  const clearActiveRideState = useCallback(() => {
+    if (dismissTimeoutRef.current) { clearTimeout(dismissTimeoutRef.current); dismissTimeoutRef.current = null }
+    setActiveRide(null); setRideVehicle(null)
+    setRouteGeometry([]); setRouteEstimate(null)
+  }, [])
+
   useEffect(() => {
-    if (!activeRideId) { clearInterval(pollRef.current); return }
+    if (!activeRideId) { clearInterval(pollRef.current); return undefined }
     const poll = async () => {
       try {
         const v = await ridesApi.getVehicle(activeRideId)
         setRideVehicle(v)
         const r = await ridesApi.getById(activeRideId)
         setActiveRide(r)
-        if (r.status === 'completed') { clearInterval(pollRef.current); toast('success','Ride completed!') }
+        setTrips(prev => prev.map(t => t.id === r.id ? r : t))
+        if (r.status === 'completed' || r.status === 'cancelled') {
+          clearInterval(pollRef.current)
+          if (r.status === 'completed') toast('success', 'Ride completed!', 'Tap Dismiss to book a new ride.')
+          else toast('info', 'Ride ' + r.status)
+          // Auto-dismiss so the COMPLETED card + Cancel button don't linger
+          // forever and block new bookings. User can also dismiss manually.
+          if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current)
+          dismissTimeoutRef.current = setTimeout(() => {
+            setActiveRide(null); setRideVehicle(null)
+            setRouteGeometry([]); setRouteEstimate(null)
+            dismissTimeoutRef.current = null
+          }, 8000)
+        }
       } catch (error) { void error }
     }
     poll()
     pollRef.current = setInterval(poll, 4000)
-    return () => clearInterval(pollRef.current)
+    return () => {
+      clearInterval(pollRef.current)
+      if (dismissTimeoutRef.current) { clearTimeout(dismissTimeoutRef.current); dismissTimeoutRef.current = null }
+    }
   }, [activeRideId, toast])
 
   const handleBook = async () => {
@@ -243,6 +266,7 @@ export default function PassengerView({ view, setView, toast }) {
         ride_option_name: tier?.name,
         ride_option_price: tier?.price,
       })
+      if (dismissTimeoutRef.current) { clearTimeout(dismissTimeoutRef.current); dismissTimeoutRef.current = null }
       setActiveRide(ride)
       setTrips(prev => [ride, ...prev.filter(t => t.id !== ride.id)])
       toast('success','Ride Requested!','Finding nearby riders to pool with…')
@@ -254,8 +278,7 @@ export default function PassengerView({ view, setView, toast }) {
     if (!activeRide) return
     try {
       await ridesApi.cancel(activeRide.id)
-      setActiveRide(null); setRideVehicle(null)
-      setRouteGeometry([]); setRouteEstimate(null)
+      clearActiveRideState()
       setTrips(prev => prev.map(t => t.id===activeRide.id?{...t,status:'cancelled'}:t))
       toast('info','Ride cancelled')
     } catch(e) { toast('error','Cannot cancel', e?.response?.data?.detail||'') }
@@ -290,20 +313,59 @@ export default function PassengerView({ view, setView, toast }) {
   // Normal passenger rides show a vehicle only after the backend assigns one.
   // The presentation screen owns its synthetic vehicle separately.
   const mapVehicle = rideVehicle
+  // Live driver simulation for normal-mode rides a driver accepted directly:
+  // no route-linked vehicle exists yet, so animate a driver marker from the
+  // ride stage itself — approaching pickup, then along the real route — until
+  // the driver advances each stage from their panel.
+  const simDriver = (!mapVehicle && activeRide && activeRide.pickup_lat != null && activeRide.dest_lat != null
+    && ['assigned', 'arriving', 'in_progress'].includes(activeRide.status))
+    ? (() => {
+        const st = activeRide.status
+        if (st === 'in_progress') {
+          const path = routeGeometry.length > 1
+            ? routeGeometry
+            : [[activeRide.pickup_lng, activeRide.pickup_lat], [activeRide.dest_lng, activeRide.dest_lat]]
+          return {
+            vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: path[0][1], lng: path[0][0] },
+            path,
+            durationMs: 18000,
+            label: "You're on your way — sit back",
+          }
+        }
+        const off = st === 'arriving' ? 0.004 : 0.012
+        const start = [activeRide.pickup_lng + off, activeRide.pickup_lat + off * 0.6]
+        return {
+          vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: start[1], lng: start[0] },
+          path: [start, [activeRide.pickup_lng, activeRide.pickup_lat]],
+          durationMs: st === 'arriving' ? 12000 : 25000,
+          label: st === 'arriving' ? 'Driver arriving at your pickup' : 'Driver found — on the way to you',
+        }
+      })()
+    : null
+  const displayVehicle = mapVehicle || simDriver?.vehicle || null
+  const isRideActive = !!activeRide && !['completed', 'cancelled'].includes(activeRide.status)
   const mapPickupPulse = !!activeRide && ['pending', 'clustered'].includes(activeRide.status)
   const mapPickup = activeRide ? { lat:activeRide.pickup_lat, lng:activeRide.pickup_lng, label:activeRide.pickup_label } : pickupCoords
   const mapDestination = activeRide ? { lat:activeRide.dest_lat, lng:activeRide.dest_lng, label:activeRide.destination_label } : destCoords
   
-  const mapVehicleAnimation = mapVehicle && activeRide && routeGeometry.length > 1
-    ? {
-        key: `${mapVehicle.id}:${activeRide.status}:${routeGeometry.length}`,
-        vehicleId: mapVehicle.id,
-        path: ['pending', 'clustered', 'assigned', 'arriving'].includes(activeRide.status)
-          ? [[mapVehicle.lng, mapVehicle.lat], [activeRide.pickup_lng, activeRide.pickup_lat]]
-          : routeGeometry,
-        durationMs: activeRide.status === 'in_progress' ? 18000 : 8000,
-        loop: true,
-      }
+  const mapVehicleAnimation = displayVehicle && activeRide && isRideActive && (routeGeometry.length > 1 || simDriver)
+    ? mapVehicle
+      ? {
+          key: `${mapVehicle.id}:${activeRide.status}:${routeGeometry.length}`,
+          vehicleId: mapVehicle.id,
+          path: ['pending', 'clustered', 'assigned', 'arriving'].includes(activeRide.status)
+            ? [[mapVehicle.lng, mapVehicle.lat], [activeRide.pickup_lng, activeRide.pickup_lat]]
+            : routeGeometry,
+          durationMs: activeRide.status === 'in_progress' ? 18000 : 8000,
+          loop: true,
+        }
+      : {
+          key: `sim-driver:${activeRide.id}:${activeRide.status}`,
+          vehicleId: displayVehicle.id,
+          path: simDriver.path,
+          durationMs: simDriver.durationMs,
+          loop: true,
+        }
     : null
 
   const mapCenter = activeRide
@@ -367,23 +429,30 @@ export default function PassengerView({ view, setView, toast }) {
             </div>
 
             {/* Driver card preview */}
-            {mapVehicle && (
+            {displayVehicle && (
               <div style={s({ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 })}>
-                <div style={{ width: 34, height: 34, borderRadius: '50%', background: C.accent, color: C.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 13 }}>RK</div>
+                <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#0d9488', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 13 }}>{mapVehicle ? 'RK' : 'D'}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <p style={s({ color: C.text, fontSize: 12, fontWeight: 700 })}>Rajesh Kumar <span style={{ color: '#f59e0b', fontSize: 10 }}>★ 4.9</span></p>
-                    <span style={s({ color: C.accent, fontSize: 11, fontWeight: 800 })}>{mapVehicle.license_plate}</span>
+                    <p style={s({ color: C.text, fontSize: 12, fontWeight: 700 })}>{mapVehicle ? <>Rajesh Kumar <span style={{ color: '#f59e0b', fontSize: 10 }}>★ 4.9</span></> : 'Your driver'}</p>
+                    <span style={s({ color: C.accent, fontSize: 11, fontWeight: 800 })}>{displayVehicle.license_plate}</span>
                   </div>
-                  <p style={s({ color: C.muted2, fontSize: 10 })}>Tata Tigor EV · White · 3 seats shared</p>
+                  <p style={s({ color: C.muted2, fontSize: 10 })}>{mapVehicle ? 'Tata Tigor EV · White · 3 seats shared' : simDriver?.label || 'On the way'}</p>
                 </div>
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-              <button onClick={()=>setView('tracking')} style={s({ flex: 1, padding: '8px', background: C.accent, color: C.bg, border: 'none', borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer' })}>🗺️ Fullscreen Tracking</button>
-              <button onClick={handleCancel} style={s({ padding: '8px 12px', background: 'transparent', border: `1px solid ${C.danger}`, color: C.danger, borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: 'pointer' })}>Cancel</button>
-            </div>
+            {isRideActive ? (
+              <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                <button onClick={()=>setView('tracking')} style={s({ flex: 1, padding: '8px', background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color: '#ffffff', border: 'none', borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer' })}>🗺️ Fullscreen Tracking</button>
+                <button onClick={handleCancel} style={s({ padding: '8px 12px', background: 'transparent', border: `1px solid ${C.danger}`, color: C.danger, borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: 'pointer' })}>Cancel</button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                <p style={s({ color: C.muted2, fontSize: 11, textAlign: 'center' })}>Auto-dismisses in a few seconds…</p>
+                <button onClick={clearActiveRideState} style={s({ width: '100%', padding: '8px', background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color: '#ffffff', border: 'none', borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer' })}>Dismiss · Book New Ride</button>
+              </div>
+            )}
           </div>
         )}
 
@@ -447,8 +516,8 @@ export default function PassengerView({ view, setView, toast }) {
           })}
         </div>
 
-        <button className="primary-action" onClick={handleBook} disabled={booking||!!activeRide} style={s({ width:'100%', padding:'11px', background:C.accent, color:C.bg, border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:booking||activeRide?'not-allowed':'pointer', opacity:booking||activeRide?0.6:1 })}>
-          {geocoding ? 'Finding locations…' : booking ? 'Booking…' : activeRide ? 'Ride in progress' : 'Request Ride'}
+        <button className="primary-action" onClick={handleBook} disabled={booking||isRideActive} style={s({ width:'100%', padding:'11px', background:'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color:'#ffffff', border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:booking||isRideActive?'not-allowed':'pointer', opacity:booking||isRideActive?0.6:1, boxShadow:'0 4px 16px rgba(0,201,167,0.3)' })}>
+          {geocoding ? 'Finding locations…' : booking ? 'Booking…' : isRideActive ? 'Ride in progress' : 'Request Ride'}
         </button>
 
         {/* Recent */}
@@ -474,7 +543,7 @@ export default function PassengerView({ view, setView, toast }) {
             pickup={mapPickup}
             destination={mapDestination}
             routeGeometry={routeGeometry}
-            vehicles={activeRide && mapVehicle ? [mapVehicle] : activeRide ? [] : vehicles.filter(v => v.status !== 'offline')}
+            vehicles={activeRide && displayVehicle ? [displayVehicle] : activeRide ? [] : vehicles.filter(v => v.status !== 'offline')}
             vehicleAnimation={mapVehicleAnimation}
             pickupPulse={mapPickupPulse}
             onMapClick={mapPickupMode ? choosePickupOnMap : undefined}
@@ -578,21 +647,49 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
 function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
   const pickupCoords = ride ? { lat:ride.pickup_lat, lng:ride.pickup_lng, label:ride.pickup_label } : null
   const destCoords   = ride ? { lat:ride.dest_lat,   lng:ride.dest_lng,   label:ride.destination_label } : null
-  const displayVehicle = vehicle
+  // Same driver simulation as Home: without a route-linked vehicle, animate
+  // the marker from the ride stage so every driver tap is visible here too.
+  const simDriver = (!vehicle && ride && ride.pickup_lat != null && ride.dest_lat != null
+    && ['assigned', 'arriving', 'in_progress'].includes(ride.status))
+    ? (() => {
+        if (ride.status === 'in_progress') {
+          const path = routeGeometry?.length > 1
+            ? routeGeometry
+            : [[ride.pickup_lng, ride.pickup_lat], [ride.dest_lng, ride.dest_lat]]
+          return { vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: path[0][1], lng: path[0][0] }, path, durationMs: 18000 }
+        }
+        const off = ride.status === 'arriving' ? 0.004 : 0.012
+        const start = [ride.pickup_lng + off, ride.pickup_lat + off * 0.6]
+        return {
+          vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: start[1], lng: start[0] },
+          path: [start, [ride.pickup_lng, ride.pickup_lat]],
+          durationMs: ride.status === 'arriving' ? 12000 : 25000,
+        }
+      })()
+    : null
+  const displayVehicle = vehicle || simDriver?.vehicle || null
   const trackingPickupPulse = !!ride && ['pending', 'clustered'].includes(ride.status)
   const vList = displayVehicle?.lat != null ? [displayVehicle] : []
   const center = displayVehicle?.lat != null ? [displayVehicle.lat, displayVehicle.lng] : ride ? [ride.pickup_lat, ride.pickup_lng] : [12.9784, 77.6408]
-  
-  const vehicleAnimation = displayVehicle && routeGeometry?.length > 1
-    ? {
-        key: `${displayVehicle.id}:${ride?.status}:${routeGeometry.length}`,
-        vehicleId: displayVehicle.id,
-        path: ['pending', 'clustered', 'assigned', 'arriving'].includes(ride?.status)
-          ? [[displayVehicle.lng, displayVehicle.lat], [ride.pickup_lng, ride.pickup_lat]]
-          : routeGeometry,
-        durationMs: ride?.status === 'in_progress' ? 18000 : 8000,
-        loop: true,
-      }
+
+  const vehicleAnimation = displayVehicle && (routeGeometry?.length > 1 || simDriver)
+    ? vehicle
+      ? {
+          key: `${displayVehicle.id}:${ride?.status}:${routeGeometry.length}`,
+          vehicleId: displayVehicle.id,
+          path: ['pending', 'clustered', 'assigned', 'arriving'].includes(ride?.status)
+            ? [[displayVehicle.lng, displayVehicle.lat], [ride.pickup_lng, ride.pickup_lat]]
+            : routeGeometry,
+          durationMs: ride?.status === 'in_progress' ? 18000 : 8000,
+          loop: true,
+        }
+      : {
+          key: `sim-driver:${ride?.id}:${ride?.status}`,
+          vehicleId: displayVehicle.id,
+          path: simDriver.path,
+          durationMs: simDriver.durationMs,
+          loop: true,
+        }
     : null
 
   return (
