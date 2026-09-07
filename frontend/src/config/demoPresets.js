@@ -4,9 +4,13 @@ export const DEMO_PRESETS = {
     zone: 'Indiranagar Corridor',
     depot: { lat: 12.9784, lng: 77.6408, label: 'Indiranagar Transit Hub (Depot)' },
     riders: [
+      // NOTE: pickups are deliberately spread along the 100 Feet Rd corridor
+      // (matching roadPath idx 3 / idx 2 / idx 1) so each rider boards at a
+      // different pin. Do NOT collapse them back to one coordinate — the
+      // driver panel animates depot → Stop C → Stop B → Stop A in order.
       { id: 101, name: 'Ananya Sharma', plat: 12.97190, plng: 77.64124, plbl: 'Indiranagar 100 Feet Rd (Stop A)', dlat: 12.9756, dlng: 77.6066, dlbl: 'MG Road Metro Station', fare: '₹45' },
-      { id: 102, name: 'Rohan Mehta',   plat: 12.97192, plng: 77.64126, plbl: 'Indiranagar 100 Feet Rd (Stop B)', dlat: 12.9749, dlng: 77.6080, dlbl: 'Church Street Boulevard', fare: '₹42' },
-      { id: 103, name: 'Priya Iyer',    plat: 12.97194, plng: 77.64120, plbl: 'Indiranagar 100 Feet Rd (Stop C)', dlat: 12.9734, dlng: 77.6075, dlbl: 'Brigade Road Junction', fare: '₹48' },
+      { id: 102, name: 'Rohan Mehta',   plat: 12.97400, plng: 77.64110, plbl: 'Indiranagar 100 Feet Rd (Stop B)', dlat: 12.9749, dlng: 77.6080, dlbl: 'Church Street Boulevard', fare: '₹42' },
+      { id: 103, name: 'Priya Iyer',    plat: 12.97650, plng: 77.64100, plbl: 'Indiranagar 100 Feet Rd (Stop C)', dlat: 12.9734, dlng: 77.6075, dlbl: 'Brigade Road Junction', fare: '₹48' },
     ],
     virtualStop: { lat: 12.97192, lng: 77.64124, label: 'Virtual Boarding Stop #1 · 100 Feet Rd' },
     roadPath: [

@@ -217,17 +217,22 @@ function cleanupMap(map, animationRef, routeAnimationRef, markersRef) {
   map?.remove()
 }
 
+// Module-level stable defaults: inline `= []` defaults allocate a fresh array
+// on every render, which retriggers the overlay effect below each tick and
+// makes every pin replay its drop-in animation as a rapid blink.
+const EMPTY_ARRAY = []
+
 export default function AppMap({
   center = [12.9784, 77.6408],
   zoom = 13,
   height = '100%',
-  vehicles = [],
+  vehicles = EMPTY_ARRAY,
   pickup,
   destination,
-  routeGeometry = [],
-  waypoints = [],
-  walkingPaths = [],
-  heatCells = [],
+  routeGeometry = EMPTY_ARRAY,
+  waypoints = EMPTY_ARRAY,
+  walkingPaths = EMPTY_ARRAY,
+  heatCells = EMPTY_ARRAY,
   onMapClick,
   style,
   vehicleAnimation = null,
