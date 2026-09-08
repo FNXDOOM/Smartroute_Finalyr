@@ -18,8 +18,14 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Skeleton } from '@/components/ui/skeleton'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { useTheme } from '@/hooks/use-theme'
+import AppTopBar from '@/components/AppTopBar'
+import { PageHeader, DashboardEmptyState } from '@/components/dashboard-shared'
 
 // Keep role-specific screens (and their map/chart dependencies) out of the
 // initial authentication bundle. Only the view for the signed-in role loads.
@@ -47,29 +53,29 @@ function initialView() {
   return 'login'
 }
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-// ─── Toast system (shadcn) ────────────────────────────────────────────────────
+// ─── Toast system (shadcn/sonner pattern, custom state kept intact) ──────────
 function ToastBar({ toasts, dismiss }) {
   const styles = {
-    success: { icon: CheckCircle2, cls: 'text-emerald-500' },
-    warning: { icon: TriangleAlert, cls: 'text-amber-500' },
-    error: { icon: XCircle, cls: 'text-destructive' },
-    info: { icon: Info, cls: 'text-sky-500' },
+    success: { icon: CheckCircle2, cls: 'text-emerald-500', bar: 'hsl(160 70% 40%)' },
+    warning: { icon: TriangleAlert, cls: 'text-amber-500', bar: 'hsl(38 90% 50%)' },
+    error: { icon: XCircle, cls: 'text-destructive', bar: 'hsl(var(--destructive))' },
+    info: { icon: Info, cls: 'text-sky-500', bar: 'hsl(200 85% 50%)' },
   }
   return (
-    <div className="pointer-events-none fixed right-4 top-4 z-[9999] flex w-[340px] flex-col gap-2">
+    <div className="pointer-events-none fixed right-4 top-16 z-[9999] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2" role="status" aria-live="polite">
       {toasts.map((t) => {
         const S = styles[t.type] || styles.info
         const Icon = S.icon
         return (
-          <Card key={t.id} className="toast-in pointer-events-auto border-l-4 shadow-lg" style={{ borderLeftColor: 'hsl(var(--primary))' }}>
+          <Card key={t.id} className="toast-in pointer-events-auto overflow-hidden shadow-lg">
+            <div className="h-0.5 w-full" style={{ background: S.bar }} />
             <CardContent className="flex items-start gap-3 p-3.5">
-              <span className={cn('mt-0.5 shrink-0', S.cls)}><Icon className="h-5 w-5" /></span>
+              <span className={cn('mt-0.5 shrink-0', S.cls)}><Icon className="h-5 w-5" aria-hidden="true" /></span>
               <div className="min-w-0 flex-1">
                 <p className="text-[13px] font-semibold leading-tight">{t.title}</p>
-                {t.body && <p className="mt-1 text-xs text-muted-foreground">{t.body}</p>}
+                {t.body && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t.body}</p>}
               </div>
-              <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => dismiss(t.id)} aria-label="Dismiss">
+              <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => dismiss(t.id)} aria-label="Dismiss notification">
                 <X className="h-3.5 w-3.5" />
               </Button>
             </CardContent>
@@ -244,19 +250,23 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
   )
 }
 
-// ─── Loading screen (shadcn) ──────────────────────────────────────────────────
+// ─── Loading screen (shadcn + Empty/Skeleton states) ──────────────────────────
 function LoadingScreen({ onGuestLogin }) {
   return (
-    <div className="loading-screen flex h-full w-full flex-col items-center justify-center gap-4 p-6 text-center">
+    <div className="loading-screen flex h-full w-full flex-col items-center justify-center gap-4 overflow-y-auto p-6 text-center">
       <div className="loading-orbit" aria-hidden="true">
         <div className="loading-orbit-ring" />
         <div className="loading-orbit-core"><SmartRouteMark size={30} /></div>
       </div>
       <div className="loading-wordmark">SmartRoute <span>AI</span></div>
       <p className="loading-caption">Connecting intelligent routes...</p>
+      <div className="flex w-full max-w-[360px] flex-col gap-2" aria-hidden="true">
+        <Skeleton className="h-3 w-2/3 mx-auto opacity-40" />
+        <Skeleton className="h-3 w-1/2 mx-auto opacity-30" />
+      </div>
 
       {/* Fallback fast pass if Clerk is taking a while or blocked by Brave Shields */}
-      <Card className="loading-access-card w-full max-w-[360px]">
+      <Card className="loading-access-card w-full max-w-[360px] text-left shadow-lg">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Quick Simulation Access</CardTitle>
           <CardDescription className="text-xs">If authentication is slow or blocked, choose which isolated simulation to open:</CardDescription>
@@ -276,19 +286,20 @@ function LoadingScreen({ onGuestLogin }) {
 
 function BootstrapErrorScreen({ onRetry, message }) {
   return (
-    <div className="flex h-full w-full items-center justify-center p-6 text-center">
-      <Card className="w-full max-w-[420px]">
-        <CardHeader>
-          <div className="mx-auto mb-1 flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
-            <XCircle className="h-5 w-5 text-destructive" />
-          </div>
-          <CardTitle>Unable to load your account</CardTitle>
-          <CardDescription>{message || 'The backend could not verify your session or load your profile. Try again after checking that the API is running.'}</CardDescription>
-        </CardHeader>
-        <CardContent>
+    <div className="flex h-full w-full items-center justify-center overflow-y-auto p-6">
+      <Empty className="w-full max-w-[420px] border bg-card shadow-sm">
+        <EmptyHeader>
+          <EmptyMedia variant="icon" className="bg-destructive/10 text-destructive">
+            <XCircle className="h-4 w-4" />
+          </EmptyMedia>
+          <EmptyTitle>Unable to load your account</EmptyTitle>
+          <EmptyDescription>{message || 'The backend could not verify your session or load your profile. Try again after checking that the API is running.'}</EmptyDescription>
+        </EmptyHeader>
+        <div className="flex w-full max-w-sm flex-col gap-2">
           <Button className="w-full" onClick={onRetry}>Retry</Button>
-        </CardContent>
-      </Card>
+          <Button variant="ghost" className="w-full" onClick={() => window.location.reload()}>Reload page</Button>
+        </div>
+      </Empty>
     </div>
   )
 }
@@ -480,6 +491,7 @@ export default function App() {
   const { theme, toggle: toggleTheme } = useTheme()
 
   return (
+    <TooltipProvider delay={100}>
     <div className="h-screen w-screen overflow-hidden bg-background font-sans text-foreground">
       <style>{`
         @keyframes fade-in { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:none } }
@@ -510,6 +522,7 @@ export default function App() {
         : <LoadingScreen timeout={false} onGuestLogin={handleGuestLogin} />
       }
     </div>
+    </TooltipProvider>
   )
 }
 
@@ -520,106 +533,207 @@ function roleHome(role) {
 }
 
 // ─── App Shell (shadcn) ─────────────────────────────────────────────────────────
+// Modern SaaS shell: grouped sidebar (dashboard-01/sidebar-01 pattern),
+// sticky TopBar with breadcrumbs + notifications + account menu, mobile Sheet
+// nav. Routing keys and all business logic unchanged.
 function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast, theme, onToggleTheme, onRefreshProfile }) {
-  const passengerNav = [
-    { v: 'home', Icon: Home, label: 'Home' },
-    { v: 'trips', Icon: ClipboardList, label: 'My Trips' },
-    { v: 'inbox', Icon: Inbox, label: 'Inbox', badge: true },
-    { v: 'recent-rides', Icon: History, label: 'Recent Rides' },
-    { v: 'profile', Icon: UserIcon, label: 'Profile' },
+  const [mobileOpen, setMobileOpen] = useState(false)
+
+  const passengerSections = [
+    {
+      label: 'Ride',
+      items: [
+        { v: 'home', Icon: Home, label: 'Home' },
+        { v: 'trips', Icon: ClipboardList, label: 'My Trips' },
+        { v: 'recent-rides', Icon: History, label: 'Recent Rides' },
+      ],
+    },
+    {
+      label: 'Account',
+      items: [
+        { v: 'inbox', Icon: Inbox, label: 'Inbox', badge: true },
+        { v: 'profile', Icon: UserIcon, label: 'Profile' },
+      ],
+    },
   ]
-  const driverNav = [
-    { v: 'driver-home', Icon: LayoutDashboard, label: 'Dashboard' },
-    { v: 'presentation-demo', Icon: Zap, label: 'Presentation Demo' },
-    { v: 'driver-map', Icon: MapIcon, label: 'Live Map' },
-    { v: 'driver-routes', Icon: RouteIcon, label: 'My Routes' },
-    { v: 'inbox', Icon: Inbox, label: 'Inbox', badge: true },
-    { v: 'profile', Icon: UserIcon, label: 'Profile' },
+  const driverSections = [
+    {
+      label: 'Drive',
+      items: [
+        { v: 'driver-home', Icon: LayoutDashboard, label: 'Dashboard' },
+        { v: 'driver-map', Icon: MapIcon, label: 'Live Map' },
+        { v: 'driver-routes', Icon: RouteIcon, label: 'My Routes' },
+      ],
+    },
+    {
+      label: 'Workspace',
+      items: [
+        { v: 'presentation-demo', Icon: Zap, label: 'Presentation Demo' },
+        { v: 'inbox', Icon: Inbox, label: 'Inbox', badge: true },
+        { v: 'profile', Icon: UserIcon, label: 'Profile' },
+      ],
+    },
   ]
-  const adminNav = [
-    { v: 'admin-overview', Icon: LayoutDashboard, label: 'Overview' },
-    { v: 'presentation-demo', Icon: Zap, label: 'Presentation Demo' },
-    { v: 'admin-rides', Icon: ClipboardList, label: 'Rides' },
-    { v: 'admin-vehicles', Icon: Truck, label: 'Fleet' },
-    { v: 'admin-drivers', Icon: CarFront, label: 'Drivers' },
-    { v: 'admin-cluster', Icon: RouteIcon, label: 'Cluster' },
-    { v: 'admin-routes', Icon: MapIcon, label: 'Routes' },
-    { v: 'admin-analytics', Icon: BarChart3, label: 'Analytics' },
-    { v: 'admin-jobs', Icon: Settings, label: 'Jobs' },
-    { v: 'admin-heatmap', Icon: Flame, label: 'Heatmap' },
+  const adminSections = [
+    {
+      label: 'Operate',
+      items: [
+        { v: 'admin-overview', Icon: LayoutDashboard, label: 'Overview' },
+        { v: 'admin-rides', Icon: ClipboardList, label: 'Rides' },
+        { v: 'admin-vehicles', Icon: Truck, label: 'Fleet' },
+        { v: 'admin-drivers', Icon: CarFront, label: 'Drivers' },
+      ],
+    },
+    {
+      label: 'Optimize',
+      items: [
+        { v: 'admin-cluster', Icon: RouteIcon, label: 'Cluster' },
+        { v: 'admin-routes', Icon: MapIcon, label: 'Routes' },
+        { v: 'admin-analytics', Icon: BarChart3, label: 'Analytics' },
+      ],
+    },
+    {
+      label: 'System',
+      items: [
+        { v: 'presentation-demo', Icon: Zap, label: 'Presentation Demo' },
+        { v: 'admin-jobs', Icon: Settings, label: 'Jobs' },
+        { v: 'admin-heatmap', Icon: Flame, label: 'Heatmap' },
+      ],
+    },
   ]
-  const nav = user.role === 'admin' ? adminNav : user.role === 'driver' ? driverNav : passengerNav
+  const sections = user.role === 'admin' ? adminSections : user.role === 'driver' ? driverSections : passengerSections
   const isDemo = view === 'presentation-demo'
 
-  return (
-    <div className="app-shell flex h-full w-full">
-      {/* Sidebar */}
-      <aside className="app-sidebar flex w-[220px] shrink-0 flex-col border-r bg-card px-3 py-5">
-        <div className="brand mb-7 flex items-center gap-2.5 pl-1">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow"><SmartRouteMark size={18} /></span>
-          <div className="brand-copy">
-            <p className="font-display text-sm font-extrabold leading-none">SmartRoute</p>
-            <Badge variant="secondary" className="mt-1 text-[10px] uppercase">{user.role}</Badge>
-          </div>
-          <span className="ml-auto"><ThemeToggle theme={theme} onToggle={onToggleTheme} /></span>
+  const go = (v) => {
+    setMobileOpen(false)
+    setView(v)
+  }
+
+  const sidebarBody = (
+    <>
+      <div className="brand mb-5 flex items-center gap-2.5 px-1">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm"><SmartRouteMark size={18} /></span>
+        <div className="brand-copy min-w-0 flex-1">
+          <p className="text-sm font-extrabold leading-none tracking-tight">SmartRoute</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">Shared transit ops</p>
         </div>
-        <Card className="mb-4">
-          <CardContent className="p-2.5">
-            <p className="mb-1.5 px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Simulation Mode</p>
-            <div className="flex gap-1.5">
-              <Button
-                variant={!isDemo ? 'default' : 'ghost'}
-                size="sm"
-                className="flex-1"
-                onClick={() => setView(roleHome(user.role))}
-              >
-                Normal
-              </Button>
-              <Button
-                variant={isDemo ? 'default' : 'ghost'}
-                size="sm"
-                className="flex-1"
-                onClick={() => setView('presentation-demo')}
-              >
-                <Zap className="h-3.5 w-3.5" /> Demo
-              </Button>
+        <Badge variant="secondary" className="shrink-0 text-[10px] uppercase">{user.role}</Badge>
+      </div>
+
+      <Card className="mb-4 shadow-sm">
+        <CardContent className="p-2.5">
+          <p className="mb-1.5 px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Simulation mode</p>
+          <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="Simulation mode">
+            <Button
+              variant={!isDemo ? 'default' : 'ghost'}
+              size="sm"
+              className="w-full"
+              onClick={() => go(roleHome(user.role))}
+              aria-pressed={!isDemo}
+            >
+              Normal
+            </Button>
+            <Button
+              variant={isDemo ? 'default' : 'ghost'}
+              size="sm"
+              className="w-full"
+              onClick={() => go('presentation-demo')}
+              aria-pressed={isDemo}
+            >
+              <Zap className="h-3.5 w-3.5" /> Demo
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-0.5" aria-label="Primary">
+        {sections.map((section) => (
+          <div key={section.label}>
+            <p className="nav-label mb-1.5 px-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              {section.label}
+            </p>
+            <div className="flex flex-col gap-0.5">
+              {section.items.map((item) => {
+                const active = view === item.v
+                const Icon = item.Icon
+                return (
+                  <Button
+                    key={item.v}
+                    variant={active ? 'secondary' : 'ghost'}
+                    className={cn(
+                      'nav-item h-9 w-full justify-start gap-2.5 px-2.5 font-medium',
+                      active && 'bg-secondary font-semibold shadow-[inset_2px_0_0_hsl(var(--primary))]',
+                    )}
+                    onClick={() => go(item.v)}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span className="nav-label flex-1 truncate text-left text-[13px]">{item.label}</span>
+                    {item.badge && unreadCount > 0 && (
+                      <Badge variant="destructive" className="ml-auto h-5 min-w-5 px-1.5 text-[10px]">{unreadCount > 9 ? '9+' : unreadCount}</Badge>
+                    )}
+                  </Button>
+                )
+              })}
             </div>
-          </CardContent>
-        </Card>
-        <nav className="flex flex-1 flex-col gap-0.5">
-          {nav.map((item) => {
-            const active = view === item.v
-            const Icon = item.Icon
-            return (
-              <Button key={item.v} variant={active ? 'secondary' : 'ghost'} className={cn('nav-item w-full justify-start gap-2.5', active && 'font-semibold')} onClick={() => setView(item.v)}>
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="nav-label flex-1 text-left">{item.label}</span>
-                {item.badge && unreadCount > 0 && (
-                  <Badge variant="destructive" className="ml-auto h-5 min-w-5 px-1.5">{unreadCount}</Badge>
-                )}
-              </Button>
-            )
-          })}
-        </nav>
-        <Separator className="my-3" />
-        <div className="user-row mb-2 flex items-center gap-2.5 px-2 py-1">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">{user.name.charAt(0).toUpperCase()}</AvatarFallback>
-          </Avatar>
-          <div className="user-copy min-w-0 flex-1">
-            <p className="truncate text-xs font-semibold">{user.name}</p>
-            <p className="truncate text-[11px] text-muted-foreground">{user.email}</p>
           </div>
+        ))}
+      </nav>
+
+      <Separator className="my-3" />
+      <button
+        onClick={() => go('profile')}
+        className="user-row mb-2 flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Avatar className="h-8 w-8 shrink-0">
+          <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">{(user.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
+        </Avatar>
+        <div className="user-copy min-w-0 flex-1">
+          <p className="truncate text-xs font-semibold">{user.name}</p>
+          <p className="truncate text-[11px] text-muted-foreground">{user.email}</p>
         </div>
-        <Button variant="outline" className="w-full justify-start" onClick={onLogout}>
-          <LogOut className="h-4 w-4" /><span className="sign-out-label">Sign out</span>
-        </Button>
+      </button>
+      <Button variant="outline" className="w-full justify-start gap-2" onClick={onLogout}>
+        <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="sign-out-label">Sign out</span>
+      </Button>
+    </>
+  )
+
+  return (
+    <div className="app-shell flex h-full w-full bg-background">
+      {/* Desktop sidebar */}
+      <aside className="app-sidebar hidden w-[248px] shrink-0 flex-col border-r bg-card px-3 py-5 md:flex">
+        {sidebarBody}
       </aside>
 
-      {/* Main — full height flex column so map views can fill all space */}
-      <main className="app-main flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <RoleRouter user={user} view={view} setView={setView} notifications={notifications} setNotifications={setNotifications} toast={toast} onRefreshProfile={onRefreshProfile} />
-      </main>
+      {/* Mobile nav */}
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetContent side="left" className="flex w-[280px] flex-col px-3 py-5">
+          <SheetHeader className="sr-only">
+            <SheetTitle>Navigation</SheetTitle>
+          </SheetHeader>
+          {sidebarBody}
+        </SheetContent>
+      </Sheet>
+
+      {/* Main column with professional top bar */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <AppTopBar
+          user={user}
+          view={view}
+          setView={setView}
+          unreadCount={unreadCount}
+          notifications={notifications}
+          onOpenNotifications={() => setView('inbox')}
+          onLogout={onLogout}
+          onOpenMobileNav={() => setMobileOpen(true)}
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+        />
+        <main className="app-main flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+          <RoleRouter user={user} view={view} setView={setView} notifications={notifications} setNotifications={setNotifications} toast={toast} onRefreshProfile={onRefreshProfile} />
+        </main>
+      </div>
     </div>
   )
 }
@@ -652,7 +766,7 @@ function RoleRouter({ user, view, setView, notifications, setNotifications, toas
   )
 }
 
-// ─── Inbox (shadcn) ─────────────────────────────────────────────────────────────
+// ─── Inbox (shadcn + Empty state) ─────────────────────────────────────────────
 function InboxView({ notifications, setNotifications, toast }) {
   const markAll = async () => {
     try { await notificationsApi.markAllRead(); setNotifications(notifications.map((n) => ({ ...n, is_read: true }))); toast('success', 'All notifications marked as read') } catch (error) { void error }
@@ -660,30 +774,38 @@ function InboxView({ notifications, setNotifications, toast }) {
   const markOne = async (id) => {
     try { await notificationsApi.markRead(id); setNotifications(notifications.map((n) => (n.id === id ? { ...n, is_read: true } : n))) } catch (error) { void error }
   }
+  const unread = notifications.filter((n) => !n.is_read).length
   return (
-    <div className="mx-auto w-full max-w-[760px] p-7">
-      <div className="mb-5 flex items-center justify-between">
-        <h1 className="font-display text-xl font-extrabold tracking-tight">Notifications</h1>
-        {notifications.some((n) => !n.is_read) && <Button variant="outline" size="sm" onClick={markAll}><CheckCircle2 className="h-3.5 w-3.5" /> Mark all read</Button>}
-      </div>
+    <div className="mx-auto w-full max-w-[760px] space-y-4 p-4 md:p-7">
+      <PageHeader
+        title="Notifications"
+        description={notifications.length ? `${unread} unread · ${notifications.length} total` : 'Workspace inbox'}
+        actions={unread > 0 ? <Button variant="outline" size="sm" onClick={markAll}><CheckCircle2 className="h-3.5 w-3.5" /> Mark all read</Button> : undefined}
+      />
       {notifications.length === 0 && (
-        <Card><CardContent className="flex items-center gap-3 p-6 text-sm text-muted-foreground"><Bell className="h-4 w-4" /> No notifications yet.</CardContent></Card>
+        <DashboardEmptyState icon={Bell} title="No notifications yet" hint="Ride updates, dispatch events and driver approvals will appear here." />
       )}
       <div className="flex flex-col gap-2">
         {notifications.map((n) => (
           <Card
             key={n.id}
             onClick={() => !n.is_read && markOne(n.id)}
-            className={cn(!n.is_read && 'cursor-pointer border-primary/30 bg-primary/[0.04] hover:bg-primary/[0.07]')}
+            onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !n.is_read) { e.preventDefault(); markOne(n.id) } }}
+            tabIndex={!n.is_read ? 0 : undefined}
+            role={!n.is_read ? 'button' : undefined}
+            className={cn(
+              'shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              !n.is_read && 'cursor-pointer border-primary/30 bg-primary/[0.04] hover:bg-primary/[0.07]',
+            )}
           >
             <CardContent className="flex items-start gap-3 p-3.5">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10"><Bell className="h-4 w-4 text-primary" /></span>
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10"><Bell className="h-4 w-4 text-primary" aria-hidden="true" /></span>
               <div className="min-w-0 flex-1">
-                <p className={cn('text-[13px]', !n.is_read ? 'font-bold' : 'font-medium')}>{n.title}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{n.message}</p>
+                <p className={cn('text-[13px] leading-tight', !n.is_read ? 'font-bold' : 'font-medium')}>{n.title}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{n.message}</p>
                 <p className="mt-1 text-[11px] text-muted-foreground/70">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</p>
               </div>
-              {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />}
+              {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" />}
             </CardContent>
           </Card>
         ))}
@@ -692,7 +814,7 @@ function InboxView({ notifications, setNotifications, toast }) {
   )
 }
 
-// ─── Profile (shadcn) ───────────────────────────────────────────────────────────
+// ─── Profile (shadcn + PageHeader) ────────────────────────────────────────────
 function ProfileView({ user }) {
   const [saving, setSaving] = useState(false)
   const [name, setName] = useState(user.name)
@@ -706,34 +828,34 @@ function ProfileView({ user }) {
     } catch (error) { void error } finally { setSaving(false) }
   }
   return (
-    <div className="mx-auto w-full max-w-[520px] p-7">
-      <h1 className="mb-6 font-display text-xl font-extrabold tracking-tight">Profile</h1>
-      <Card>
+    <div className="mx-auto w-full max-w-[560px] space-y-5 p-4 md:p-7">
+      <PageHeader title="Profile" description="How you appear to dispatch and riders" />
+      <Card className="shadow-sm">
         <CardContent className="p-6">
           <div className="mb-6 flex items-center gap-3.5">
             <Avatar className="h-14 w-14">
-              <AvatarFallback className="bg-primary text-xl font-extrabold text-primary-foreground">{user.name.charAt(0).toUpperCase()}</AvatarFallback>
+              <AvatarFallback className="bg-primary text-xl font-extrabold text-primary-foreground">{(user.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
             </Avatar>
-            <div>
-              <p className="text-base font-bold">{user.name}</p>
-              <p className="text-xs text-muted-foreground">{user.email}</p>
+            <div className="min-w-0">
+              <p className="truncate text-base font-bold">{user.name}</p>
+              <p className="truncate text-xs text-muted-foreground">{user.email}</p>
               <Badge className="mt-1.5 uppercase" variant="secondary">{user.role}</Badge>
             </div>
           </div>
           <div className="mb-4 space-y-1.5">
-            <Label htmlFor="profile-name">Full Name</Label>
-            <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} />
+            <Label htmlFor="profile-name">Full name</Label>
+            <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
           </div>
           <div className="mb-4 space-y-1.5">
             <Label htmlFor="profile-phone">Phone</Label>
-            <Input id="profile-phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <Input id="profile-phone" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" inputMode="tel" />
           </div>
           <div className="mb-5 space-y-1.5">
             <Label htmlFor="profile-email">Email</Label>
             <Input id="profile-email" value={user.email} disabled className="opacity-60" />
           </div>
           <Button className="w-full" onClick={save} disabled={saving}>
-            {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : saved ? <><CheckCircle2 className="h-4 w-4" /> Saved</> : 'Save Changes'}
+            {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : saved ? <><CheckCircle2 className="h-4 w-4" /> Saved</> : 'Save changes'}
           </Button>
         </CardContent>
       </Card>

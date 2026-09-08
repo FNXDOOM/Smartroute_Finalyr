@@ -1,5 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -26,6 +29,19 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 172 100% 32%;
     --radius: 0.625rem;
+    --chart-1: 172 60% 45%;
+    --chart-2: 200 70% 50%;
+    --chart-3: 222 47% 40%;
+    --chart-4: 160 60% 40%;
+    --chart-5: 30 80% 55%;
+    --sidebar: 0 0% 98%;
+    --sidebar-foreground: 222.2 84% 4.9%;
+    --sidebar-primary: 172 100% 32%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 40% 96.1%;
+    --sidebar-accent-foreground: 222.2 47.4% 11.2%;
+    --sidebar-border: 214.3 31.8% 91.4%;
+    --sidebar-ring: 172 100% 32%;
   }
 
   .dark {
@@ -48,6 +64,32 @@
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 172 80% 42%;
+    --chart-1: 172 70% 50%;
+    --chart-2: 200 70% 55%;
+    --chart-3: 222 50% 60%;
+    --chart-4: 160 60% 45%;
+    --chart-5: 30 80% 55%;
+    --sidebar: 222.2 84% 6.5%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-primary: 172 80% 42%;
+    --sidebar-primary-foreground: 222.2 84% 4.9%;
+    --sidebar-accent: 217.2 32.6% 17.5%;
+    --sidebar-accent-foreground: 210 40% 98%;
+    --sidebar-border: 217.2 32.6% 17.5%;
+    --sidebar-ring: 172 80% 42%;
+  }
+  .theme {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+  }
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
   }
 }
 
@@ -57,11 +99,13 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Geist Variable', 'Inter', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   h1, h2, h3, h4, .display {
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Geist Variable', 'Inter', system-ui, sans-serif;
+    letter-spacing: -0.01em;
   }
   button {
     font-family: inherit;
@@ -71,9 +115,29 @@
   }
 }
 
+/* Mobility type scale: large clear page titles, compact data labels,
+   muted secondary text. Applied via .mob-* utilities on top of Tailwind. */
+.mob-page-title {
+  font-size: 1.375rem;
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+@media (min-width: 768px) {
+  .mob-page-title { font-size: 1.625rem; }
+}
+.mob-section-label {
+  font-size: 0.6875rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: hsl(var(--muted-foreground));
+}
+.mob-data { font-variant-numeric: tabular-nums; }
+
 /* MapLibre overrides (theme aware) */
 .maplibregl-map {
-  font-family: 'Inter', sans-serif !important;
+  font-family: 'Geist Variable', 'Inter', sans-serif !important;
 }
 .maplibregl-ctrl-group {
   border: 1px solid hsl(var(--border)) !important;

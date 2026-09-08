@@ -1,8 +1,26 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { C, s } from '../ui/tokens.js'
+import {
+  CarFront, CheckCircle2, ChevronRight, CircleDot, Dna, Flag, Loader2,
+  MapPin, Navigation, Pause, Play, RotateCcw, Signpost,
+  Users, Zap,
+} from 'lucide-react'
 import { ridesApi, jobsApi, geocodeApi, routingApi } from '../services/api.js'
 import AppMap from '../components/AppMap'
 import { DEMO_PRESETS, DEMO_STAGES, createDemoRunId } from '../config/demoPresets.js'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Switch } from '@/components/ui/switch'
+import { Progress } from '@/components/ui/progress'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { MapLegend, KpiStat } from '@/components/dashboard-shared'
+
+// Presentation-only icon mapping for pipeline stages (logic uses DEMO_STAGES ids).
+const STAGE_ICONS = { SPAWN: Users, CLUSTER: Dna, VIRTUAL_STOP: Signpost, VRP_SOLVE: Zap, DRIVE_SIM: CarFront }
 
 function interpolateDemoPath(path, progress) {
   const segmentLengths = []
@@ -585,281 +603,249 @@ export default function PresentationDemoView({ toast }) {
     bearing: simData.vehicleBearing,
   }
   return (
-    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', background: C.bg }}>
-      
-      {/* ── Left Controls & Algorithm Inspector Panel ── */}
-      <div style={{ width: 440, flexShrink: 0, overflowY: 'auto', padding: 24, background: C.bg2, borderRight: `1px solid ${C.border}`, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        
-        {/* Title Header */}
+    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden lg:block">
+      {/* ── Left controls & algorithm inspector: sheet on mobile, floating panel on desktop ── */}
+      <div className="relative z-10 order-2 flex min-h-0 flex-1 flex-col lg:pointer-events-none lg:absolute lg:bottom-4 lg:left-4 lg:top-4 lg:order-none lg:w-[400px] lg:flex-none">
+      <ScrollArea className="pointer-events-auto min-h-0 w-full flex-1 border-t bg-card md:rounded-t-2xl lg:h-full lg:rounded-xl lg:border lg:border-border/80 lg:bg-card/95 lg:shadow-xl lg:backdrop-blur">
+        <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border lg:hidden" aria-hidden="true" />
+        <div className="flex flex-col gap-4 p-4 md:p-5">
+
+        {/* Title header */}
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <span style={{ fontSize: 18 }}>🎓</span>
-            <h1 style={s({ color: C.text, fontSize: 18, fontWeight: 800, fontFamily: 'Bricolage Grotesque,sans-serif' })}>
-              AI Transit Simulation Studio
-            </h1>
+          <div className="mb-1 flex items-center gap-2">
+            <Badge variant="secondary" className="gap-1 text-[10px] uppercase"><Flag className="h-3 w-3" /> Simulation studio</Badge>
+            {isPlaying && <Badge className="gap-1 text-[10px] uppercase"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" /> Live</Badge>}
           </div>
-          <p style={s({ color: C.muted, fontSize: 11 })}>
-            Final Year Project · Cambridge Institute of Technology (CIT)
+          <h2 className="text-lg font-semibold tracking-tight">AI transit simulation</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {activePreset.zone} · shared-auto pooling pipeline
           </p>
         </div>
 
-        {/* Corridor Selector */}
-        <div style={s({ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px' })}>
-          <p style={s({ color: C.muted2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', marginBottom: 6 })}>Demo Transit Corridor</p>
-          <div style={{ display: 'flex', gap: 6 }}>
+        {/* Corridor selector */}
+        <section aria-label="Demo corridor">
+          <p className="mob-section-label mb-1.5">Demo transit corridor</p>
+          <div className="flex gap-1.5">
             {[
-                { id: 'indiranagar', label: '📍 Use Indiranagar preset', desc: 'Quick start · customize the route below' },
-            ].map(z => (
+                { id: 'indiranagar', label: 'Indiranagar preset', desc: 'Quick start · customize the route below' },
+            ].map(z => {
+              const selected = selectedZone === z.id
+              return (
               <button
                 key={z.id}
                 onClick={() => setSelectedZone(z.id)}
-                style={s({
-                  flex: 1,
-                  padding: '8px 10px',
-                  background: selectedZone === z.id ? `${C.accent}20` : C.surface2,
-                  border: `1px solid ${selectedZone === z.id ? C.accent : C.border2}`,
-                  color: selectedZone === z.id ? C.accent : C.text,
-                  borderRadius: 7,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                })}
+                aria-pressed={selected}
+                className={cn(
+                  'flex-1 rounded-lg border p-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  selected ? 'border-primary/50 bg-primary/[0.06]' : 'hover:border-primary/30 hover:bg-muted/40',
+                )}
               >
-                {z.label}
+                <span className="flex items-center gap-1.5 text-xs font-semibold"><MapPin className="h-3.5 w-3.5 text-primary" />{z.label}</span>
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">{z.desc}</span>
               </button>
-            ))}
+              )
+            })}
           </div>
-        </div>
+        </section>
 
-        {/* Custom Demo Route Picker */}
-        <div style={s({ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 })}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-            <p style={s({ color: C.muted2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' })}>Choose Demo Route</p>
-            <span style={s({ color: C.accent, fontSize: 10, fontWeight: 700 })}>3 pooled riders</span>
+        {/* Custom demo route picker */}
+        <section aria-label="Demo route" className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="mob-section-label">Demo route</p>
+            <Badge variant="secondary" className="text-[10px]">3 pooled riders</Badge>
           </div>
-          <div style={s({ display: 'flex', flexDirection: 'column', gap: 6 })}>
-            <div style={s({ display: 'flex', alignItems: 'center', gap: 7, background: C.surface2, border: `1px solid ${locationPicker === 'pickup' ? C.accent : C.border2}`, borderRadius: 7, padding: '7px 8px' })}>
-              <span>📍</span>
-              <input
-                value={pickupQuery}
-                onChange={event => setPickupQuery(event.target.value)}
-                onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchDemoLocation('pickup') } }}
-                placeholder="Pickup location"
-                disabled={isPlaying || locationBusy}
-                style={s({ flex: 1, minWidth: 0, background: 'none', border: 'none', color: C.text, fontSize: 11, outline: 'none' })}
-              />
-              <button onClick={() => void searchDemoLocation('pickup')} disabled={isPlaying || locationBusy} style={s({ border: 'none', background: 'none', color: C.accent, cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: 0 })}>Search</button>
-              <button onClick={() => setLocationPicker(locationPicker === 'pickup' ? null : 'pickup')} disabled={isPlaying || locationBusy} style={s({ border: 'none', background: 'none', color: locationPicker === 'pickup' ? C.accent2 : C.muted2, cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: 0, whiteSpace: 'nowrap' })}>Map</button>
+          <div className="space-y-1.5">
+            <div>
+              <Label htmlFor="demo-pickup" className="sr-only">Pickup location</Label>
+              <div className={cn('flex items-center gap-2 rounded-lg border bg-background px-2.5 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30', locationPicker === 'pickup' && 'border-primary/60')}>
+                <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  id="demo-pickup"
+                  value={pickupQuery}
+                  onChange={event => setPickupQuery(event.target.value)}
+                  onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchDemoLocation('pickup') } }}
+                  placeholder="Pickup location"
+                  disabled={isPlaying || locationBusy}
+                  className="border-0 bg-transparent px-0 text-xs shadow-none focus-visible:ring-0"
+                />
+                <Button variant="ghost" size="sm" className="h-7 shrink-0 px-1.5 text-[11px]" onClick={() => void searchDemoLocation('pickup')} disabled={isPlaying || locationBusy}>Search</Button>
+                <Button variant="ghost" size="sm" className="h-7 shrink-0 px-1.5 text-[11px]" onClick={() => setLocationPicker(locationPicker === 'pickup' ? null : 'pickup')} disabled={isPlaying || locationBusy}>Map</Button>
+              </div>
             </div>
-            <div style={s({ display: 'flex', alignItems: 'center', gap: 7, background: C.surface2, border: `1px solid ${locationPicker === 'destination' ? C.accent : C.border2}`, borderRadius: 7, padding: '7px 8px' })}>
-              <span>🎯</span>
-              <input
-                value={destinationQuery}
-                onChange={event => setDestinationQuery(event.target.value)}
-                onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchDemoLocation('destination') } }}
-                placeholder="Destination"
-                disabled={isPlaying || locationBusy}
-                style={s({ flex: 1, minWidth: 0, background: 'none', border: 'none', color: C.text, fontSize: 11, outline: 'none' })}
-              />
-              <button onClick={() => void searchDemoLocation('destination')} disabled={isPlaying || locationBusy} style={s({ border: 'none', background: 'none', color: C.accent, cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: 0 })}>Search</button>
-              <button onClick={() => setLocationPicker(locationPicker === 'destination' ? null : 'destination')} disabled={isPlaying || locationBusy} style={s({ border: 'none', background: 'none', color: locationPicker === 'destination' ? C.accent2 : C.muted2, cursor: 'pointer', fontSize: 10, fontWeight: 700, padding: 0, whiteSpace: 'nowrap' })}>Map</button>
+            <div>
+              <Label htmlFor="demo-dest" className="sr-only">Destination</Label>
+              <div className={cn('flex items-center gap-2 rounded-lg border bg-background px-2.5 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30', locationPicker === 'destination' && 'border-primary/60')}>
+                <Navigation className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  id="demo-dest"
+                  value={destinationQuery}
+                  onChange={event => setDestinationQuery(event.target.value)}
+                  onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void searchDemoLocation('destination') } }}
+                  placeholder="Destination"
+                  disabled={isPlaying || locationBusy}
+                  className="border-0 bg-transparent px-0 text-xs shadow-none focus-visible:ring-0"
+                />
+                <Button variant="ghost" size="sm" className="h-7 shrink-0 px-1.5 text-[11px]" onClick={() => void searchDemoLocation('destination')} disabled={isPlaying || locationBusy}>Search</Button>
+                <Button variant="ghost" size="sm" className="h-7 shrink-0 px-1.5 text-[11px]" onClick={() => setLocationPicker(locationPicker === 'destination' ? null : 'destination')} disabled={isPlaying || locationBusy}>Map</Button>
+              </div>
             </div>
           </div>
-          <p style={s({ color: locationPicker ? C.accent : C.muted2, fontSize: 10, lineHeight: 1.35 })}>
+          <p className={cn('text-[11px] leading-snug', locationPicker ? 'text-primary' : 'text-muted-foreground')}>
             {locationBusy ? 'Finding and snapping location to the road…' : locationPicker ? `Click the map to set the ${locationPicker}.` : 'Search a place or press Map, then click the map.'}
           </p>
-          {locationError && <p style={s({ color: C.danger, fontSize: 10, lineHeight: 1.35 })}>{locationError}</p>}
+          {locationError && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">{locationError}</p>}
           {routeEstimate && (
-            <div style={s({ display: 'flex', justifyContent: 'space-between', color: C.muted2, fontSize: 10, borderTop: `1px solid ${C.border}`, paddingTop: 7 })}>
-              <span>Selected route preview</span>
-              <strong style={s({ color: C.text })}>{(routeEstimate.distanceMeters / 1000).toFixed(1)} km · {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</strong>
+            <div className="mob-data flex items-center justify-between border-t pt-2 text-[11px] text-muted-foreground">
+              <span>Route preview</span>
+              <strong className="text-foreground">{(routeEstimate.distanceMeters / 1000).toFixed(1)} km · {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</strong>
             </div>
           )}
-          {routePreviewing && <p style={s({ color: C.accent, fontSize: 10 })}>Updating road route preview…</p>}
-        </div>
+          {routePreviewing && <p className="flex items-center gap-1.5 text-[11px] text-primary"><Loader2 className="h-3 w-3 animate-spin" /> Updating road route preview…</p>}
+        </section>
 
-        {/* Primary Simulation Controls */}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button
+        {/* Primary simulation controls */}
+        <div className="flex gap-2">
+          <Button
             onClick={handlePrimaryAction}
-            style={s({
-              flex: 2,
-              padding: '12px 18px',
-              // Fixed brand-teal gradient + white text: C.accent is black in light mode, which made this button unreadable there.
-              background: isPlaying ? '#5b5b5b' : 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 10,
-              fontSize: 13,
-              fontWeight: 800,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              boxShadow: '0 4px 16px rgba(0,201,167,0.3)',
-            })}
+            size="lg"
+            className="flex-[2]"
           >
-            <span>{isPlaying ? '⏸ Pause Simulation' : currentStage === 5 && simData.progress > 0 && simData.progress < 1 ? '▶ Resume Simulation' : '▶ Run Complete AI Pipeline'}</span>
-          </button>
+            {isPlaying ? <><Pause className="h-4 w-4" /> Pause simulation</> : currentStage === 5 && simData.progress > 0 && simData.progress < 1 ? <><Play className="h-4 w-4" /> Resume simulation</> : <><Play className="h-4 w-4" /> Run AI pipeline</>}
+          </Button>
 
-          <button
+          <Button
             onClick={resetSimulation}
-            style={s({
-              flex: 1,
-              padding: '12px 14px',
-              background: C.surface2,
-              color: C.text,
-              border: `1px solid ${C.border}`,
-              borderRadius: 10,
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: 'pointer',
-            })}
+            variant="outline"
+            size="lg"
+            className="flex-1"
           >
-            ↺ Reset
-          </button>
+            <RotateCcw className="h-4 w-4" /> Reset
+          </Button>
         </div>
 
-        {/* Speed and Camera Toggles */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ color: C.muted2, fontSize: 11 }}>Speed:</span>
-            {[1, 2, 4, 8].map(spd => (
-              <button
-                key={spd}
-                onClick={() => setSpeedMultiplier(spd)}
-                style={s({
-                  padding: '3px 8px',
-                  background: speedMultiplier === spd ? C.accent : C.surface2,
-                  color: speedMultiplier === spd ? C.bg : C.text,
-                  border: `1px solid ${speedMultiplier === spd ? C.accent : C.border}`,
-                  borderRadius: 5,
-                  fontSize: 10,
-                  fontWeight: 700,
-                  cursor: 'pointer',
-                })}
-              >
-                {spd}x
-              </button>
-            ))}
+        {/* Speed and camera toggles */}
+        <div className="flex items-center justify-between gap-2 rounded-lg border px-2.5 py-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground">Speed</span>
+            <ToggleGroup type="single" size="sm" value={String(speedMultiplier)} onValueChange={(v) => { if (v) setSpeedMultiplier(Number(v)) }} aria-label="Simulation speed">
+              {[1, 2, 4, 8].map(spd => (
+                <ToggleGroupItem key={spd} value={String(spd)} aria-label={`${spd}x speed`} className="mob-data px-2 text-[11px]">
+                  {spd}x
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
 
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted2, fontSize: 11, cursor: 'pointer' }}>
-            <input type="checkbox" checked={followCamera} onChange={e => setFollowCamera(e.target.checked)} />
-            Follow auto
-          </label>
-        </div>
-
-        {/* Live Telemetry KPI Card */}
-        <div style={s({ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 14 })}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, textAlign: 'center', marginBottom: 12 }}>
-            <div>
-              <p style={s({ color: C.muted2, fontSize: 9, textTransform: 'uppercase', fontWeight: 700 })}>SPEED</p>
-              <p style={s({ color: C.accent, fontSize: 18, fontWeight: 800 })}>{simData.speedKmh} <span style={{ fontSize: 10 }}>km/h</span></p>
-            </div>
-            <div>
-              <p style={s({ color: C.muted2, fontSize: 9, textTransform: 'uppercase', fontWeight: 700 })}>DISTANCE</p>
-              <p style={s({ color: '#60a5fa', fontSize: 18, fontWeight: 800 })}>{(simData.distanceRemainingM / 1000).toFixed(1)} <span style={{ fontSize: 10 }}>km</span></p>
-            </div>
-            <div>
-              <p style={s({ color: C.muted2, fontSize: 9, textTransform: 'uppercase', fontWeight: 700 })}>ETA</p>
-              <p style={s({ color: C.accent2, fontSize: 18, fontWeight: 800 })}>{Math.ceil(simData.etaSeconds / 60)} <span style={{ fontSize: 10 }}>min</span></p>
-            </div>
-            <div>
-              <p style={s({ color: C.muted2, fontSize: 9, textTransform: 'uppercase', fontWeight: 700 })}>POOLED</p>
-              <p style={s({ color: '#22c55e', fontSize: 18, fontWeight: 800 })}>{simData.passengersOnboard}/3 <span style={{ fontSize: 10 }}>riders</span></p>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 10, color: C.muted2 }}>
-              <span>Route Completion</span>
-              <span style={{ color: C.text, fontWeight: 700 }}>{Math.round(simData.progress * 100)}%</span>
-            </div>
-            <div style={{ height: 6, background: C.surface3, borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${simData.progress * 100}%`, background: `linear-gradient(90deg, ${C.accent}, ${C.accent2})`, transition: 'width 0.1s linear' }} />
-            </div>
+          <div className="flex items-center gap-2">
+            <Label htmlFor="demo-follow" className="cursor-pointer text-[11px] font-medium text-muted-foreground">Follow auto</Label>
+            <Switch id="demo-follow" checked={followCamera} onCheckedChange={setFollowCamera} size="sm" aria-label="Follow vehicle camera" />
           </div>
         </div>
+
+        {/* Live telemetry */}
+        <section aria-label="Live telemetry">
+          <div className="grid grid-cols-4 gap-2 text-center">
+            <KpiStat label="Speed" value={`${simData.speedKmh}`} sub="km/h" />
+            <KpiStat label="Distance" value={`${(simData.distanceRemainingM / 1000).toFixed(1)}`} sub="km left" />
+            <KpiStat label="ETA" value={`${Math.ceil(simData.etaSeconds / 60)}`} sub="min" />
+            <KpiStat label="Pooled" value={`${simData.passengersOnboard}/3`} sub="riders" />
+          </div>
+
+          <div className="mt-2.5">
+            <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Route completion</span>
+              <span className="mob-data font-semibold text-foreground">{Math.round(simData.progress * 100)}%</span>
+            </div>
+            <Progress value={Math.round(simData.progress * 100)} aria-label="Route completion" />
+          </div>
+        </section>
 
         {/* Shared-auto rider manifest */}
-        <div style={s({ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 })}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <p style={s({ color: C.muted2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' })}>Shared Auto Manifest</p>
-            <span style={s({ color: C.accent, fontSize: 10, fontWeight: 800 })}>MAX 3</span>
+        <section aria-label="Rider manifest">
+          <div className="mb-1.5 flex items-center justify-between">
+            <p className="mob-section-label">Shared auto manifest</p>
+            <Badge variant="secondary" className="text-[10px]">max 3</Badge>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="flex flex-col gap-1.5" role="list">
             {demoRiders.map(rider => {
               const liveRider = simData.riders.find(item => item.id === rider.id) || rider
+              const stateColor = liveRider.status === 'in_vehicle' ? 'text-emerald-600 dark:text-emerald-400' : liveRider.status === 'boarding' ? 'text-primary' : 'text-muted-foreground'
               return (
-                <div key={rider.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 7px', background: C.surface2, borderRadius: 7 }}>
-                  <span style={s({ width: 22, height: 22, borderRadius: '50%', background: rider.riderNumber === 1 ? `${C.accent}22` : '#f59e0b22', color: rider.riderNumber === 1 ? C.accent : '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 800 })}>P{rider.riderNumber}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={s({ color: C.text, fontSize: 10, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{rider.riderNumber === 1 ? `${rider.plbl} → ${rider.dlbl}` : `${rider.homeLabel} → ${rider.virtualStop.label}`}</p>
-                    <p style={s({ color: C.muted2, fontSize: 9 })}>{rider.riderNumber === 1 ? 'Route origin pickup' : `Walk ${rider.walkDistanceM} m · max 200 m`}</p>
+                <div key={rider.id} role="listitem" className="flex items-center gap-2.5 rounded-lg border bg-muted/40 px-2.5 py-2">
+                  <Avatar className="h-7 w-7 shrink-0">
+                    <AvatarFallback className="bg-primary/10 text-[11px] font-bold text-primary">P{rider.riderNumber}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold">{rider.riderNumber === 1 ? `${rider.plbl} → ${rider.dlbl}` : `${rider.homeLabel} → ${rider.virtualStop.label}`}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{rider.riderNumber === 1 ? 'Route origin pickup' : `Walk ${rider.walkDistanceM} m · max 200 m`}</p>
                   </div>
-                  <span style={s({ color: liveRider.status === 'in_vehicle' ? '#22c55e' : liveRider.status === 'boarding' ? C.accent : C.muted2, fontSize: 9, fontWeight: 800, whiteSpace: 'nowrap' })}>{riderStatusLabels[liveRider.status] || 'Waiting'}</span>
+                  <span className={cn('shrink-0 text-[11px] font-semibold', stateColor)}>{riderStatusLabels[liveRider.status] || 'Waiting'}</span>
                 </div>
               )
             })}
           </div>
-        </div>
+        </section>
 
-        {/* 5-Step Pipeline Triggers */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <p style={s({ color: C.muted2, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' })}>Pipeline Step-By-Step Execution</p>
+        {/* Pipeline steps */}
+        <section aria-label="Pipeline steps" className="flex flex-col gap-1.5">
+          <p className="mob-section-label">Pipeline · tap a step to run it</p>
           {DEMO_STAGES.map((stg, idx) => {
             const stepNum = idx + 1
             const isActive = currentStage === stepNum
             const isPassed = currentStage > stepNum
             const triggers = [stepSpawnRiders, stepCluster, stepVirtualStop, stepVrpSolve, startDriveSimulation]
+            const StageIcon = STAGE_ICONS[stg.id] || CircleDot
             return (
-              <div
+              <button
                 key={stg.id}
                 onClick={!isPlaying ? triggers[idx] : undefined}
-                style={s({
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '10px 12px',
-                  background: isActive ? `${C.accent}18` : isPassed ? `${C.surface2}` : C.surface,
-                  border: `1px solid ${isActive ? C.accent : isPassed ? C.border2 : C.border}`,
-                  borderRadius: 9,
-                  cursor: isPlaying ? 'default' : 'pointer',
-                  transition: 'all 0.2s ease',
-                })}
+                disabled={isPlaying}
+                aria-current={isActive ? 'step' : undefined}
+                className={cn(
+                  'cluster-row flex items-center gap-2.5 rounded-lg border p-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                  isActive ? 'border-primary/50 bg-primary/[0.05]' : 'hover:border-primary/30',
+                  isPlaying && 'cursor-default opacity-80',
+                )}
               >
-                <span style={{ fontSize: 16 }}>{stg.icon}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={s({ color: isActive ? C.accent : C.text, fontSize: 12, fontWeight: 700 })}>{stg.title}</p>
-                  <p style={s({ color: C.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' })}>{stg.desc}</p>
-                </div>
-                {isPassed && <span style={{ color: '#22c55e', fontSize: 12, fontWeight: 800 }}>✓</span>}
-                {isActive && isPlaying && <div style={{ width: 12, height: 12, borderRadius: '50%', border: `2px solid ${C.accent}`, borderTopColor: 'transparent', animation: 'spin 0.8s linear infinite' }} />}
-              </div>
+                <span className={cn(
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+                  isActive ? 'bg-primary text-primary-foreground' : isPassed ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground',
+                )}>
+                  {isPassed && !isActive ? <CheckCircle2 className="h-4 w-4" /> : <StageIcon className="h-4 w-4" />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold">{stepNum}. {stg.title.replace(/^\d+\.\s*/, '')}</span>
+                  <span className="block truncate text-[11px] text-muted-foreground">{stg.desc}</span>
+                </span>
+                {isActive && isPlaying && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />}
+                {isActive && !isPlaying && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+              </button>
             )
           })}
-        </div>
+        </section>
 
-        {/* Real-time Algorithm Logs */}
-        <div style={s({ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12, display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minHeight: 140 })}>
-          <p style={s({ color: C.muted2, fontSize: 10, fontWeight: 700, textTransform: 'uppercase' })}>Algorithm Execution Terminal</p>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 180 }}>
-            {simData.logs.map((log, i) => (
-              <div key={i} style={{ fontSize: 10, lineHeight: 1.4, color: log.type === 'success' ? '#22c55e' : log.type === 'accent' ? C.accent : C.muted2 }}>
-                <span style={{ color: C.muted, marginRight: 6 }}>[{log.time}]</span>
-                <span>{log.text}</span>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* Algorithm log */}
+        <section aria-label="Algorithm log" className="flex min-h-[140px] flex-1 flex-col gap-1.5">
+          <p className="mob-section-label">Algorithm log</p>
+          <ScrollArea className="min-h-[120px] flex-1 rounded-lg border bg-slate-950/[0.03] dark:bg-black/40">
+            <div className="flex flex-col gap-1 p-2.5 font-mono text-[11px] leading-relaxed">
+              {simData.logs.map((log, i) => (
+                <div key={i} className={cn(log.type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : log.type === 'accent' ? 'text-primary' : 'text-muted-foreground')}>
+                  <span className="mr-1.5 opacity-60">[{log.time}]</span>
+                  <span>{log.text}</span>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        </section>
 
+        </div>
+      </ScrollArea>
       </div>
 
-      {/* ── Right Surface (Full-Height Live Map) ── */}
-      <div style={{ flex: 1, position: 'relative', minWidth: 0, minHeight: 0 }}>
+      {/* ── Live map: centerpiece, full-bleed ── */}
+      <div className="order-1 relative h-[34vh] w-full shrink-0 lg:absolute lg:inset-0 lg:order-none lg:h-full">
+        <div className="absolute inset-0">
         <AppMap
           // A fixed map center lets the vehicle marker visibly move when
           // Follow is off; AppMap handles the moving camera when it is on.
@@ -876,19 +862,34 @@ export default function PresentationDemoView({ toast }) {
           walkingPaths={simData.walkingPaths}
           onMapClick={locationPicker ? chooseDemoLocationOnMap : undefined}
           followCamera={followCamera && isPlaying}
+          style={{ borderRadius: 0 }}
         />
+        </div>
 
-        {/* Floating Instruction Banner — background is intentionally always dark (map overlay), so text uses fixed light colors, NOT theme tokens */}
-        <div style={{ position: 'absolute', top: 20, left: 24, right: 24, background: 'rgba(15,23,42,0.92)', backdropFilter: 'blur(8px)', border: '1px solid rgba(45,212,191,0.35)', borderRadius: 12, padding: '12px 18px', zIndex: 500, display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
-          <span style={{ fontSize: 20 }}>⚡</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ color: '#5eead4', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI Dispatch Instruction</p>
-            <p style={{ color: '#f1f5f9', fontSize: 13, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{simData.currentInstruction}</p>
+        {/* Floating dispatch instruction */}
+        <div className="absolute left-3 right-3 top-3 z-[500] flex items-center gap-2.5 rounded-xl border border-border/80 bg-card/95 px-3 py-2.5 shadow-lg backdrop-blur md:left-4 md:right-auto md:max-w-[520px]">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Zap className="h-4 w-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="mob-section-label">AI dispatch</p>
+            <p className="truncate text-[13px] font-semibold">{simData.currentInstruction}</p>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: isPlaying ? '#22c55e' : '#94a3b8', animation: isPlaying ? 'pulse-glow 1.5s infinite' : 'none' }} />
-            <span style={{ color: isPlaying ? '#22c55e' : '#94a3b8', fontSize: 11, fontWeight: 700 }}>{isPlaying ? 'LIVE SIM' : 'STANDBY'}</span>
-          </div>
+          <Badge variant={isPlaying ? 'default' : 'secondary'} className="shrink-0 gap-1.5 text-[10px] uppercase">
+            <span className={cn('h-1.5 w-1.5 rounded-full', isPlaying ? 'animate-pulse bg-current' : 'bg-muted-foreground')} />
+            {isPlaying ? 'Live' : 'Standby'}
+          </Badge>
+        </div>
+
+        <div className="absolute bottom-3 left-3 z-[500] hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
+          <MapLegend
+            items={[
+              { color: '#00c9a7', label: 'Route / vehicle' },
+              { color: '#a78bfa', label: 'Virtual stop' },
+              { color: '#f59e0b', label: 'Walking leg' },
+              { color: '#f43f5e', label: 'Destination' },
+            ]}
+          />
         </div>
       </div>
     </div>

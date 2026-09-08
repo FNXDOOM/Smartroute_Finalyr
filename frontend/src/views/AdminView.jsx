@@ -19,6 +19,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
+import { Slider } from '@/components/ui/slider'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { KpiStat, DensityBar, MapLegend } from '@/components/dashboard-shared'
 
 // ─── Shared bits ────────────────────────────────────────────────────────────
 // One status style map for the whole admin area (rides, vehicles, jobs).
@@ -230,19 +235,26 @@ function OverviewPanel({ user, setView, toast }) {
       )}
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <Card>
+        <Card className="shadow-sm">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Rides by stage</CardTitle>
-            <CardDescription>Where every booking sits right now</CardDescription>
+            <CardTitle className="text-sm font-semibold">Rides by stage</CardTitle>
+            <CardDescription>Where every booking sits right now · bar = share of total</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-1">
+          <CardContent className="space-y-2.5">
             {Object.keys(byStatus).length === 0 && <p className="text-sm text-muted-foreground">No rides yet.</p>}
-            {Object.entries(byStatus).map(([st, cnt]) => (
-              <div key={st} className="flex items-center justify-between border-b py-2 last:border-0">
-                <StatusBadge status={st} />
-                <p className="text-sm font-bold">{cnt}</p>
-              </div>
-            ))}
+            {(() => {
+              const max = Math.max(1, ...Object.values(byStatus))
+              const total = Object.values(byStatus).reduce((n, c) => n + c, 0)
+              return Object.entries(byStatus).map(([st, cnt]) => (
+                <div key={st}>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <StatusBadge status={st} />
+                    <p className="mob-data text-sm font-semibold">{cnt} <span className="font-normal text-muted-foreground">· {total ? Math.round((cnt / total) * 100) : 0}%</span></p>
+                  </div>
+                  <DensityBar value={cnt} max={max} colorClass="bg-primary" label={`${st}: ${cnt} rides`} />
+                </div>
+              ))
+            })()}
           </CardContent>
         </Card>
 
@@ -557,63 +569,164 @@ function ClusterPanel({ setView, toast }) {
   }
 
   const selected = history.find((r) => r.id === selectedId) || null
+  const maxGroups = Math.max(1, ...history.map((r) => r.clusters_formed || 0))
+  const maxRiders = Math.max(1, ...history.flatMap((r) => (r.cluster_summary || []).map((cs) => cs.passenger_count || 0)))
+  const totals = useMemo(() => ({
+    runs: history.length,
+    groups: history.reduce((n, r) => n + (r.clusters_formed || 0), 0),
+    riders: history.reduce((n, r) => n + (r.cluster_summary || []).reduce((m, cs) => m + (cs.passenger_count || 0), 0), 0),
+    noise: history.reduce((n, r) => n + (r.noise_requests_count || 0), 0),
+  }), [history])
+  const selectedStops = useMemo(() => (
+    (selected?.cluster_summary || [])
+      .filter((cs) => cs.virtual_stop_lat != null && cs.virtual_stop_lng != null)
+      .map((cs) => ({
+        lat: cs.virtual_stop_lat,
+        lng: cs.virtual_stop_lng,
+        waypoint_type: 'waypoint',
+        label: `Group #${cs.cluster_id} · ${cs.passenger_count || 0} riders`,
+      }))
+  ), [selected])
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-7">
-      <PageHeader title="Grouping" description="Pool nearby waiting rides so one vehicle serves several" onBack={() => setView('admin-overview')} />
+    <div className="mx-auto w-full max-w-6xl space-y-4 p-4 md:p-7">
+      <PageHeader
+        title="Pooling groups"
+        description="Density-based grouping turns nearby requests into shared rides"
+        onBack={() => setView('admin-overview')}
+        actions={
+          <Badge variant="secondary" className="mob-data gap-1.5">
+            <FlaskConical className="h-3 w-3" /> HDBSCAN · res {resolution} · min {minSize}
+          </Badge>
+        }
+      />
 
-      <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
+      {/* Aggregate picture: where groups stand across runs */}
+      {!loading && history.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border bg-card px-4 py-3 shadow-sm" aria-label="Grouping summary">
+          <KpiStat label="Runs" value={totals.runs} />
+          <Separator orientation="vertical" className="hidden h-8 sm:block" />
+          <KpiStat label="Groups formed" value={totals.groups} sub="pooled stops" />
+          <Separator orientation="vertical" className="hidden h-8 sm:block" />
+          <KpiStat label="Riders pooled" value={totals.riders} sub="across all runs" />
+          <Separator orientation="vertical" className="hidden h-8 sm:block" />
+          <KpiStat label="Left out" value={totals.noise} sub="noise requests" />
+          <MapLegend
+            className="ml-auto"
+            items={[
+              { color: '#a78bfa', label: 'Pooled stop' },
+              { color: '#f59e0b', label: 'Noise' },
+            ]}
+          />
+        </div>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
         <Card className="h-fit">
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Group waiting rides</CardTitle>
-            <CardDescription>Needs waiting rides — or run the full dispatch from Overview</CardDescription>
+            <CardTitle className="text-sm">Algorithm parameters</CardTitle>
+            <CardDescription>Applied to waiting rides on the next run</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Map detail (7–12)">
-                <Input value={resolution} onChange={(e) => setResolution(e.target.value)} inputMode="numeric" />
-              </Field>
-              <Field label="Min group size">
-                <Input value={minSize} onChange={(e) => setMinSize(e.target.value)} inputMode="numeric" />
-              </Field>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <Label htmlFor="cluster-res">Map detail</Label>
+                <Tooltip>
+                  <TooltipTrigger render={<Badge variant="secondary" className="mob-data cursor-help text-[11px]">{resolution}</Badge>} />
+                  <TooltipContent className="max-w-[220px]">H3 resolution 7–12. Higher detail = smaller hexagons = tighter groups.</TooltipContent>
+                </Tooltip>
+              </div>
+              <Slider
+                id="cluster-res"
+                min={7}
+                max={12}
+                step={1}
+                value={[Number(resolution) || 9]}
+                onValueChange={([v]) => setResolution(String(v))}
+                aria-label="H3 resolution, 7 to 12"
+              />
+              <div className="mob-data mt-1 flex justify-between text-[10px] text-muted-foreground" aria-hidden="true"><span>7 · coarse</span><span>12 · fine</span></div>
+            </div>
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <Label htmlFor="cluster-min">Min group size</Label>
+                <Tooltip>
+                  <TooltipTrigger render={<Badge variant="secondary" className="mob-data cursor-help text-[11px]">{minSize}</Badge>} />
+                  <TooltipContent className="max-w-[220px]">Minimum requests per group. Larger minimum = fewer, fuller groups.</TooltipContent>
+                </Tooltip>
+              </div>
+              <Slider
+                id="cluster-min"
+                min={2}
+                max={8}
+                step={1}
+                value={[Number(minSize) || 2]}
+                onValueChange={([v]) => setMinSize(String(v))}
+                aria-label="Minimum group size, 2 to 8"
+              />
+              <div className="mob-data mt-1 flex justify-between text-[10px] text-muted-foreground" aria-hidden="true"><span>2 riders</span><span>8 riders</span></div>
             </div>
             <Button className="w-full gap-1.5" onClick={runCluster} disabled={running}>
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />}
-              {running ? 'Grouping…' : 'Group rides'}
+              {running ? 'Grouping…' : 'Group waiting rides'}
             </Button>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">Higher detail = smaller areas. Larger minimum = fewer, fuller groups.</p>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">Needs waiting rides — or run the full dispatch from Overview.</p>
           </CardContent>
         </Card>
 
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-bold">Past runs</p>
+            <p className="text-sm font-semibold">Runs <span className="mob-data font-normal text-muted-foreground">· newest first</span></p>
             <Button variant="ghost" size="sm" onClick={load} className="h-7 gap-1.5 text-xs"><RefreshCw className="h-3.5 w-3.5" /> Refresh</Button>
           </div>
           {loading ? (
             <LoadingRows />
           ) : history.length === 0 ? (
-            <EmptyState icon={FlaskConical} title="No grouping runs yet" hint="Group waiting rides to see results here." />
+            <EmptyState icon={FlaskConical} title="No grouping runs yet" hint="Tune the parameters and group waiting rides to see density results here." />
           ) : (
             history.map((run) => {
               const open = selected?.id === run.id
               return (
-                <Card key={run.id} className={cn(open && 'border-primary/50')}>
-                  <button onClick={() => setSelectedId(open ? null : run.id)} className="w-full p-3.5 text-left focus-visible:outline-none">
-                    <div className="mb-1.5 flex items-center justify-between gap-2">
-                      <p className="text-[13px] font-bold">Run #{run.id}</p>
+                <Card key={run.id} className={cn('cluster-row', open && 'border-primary/50')}>
+                  <button onClick={() => setSelectedId(open ? null : run.id)} data-active={open} className="cluster-row w-full rounded-xl p-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-expanded={open}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <p className="mob-data text-[13px] font-semibold">Run #{run.id}</p>
                       <StatusBadge status={run.status} />
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {run.total_processed_requests} rides · {run.clusters_formed} groups · {run.noise_requests_count} left out
-                      {run.created_at ? ` · ${new Date(run.created_at).toLocaleString()}` : ''}
-                    </p>
-                    {open && run.cluster_summary?.length > 0 && (
-                      <div className="mt-2.5 space-y-1 border-t pt-2.5" onClick={(e) => e.stopPropagation()}>
-                        {run.cluster_summary.slice(0, 5).map((cs) => (
-                          <div key={cs.cluster_id} className="rounded-md bg-muted/50 px-2.5 py-1.5 text-[11px]">
-                            <strong>Group #{cs.cluster_id}</strong> · {cs.passenger_count} riders
-                            <span className="text-muted-foreground"> · stop {cs.virtual_stop_lat?.toFixed(4)}, {cs.virtual_stop_lng?.toFixed(4)}</span>
+                    <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      <span className="mob-data"><strong className="text-foreground">{run.total_processed_requests}</strong> rides</span>
+                      <span className="mob-data"><strong className="text-violet-600 dark:text-violet-400">{run.clusters_formed}</strong> groups</span>
+                      <span className="mob-data"><strong className="text-amber-600 dark:text-amber-400">{run.noise_requests_count}</strong> left out</span>
+                      {run.created_at ? <span>{new Date(run.created_at).toLocaleString()}</span> : null}
+                    </div>
+                    <DensityBar value={run.clusters_formed || 0} max={maxGroups} colorClass="bg-violet-500" label={`Run ${run.id}: ${run.clusters_formed} groups`} />
+                    {open && (
+                      <div className="mt-3 space-y-2 border-t pt-3" onClick={(e) => e.stopPropagation()}>
+                        {selectedStops.length > 0 && (
+                          <div>
+                            <div className="mb-1.5 overflow-hidden rounded-lg border">
+                              <AppMap
+                                center={[selectedStops[0].lat, selectedStops[0].lng]}
+                                zoom={13}
+                                height={220}
+                                waypoints={selectedStops}
+                                style={{ borderRadius: 0 }}
+                              />
+                            </div>
+                            <p className="mb-2 text-[11px] text-muted-foreground">{selectedStops.length} pooled {selectedStops.length === 1 ? 'stop' : 'stops'} · violet pins sized equally, bar = riders</p>
+                          </div>
+                        )}
+                        {(run.cluster_summary || []).slice(0, 8).map((cs) => (
+                          <div key={cs.cluster_id} className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-2.5 py-2">
+                            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-500" aria-hidden="true" />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <p className="text-[11px] font-semibold">Group #{cs.cluster_id}</p>
+                                <p className="mob-data shrink-0 text-[11px] text-muted-foreground">{cs.passenger_count} riders</p>
+                              </div>
+                              <DensityBar value={cs.passenger_count || 0} max={maxRiders} colorClass="bg-violet-500" className="mt-1" />
+                              <p className="mob-data mt-1 truncate text-[10px] text-muted-foreground">stop {cs.virtual_stop_lat?.toFixed(4)}, {cs.virtual_stop_lng?.toFixed(4)}</p>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -681,8 +794,19 @@ function RoutesPanel({ setView, toast }) {
   const selected = routes.find((r) => (r.id ?? r.route_id) === selectedId) || null
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-7">
-      <PageHeader title="Routes" description="Turn grouped stops into multi-stop plans for free vehicles" onBack={() => setView('admin-overview')} />
+    <div className="mx-auto w-full max-w-6xl space-y-4 p-4 md:p-7">
+      <PageHeader
+        title="Route plans"
+        description="Multi-stop plans pairing pooled stops with free vehicles"
+        onBack={() => setView('admin-overview')}
+        actions={
+          vehicles.length > 0 ? (
+            <Badge variant="secondary" className="mob-data gap-1.5">
+              <Truck className="h-3 w-3" /> {vehicles.length} free {vehicles.length === 1 ? 'vehicle' : 'vehicles'}
+            </Badge>
+          ) : undefined
+        }
+      />
 
       <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
         <Card className="h-fit">
@@ -700,8 +824,8 @@ function RoutesPanel({ setView, toast }) {
               </Field>
             </div>
             <div className="rounded-lg bg-muted/50 p-2.5 text-xs text-muted-foreground">
-              <p>Free vehicles: <strong className="text-foreground">{vehicles.length}</strong></p>
-              <p className="mt-1">Latest grouping: <strong className="text-foreground">{clusters[0] ? `#${clusters[0].id} (${clusters[0].clusters_formed} groups)` : 'none yet'}</strong></p>
+              <p className="mob-data">Free vehicles: <strong className="text-foreground">{vehicles.length}</strong></p>
+              <p className="mob-data mt-1">Latest grouping: <strong className="text-foreground">{clusters[0] ? `#${clusters[0].id} (${clusters[0].clusters_formed} groups)` : 'none yet'}</strong></p>
             </div>
             <Button className="w-full gap-1.5" onClick={runOptimize} disabled={running}>
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Navigation className="h-4 w-4" />}
@@ -710,9 +834,9 @@ function RoutesPanel({ setView, toast }) {
           </CardContent>
         </Card>
 
-        <div className="space-y-2">
+        <div className="min-w-0 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-bold">Past plans</p>
+            <p className="text-sm font-semibold">Plans <span className="mob-data font-normal text-muted-foreground">· tap to inspect on map</span></p>
             <Button variant="ghost" size="sm" onClick={load} className="h-7 gap-1.5 text-xs"><RefreshCw className="h-3.5 w-3.5" /> Refresh</Button>
           </div>
           {loading ? (
@@ -724,29 +848,44 @@ function RoutesPanel({ setView, toast }) {
               const id = r.id ?? r.route_id
               const open = (selected?.id ?? selected?.route_id) === id
               return (
-                <Card key={id} className={cn(open && 'border-primary/50')}>
-                  <button onClick={() => setSelectedId(open ? null : id)} className="w-full p-3.5 text-left focus-visible:outline-none">
+                <Card key={id} className={cn('cluster-row', open && 'border-primary/50')}>
+                  <button onClick={() => setSelectedId(open ? null : id)} data-active={open} className="cluster-row w-full rounded-xl p-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-expanded={open}>
                     <div className="mb-1 flex items-center justify-between gap-2">
-                      <p className="truncate font-mono text-xs font-bold">{String(r.route_id || `route-${id}`).slice(0, 28)}</p>
+                      <p className="mob-data truncate font-mono text-xs font-semibold">{String(r.route_id || `route-${id}`).slice(0, 28)}</p>
                       <StatusBadge status={r.status} />
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Vehicle #{r.vehicle_id ?? '—'} · {r.total_distance_meters ? `${(r.total_distance_meters / 1000).toFixed(2)} km` : '—'} · {r.waypoints?.length || 0} stops
-                    </p>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      <span className="mob-data">Vehicle <strong className="text-foreground">#{r.vehicle_id ?? '—'}</strong></span>
+                      <span className="mob-data"><strong className="text-foreground">{r.total_distance_meters ? `${(r.total_distance_meters / 1000).toFixed(2)} km` : '—'}</strong></span>
+                      <span className="mob-data"><strong className="text-foreground">{r.waypoints?.length || 0}</strong> stops</span>
+                    </div>
                   </button>
-                  {open && r.waypoints?.length > 0 && (
-                    <CardContent className="space-y-2 pt-0">
-                      <div className="h-[200px] overflow-hidden rounded-lg border">
-                        <AppMap center={[r.waypoints[0].lat, r.waypoints[0].lng]} zoom={13} height="100%" waypoints={r.waypoints} />
-                      </div>
-                      {(r.waypoints || []).map((wp, i) => (
-                        <div key={i} className="flex items-center gap-2 border-b py-1.5 text-[11px] last:border-0">
-                          <span className="w-4 text-center text-muted-foreground">{i + 1}</span>
-                          <span className="font-bold uppercase text-primary">{wp.waypoint_type}</span>
-                          <span className="text-muted-foreground">{wp.lat?.toFixed(4)}, {wp.lng?.toFixed(4)}</span>
-                          {wp.passenger_ids?.length > 0 && <span className="ml-auto text-muted-foreground">{wp.passenger_ids.length} riders</span>}
-                        </div>
-                      ))}
+                  {open && (
+                    <CardContent className="space-y-2 pt-0" onClick={(e) => e.stopPropagation()}>
+                      {r.waypoints?.length > 0 && (
+                        <>
+                          <div className="overflow-hidden rounded-lg border">
+                            <AppMap center={[r.waypoints[0].lat, r.waypoints[0].lng]} zoom={13} height={260} waypoints={r.waypoints} style={{ borderRadius: 0 }} />
+                          </div>
+                          <MapLegend
+                            items={[
+                              { color: '#3b82f6', label: 'Depot' },
+                              { color: '#a78bfa', label: 'Stop' },
+                              { color: '#f43f5e', label: 'Destination' },
+                            ]}
+                          />
+                        </>
+                      )}
+                      <ol className="divide-y rounded-lg border">
+                        {(r.waypoints || []).map((wp, i) => (
+                          <li key={i} className="flex items-center gap-2.5 px-3 py-2 text-xs">
+                            <span className="mob-data flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">{i + 1}</span>
+                            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-primary">{wp.waypoint_type}</span>
+                            <span className="mob-data truncate text-muted-foreground">{wp.lat?.toFixed(4)}, {wp.lng?.toFixed(4)}</span>
+                            {wp.passenger_ids?.length > 0 && <Badge variant="secondary" className="mob-data ml-auto shrink-0 text-[10px]">{wp.passenger_ids.length} riders</Badge>}
+                          </li>
+                        ))}
+                      </ol>
                     </CardContent>
                   )}
                 </Card>
@@ -798,30 +937,45 @@ function AnalyticsPanel({ setView, toast }) {
 
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <CardTitle className="text-sm">Ride requests per day</CardTitle>
-                  <CardDescription>Taller bar = busier day</CardDescription>
+                  <CardTitle className="text-sm font-semibold">Ride requests per day</CardTitle>
+                  <CardDescription>Taller bar = busier day · hover for exact counts</CardDescription>
                 </div>
-                <div className="flex gap-1.5">
+                <ToggleGroup type="single" size="sm" value={String(days)} onValueChange={(v) => { if (v) setDays(Number(v)) }} aria-label="Date range">
                   {[7, 14, 30].map((d) => (
-                    <Button key={d} size="sm" variant={days === d ? 'secondary' : 'ghost'} className="h-7 text-xs" onClick={() => setDays(d)}>{d}d</Button>
+                    <ToggleGroupItem key={d} value={String(d)} aria-label={`Last ${d} days`} className="mob-data px-2.5 text-xs">
+                      {d}d
+                    </ToggleGroupItem>
                   ))}
-                </div>
+                </ToggleGroup>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="flex h-[120px] items-end gap-1 px-1">
-                {daily.map((d) => {
-                  const h = Math.max(4, (d.ride_requests / maxRides) * 110)
-                  return (
-                    <div key={d.day} className="flex min-w-0 flex-1 flex-col items-center gap-1" title={`${d.ride_requests} rides on ${d.day}`}>
-                      <div className="w-full rounded-t bg-primary/80" style={{ height: h }} />
-                    </div>
-                  )
-                })}
-                {daily.length === 0 && <p className="text-sm text-muted-foreground">No daily data yet.</p>}
-              </div>
+              {daily.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No daily data yet.</p>
+              ) : (
+                <>
+                  <div className="mb-1 flex justify-between text-[10px] text-muted-foreground" aria-hidden="true">
+                    <span className="mob-data">{maxRides} peak</span>
+                    <span>Last {days} days →</span>
+                  </div>
+                  <div className="flex h-[120px] items-end gap-1 px-1" role="img" aria-label={`Ride requests per day, peak ${maxRides}`}>
+                    {daily.map((d) => {
+                      const h = Math.max(4, (d.ride_requests / maxRides) * 110)
+                      return (
+                        <div key={d.day} className="group flex min-w-0 flex-1 flex-col items-center gap-1" title={`${d.ride_requests} rides · ${d.clustered_rides} grouped · ${d.completed_rides} done — ${d.day}`}>
+                          <div className="w-full rounded-t bg-primary/80 transition-colors group-hover:bg-primary" style={{ height: h }} />
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="mob-data mt-1 flex justify-between text-[10px] text-muted-foreground" aria-hidden="true">
+                    <span>{daily[0] ? new Date(daily[0].day).toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}</span>
+                    <span>{daily[daily.length - 1] ? new Date(daily[daily.length - 1].day).toLocaleDateString('en', { month: 'short', day: 'numeric' }) : ''}</span>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -832,42 +986,42 @@ function AnalyticsPanel({ setView, toast }) {
               ['Riders / stop', String(overview.avg_passengers_per_virtual_stop || 0)],
               ['Boarding stops', String(overview.total_virtual_stops || 0)],
             ].map(([label, val]) => (
-              <Card key={label}>
+              <Card key={label} className="shadow-sm">
                 <CardContent className="p-3.5">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
-                  <p className="mt-1 text-lg font-extrabold">{val}</p>
+                  <p className="mob-section-label">{label}</p>
+                  <p className="mob-data mt-1 text-lg font-bold">{val}</p>
                 </CardContent>
               </Card>
             ))}
           </div>
 
-          <Card>
+          <Card className="shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Daily breakdown</CardTitle>
+              <CardTitle className="text-sm font-semibold">Daily breakdown</CardTitle>
             </CardHeader>
-            <CardContent className="overflow-x-auto p-0">
-              <table className="w-full min-w-[560px] text-left text-xs">
-                <thead>
-                  <tr className="border-y bg-muted/50 text-muted-foreground">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/50">
                     {['Date', 'Requests', 'Grouped', 'Done', 'Cancelled', 'Routes'].map((h) => (
-                      <th key={h} className="px-4 py-2 font-bold">{h}</th>
+                      <TableHead key={h} className="px-4">{h}</TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {daily.slice().reverse().map((d) => (
-                    <tr key={d.day} className="border-b last:border-0">
-                      <td className="px-4 py-2">{new Date(d.day).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</td>
-                      <td className="px-4 py-2 font-bold">{d.ride_requests}</td>
-                      <td className="px-4 py-2 text-violet-500">{d.clustered_rides}</td>
-                      <td className="px-4 py-2 text-emerald-600 dark:text-emerald-400">{d.completed_rides}</td>
-                      <td className="px-4 py-2 text-destructive">{d.cancelled_rides}</td>
-                      <td className="px-4 py-2">{d.route_plans}</td>
-                    </tr>
+                    <TableRow key={d.day}>
+                      <TableCell className="px-4">{new Date(d.day).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</TableCell>
+                      <TableCell className="mob-data px-4 font-semibold">{d.ride_requests}</TableCell>
+                      <TableCell className="mob-data px-4 text-violet-600 dark:text-violet-400">{d.clustered_rides}</TableCell>
+                      <TableCell className="mob-data px-4 text-emerald-600 dark:text-emerald-400">{d.completed_rides}</TableCell>
+                      <TableCell className="mob-data px-4 text-destructive">{d.cancelled_rides}</TableCell>
+                      <TableCell className="mob-data px-4">{d.route_plans}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </CardContent>
+                </TableBody>
+              </Table>
+            </div>
           </Card>
         </>
       )}
@@ -1035,73 +1189,87 @@ function HeatmapPanel({ setView, toast }) {
   const set = (k) => (e) => setBox((p) => ({ ...p, [k]: e.target.value }))
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-7">
-      <PageHeader title="Heatmap" description="Hot zones get vehicles sent their way" onBack={() => setView('admin-overview')} />
+    <div className="mx-auto w-full max-w-6xl space-y-4 p-4 md:p-7">
+      <PageHeader
+        title="Demand heatmap"
+        description="Predicted hot zones get idle vehicles sent their way"
+        onBack={() => setView('admin-overview')}
+        actions={
+          cells.length > 0 ? (
+            <Badge variant="secondary" className="mob-data gap-1.5">
+              <Flame className="h-3 w-3" /> {cells.length} zones
+            </Badge>
+          ) : undefined
+        }
+      />
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Area to inspect</CardTitle>
-          <CardDescription>Defaults cover Bengaluru — change only if you operate elsewhere</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <Field label="Min lat"><Input value={box.minLat} onChange={set('minLat')} inputMode="decimal" /></Field>
-            <Field label="Max lat"><Input value={box.maxLat} onChange={set('maxLat')} inputMode="decimal" /></Field>
-            <Field label="Min lng"><Input value={box.minLng} onChange={set('minLng')} inputMode="decimal" /></Field>
-            <Field label="Max lng"><Input value={box.maxLng} onChange={set('maxLng')} inputMode="decimal" /></Field>
-          </div>
-          <Button onClick={load} disabled={loading} className="gap-1.5">
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}
-            {loading ? 'Loading…' : `Show demand${cells.length ? ` (${cells.length} zones)` : ''}`}
-          </Button>
-        </CardContent>
-      </Card>
+      {/* Area controls: slim strip, not a card */}
+      <div className="flex flex-wrap items-end gap-2 rounded-xl border bg-card px-3 py-2.5 shadow-sm">
+        <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-4">
+          <Field label="Min lat"><Input value={box.minLat} onChange={set('minLat')} inputMode="decimal" className="mob-data h-8 text-xs" /></Field>
+          <Field label="Max lat"><Input value={box.maxLat} onChange={set('maxLat')} inputMode="decimal" className="mob-data h-8 text-xs" /></Field>
+          <Field label="Min lng"><Input value={box.minLng} onChange={set('minLng')} inputMode="decimal" className="mob-data h-8 text-xs" /></Field>
+          <Field label="Max lng"><Input value={box.maxLng} onChange={set('maxLng')} inputMode="decimal" className="mob-data h-8 text-xs" /></Field>
+        </div>
+        <Button onClick={load} disabled={loading} className="gap-1.5">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}
+          {loading ? 'Loading…' : 'Show demand'}
+        </Button>
+      </div>
+      <p className="-mt-2 text-[11px] text-muted-foreground">Defaults cover Bengaluru — change only if you operate elsewhere.</p>
 
+      {/* Map is the centerpiece: full-bleed with floating legend */}
       {cells.length > 0 && (
-        <Card className="overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Demand map — {cells.length} zones</CardTitle>
-            <CardDescription>Red = hottest predicted demand</CardDescription>
-          </CardHeader>
-          <div className="h-[380px]">
-            <AppMap
-              center={[(Number(box.minLat) + Number(box.maxLat)) / 2, (Number(box.minLng) + Number(box.maxLng)) / 2]}
-              zoom={12}
-              height="100%"
-              heatCells={cells}
-            />
+        <div className="map-workspace relative h-[52vh] min-h-[320px] overflow-hidden rounded-xl border shadow-sm lg:h-[58vh]">
+          <AppMap
+            center={[(Number(box.minLat) + Number(box.maxLat)) / 2, (Number(box.minLng) + Number(box.maxLng)) / 2]}
+            zoom={12}
+            height="100%"
+            heatCells={cells}
+            style={{ borderRadius: 0 }}
+          />
+          <div className="absolute bottom-3 left-3 z-[500] rounded-lg border border-border/80 bg-card/95 px-3 py-2 shadow-md backdrop-blur">
+            <p className="mob-section-label mb-1.5">Predicted demand</p>
+            <div className="heat-legend-gradient h-1.5 w-40 rounded-full" aria-hidden="true" />
+            <div className="mob-data mt-1 flex w-40 justify-between text-[10px] text-muted-foreground"><span>Low</span><span>High</span></div>
           </div>
-        </Card>
+          {sorted[0] && (
+            <div className="absolute right-3 top-3 z-[500] rounded-lg border border-border/80 bg-card/95 px-3 py-2 shadow-md backdrop-blur">
+              <p className="mob-section-label">Hottest zone</p>
+              <p className="mob-data text-sm font-bold text-destructive">{sorted[0].predicted_demand?.toFixed(1)} <span className="text-[11px] font-medium text-muted-foreground">· {sorted[0].historical_request_count} past rides</span></p>
+            </div>
+          )}
+        </div>
       )}
 
       {cells.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Hottest zones first</CardTitle>
-          </CardHeader>
-          <CardContent className="max-h-[320px] overflow-auto p-0">
-            <table className="w-full min-w-[520px] text-left text-xs">
-              <thead className="sticky top-0 bg-muted/80 backdrop-blur">
-                <tr className="text-muted-foreground">
-                  {['Zone', 'Lat', 'Lng', 'Past rides', 'Predicted'].map((h) => (
-                    <th key={h} className="px-4 py-2 font-bold">{h}</th>
+        <div>
+          <p className="mb-2 text-sm font-semibold">Hottest zones first</p>
+          <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+            <div className="max-h-[320px] overflow-auto">
+              <Table>
+                <TableHeader className="sticky top-0 bg-muted/80 backdrop-blur">
+                  <TableRow>
+                    {['Zone', 'Lat', 'Lng', 'Past rides', 'Predicted'].map((h) => (
+                      <TableHead key={h} className="px-4">{h}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sorted.map((c) => (
+                    <TableRow key={c.h3_index}>
+                      <TableCell className="mob-data max-w-[180px] truncate font-mono text-[11px]">{c.h3_index}</TableCell>
+                      <TableCell className="mob-data text-muted-foreground">{c.latitude?.toFixed(3)}</TableCell>
+                      <TableCell className="mob-data text-muted-foreground">{c.longitude?.toFixed(3)}</TableCell>
+                      <TableCell className="mob-data font-semibold">{c.historical_request_count}</TableCell>
+                      <TableCell className="mob-data font-bold text-destructive">{c.predicted_demand?.toFixed(1) || '—'}</TableCell>
+                    </TableRow>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((c) => (
-                  <tr key={c.h3_index} className="border-t">
-                    <td className="max-w-[180px] truncate px-4 py-2 font-mono text-[11px]">{c.h3_index}</td>
-                    <td className="px-4 py-2 text-muted-foreground">{c.latitude?.toFixed(3)}</td>
-                    <td className="px-4 py-2 text-muted-foreground">{c.longitude?.toFixed(3)}</td>
-                    <td className="px-4 py-2 font-bold">{c.historical_request_count}</td>
-                    <td className="px-4 py-2 font-bold text-destructive">{c.predicted_demand?.toFixed(1) || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        </div>
       )}
       {!loading && cells.length === 0 && (
         <EmptyState icon={Flame} title="No demand data" hint="Book some rides first to generate data." />

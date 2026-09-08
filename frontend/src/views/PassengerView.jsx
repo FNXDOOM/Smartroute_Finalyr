@@ -1,16 +1,34 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@clerk/clerk-react'
-import { C, s } from '../ui/tokens.js'
+import {
+  ArrowLeft, ArrowRight, Bike, CarFront, CheckCircle2, ChevronRight, CircleDot,
+  Clock, Crown, Loader2, LocateFixed, MapPin, Navigation, Search, Users, X, Zap,
+} from 'lucide-react'
 import { ridesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
 import { useWebSocket } from '../hooks/useWebSocket.js'
 import AppMap from '../components/AppMap'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
+import { Progress } from '@/components/ui/progress'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { StatusBadge, PageHeader, DashboardEmptyState, LoadingRows, MapLegend } from '@/components/dashboard-shared'
 
 const RIDE_TIERS = [
-  { id:'swift-x',   name:'SwiftX',    desc:'Affordable shared ride', eta:'3 min', price:'₹12–15', icon:'S', seats:4 },
-  { id:'swift-xl',  name:'SwiftXL',   desc:'Extra space, small group', eta:'6 min', price:'₹18–22', icon:'X', seats:6 },
-  { id:'swift-lux', name:'Lux Black', desc:'Premium, top-rated driver', eta:'8 min', price:'₹32–40', icon:'L', seats:4 },
-  { id:'swift-moto',name:'Moto',      desc:'Fast, budget solo',        eta:'2 min', price:'₹6–9',   icon:'M', seats:1 },
+  { id: 'swift-x', name: 'SwiftX', desc: 'Affordable shared ride', eta: '3 min', price: '₹12–15', Icon: CarFront, seats: 4 },
+  { id: 'swift-xl', name: 'SwiftXL', desc: 'Extra space, small group', eta: '6 min', price: '₹18–22', Icon: Users, seats: 6 },
+  { id: 'swift-lux', name: 'Lux Black', desc: 'Premium, top-rated driver', eta: '8 min', price: '₹32–40', Icon: Crown, seats: 4 },
+  { id: 'swift-moto', name: 'Moto', desc: 'Fast, budget solo', eta: '2 min', price: '₹6–9', Icon: Bike, seats: 1 },
 ]
+
+const RIDE_STAGES = ['pending', 'clustered', 'assigned', 'arriving', 'in_progress', 'completed']
+const RIDE_STAGE_LABELS = { pending: 'Requested', clustered: 'Clustered', assigned: 'Assigned', arriving: 'Arriving', in_progress: 'In transit', completed: 'Delivered' }
 
 export default function PassengerView({ view, setView, toast }) {
   const [trips,    setTrips]    = useState([])
@@ -302,8 +320,8 @@ export default function PassengerView({ view, setView, toast }) {
   if (view === 'trip-detail') {
     const detailRide = activeRide || viewingRide
     return detailRide
-      ? <TripDetail ride={detailRide} vehicle={activeRide ? rideVehicle : null} onCancel={handleCancel} onBack={()=>{ setViewingRide(null); setView('home') }} />
-      : <div onClick={()=>setView('home')} style={s({padding:28,color:C.muted,cursor:'pointer'})}>← Back</div>
+      ? <TripDetail ride={detailRide} vehicle={activeRide ? rideVehicle : null} onCancel={handleCancel} onBack={() => { setViewingRide(null); setView('home') }} />
+      : <div className="p-7"><Button variant="ghost" size="sm" onClick={() => setView('home')}><ArrowLeft className="h-4 w-4" /> Back home</Button></div>
   }
   if (view === 'tracking') return <TrackingView ride={activeRide} vehicle={rideVehicle} routeGeometry={routeGeometry} onBack={()=>setView('home')} />
 
@@ -374,168 +392,223 @@ export default function PassengerView({ view, setView, toast }) {
     ? [(pickupPoint.lat + destinationPoint.lat) / 2, (pickupPoint.lng + destinationPoint.lng) / 2]
     : (gpsActive || !!pickup.trim()) ? [pickupPoint.lat, pickupPoint.lng] : [12.9784, 77.6408]
 
+  const activeStageIndex = activeRide ? RIDE_STAGES.indexOf(activeRide.status) : -1
+  const activeProgress = activeRide ? Math.max(0, Math.min(100, ((activeStageIndex + 1) / RIDE_STAGES.length) * 100)) : 0
+
   return (
-    <div style={{ display:'flex', flex:1, minHeight:0, overflow:'hidden', position:'relative' }}>
+    <div className="booking-layout relative flex min-h-0 flex-1 flex-col overflow-hidden lg:block">
+      {/* ── Floating booking panel: bottom sheet on mobile, floating card on desktop ── */}
+      <div className="relative z-10 order-2 flex min-h-0 flex-1 flex-col lg:pointer-events-none lg:absolute lg:bottom-4 lg:left-4 lg:top-4 lg:order-none lg:w-[372px] lg:flex-none">
+      <ScrollArea className="booking-panel md:rounded-t-2xl md:border-t pointer-events-auto w-full min-h-0 flex-1 border-background/0 bg-card shadow-[0_-8px_30px_rgba(0,0,0,0.12)] lg:h-full lg:rounded-xl lg:border lg:border-border/80 lg:bg-card/95 lg:shadow-xl lg:backdrop-blur">
+        <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border lg:hidden" aria-hidden="true" />
+        <div className="flex flex-col gap-4 p-4 md:p-5">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight">Book a ride</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">Smart shared dispatch · flat fares</p>
+          </div>
 
-      {/* ── Left booking & active ride panel ── */}
-      <div className="booking-panel" style={{ width:360, flexShrink:0, overflowY:'auto', padding:24, background:'var(--bg)', borderRight:'1px solid var(--border)', display:'flex', flexDirection:'column', gap:14 }}>
-        <div>
-          <h1 style={s({ color:C.text, fontSize:20, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif', marginBottom:4 })}>Book a Ride</h1>
-          <p style={s({ color:C.muted, fontSize:12 })}>Smart shared dispatch · flat fares</p>
-        </div>
-
-        {/* 6-Stage Transit Stepper for Active Ride */}
-        {activeRide && (
-          <div style={s({ background: C.surface, border: `1px solid ${C.accent}55`, borderRadius: 12, padding: '14px 16px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)' })}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-              <div>
-                <span style={s({ fontSize: 10, color: C.muted2, fontWeight: 700, textTransform: 'uppercase' })}>Active Booking</span>
-                <p style={s({ color: C.text, fontSize: 13, fontWeight: 800 })}>Ride #{activeRide.id} · {activeRide.ride_option_name || 'SwiftX'}</p>
-              </div>
-              <StatusBadge status={activeRide.status} />
-            </div>
-
-            {/* Stepper progress dots */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, position: 'relative' }}>
-              <div style={{ position: 'absolute', top: 9, left: 10, right: 10, height: 2, background: C.surface3, zIndex: 1 }} />
-              {[
-                { key: 'pending', label: 'Requested' },
-                { key: 'clustered', label: 'Clustered' },
-                { key: 'assigned', label: 'Assigned' },
-                { key: 'arriving', label: 'Arriving' },
-                { key: 'in_progress', label: 'In Transit' },
-                { key: 'completed', label: 'Delivered' },
-              ].map((step, idx) => {
-                const statuses = ['pending', 'clustered', 'assigned', 'arriving', 'in_progress', 'completed']
-                const currentIdx = statuses.indexOf(activeRide.status)
-                const isPassed = currentIdx >= idx
-                const isCurrent = activeRide.status === step.key
-                return (
-                  <div key={step.key} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, zIndex: 2 }}>
-                    <div style={{
-                      width: 20, height: 20, borderRadius: '50%',
-                      background: isCurrent ? C.accent : isPassed ? '#22c55e' : C.surface3,
-                      border: `2px solid ${isCurrent ? '#ffffff' : 'transparent'}`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 9, fontWeight: 800, color: isPassed ? '#ffffff' : C.muted2,
-                      boxShadow: isCurrent ? `0 0 10px ${C.accent}` : 'none',
-                    }}>
-                      {isPassed && !isCurrent ? '✓' : idx + 1}
-                    </div>
-                    <span style={{ fontSize: 8.5, fontWeight: isCurrent ? 800 : 600, color: isCurrent ? C.accent : isPassed ? C.text : C.muted }}>{step.label}</span>
+          {/* Active booking — 6-stage stepper */}
+          {activeRide && (
+            <Card className="border-primary/25 shadow-sm">
+              <CardContent className="space-y-3 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Active booking</p>
+                    <p className="mt-0.5 truncate text-[13px] font-extrabold">Ride #{activeRide.id} · {activeRide.ride_option_name || 'SwiftX'}</p>
                   </div>
+                  <StatusBadge status={activeRide.status} />
+                </div>
+
+                <div>
+                  <Progress value={activeProgress} aria-label={`Ride stage ${activeStageIndex + 1} of ${RIDE_STAGES.length}`} />
+                  <ol className="mt-2 grid grid-cols-6 gap-1" aria-label="Ride progress">
+                    {RIDE_STAGES.map((key, idx) => {
+                      const passed = activeStageIndex >= idx
+                      const current = activeRide.status === key
+                      return (
+                        <li key={key} className="flex min-w-0 flex-col items-center gap-1 text-center">
+                          <span
+                            className={cn(
+                              'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold',
+                              current ? 'bg-primary text-primary-foreground ring-2 ring-primary/30'
+                                : passed ? 'bg-emerald-500 text-white'
+                                  : 'bg-muted text-muted-foreground',
+                            )}
+                            aria-current={current ? 'step' : undefined}
+                          >
+                            {passed && !current ? <CheckCircle2 className="h-3 w-3" /> : idx + 1}
+                          </span>
+                          <span className={cn('truncate text-[9px] font-semibold leading-tight', current ? 'text-foreground' : passed ? 'text-foreground/80' : 'text-muted-foreground')}>
+                            {RIDE_STAGE_LABELS[key]}
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ol>
+                </div>
+
+                {displayVehicle && (
+                  <div className="flex items-center gap-2.5 rounded-lg border bg-muted/40 p-2.5">
+                    <Avatar className="h-9 w-9 shrink-0">
+                      <AvatarFallback className="bg-primary text-xs font-extrabold text-primary-foreground">{mapVehicle ? 'RK' : 'D'}</AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-xs font-bold">
+                          {mapVehicle ? 'Rajesh Kumar' : 'Your driver'}
+                          {mapVehicle && <span className="ml-1 text-[11px] font-semibold text-amber-500">★ 4.9</span>}
+                        </p>
+                        <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">{displayVehicle.license_plate}</Badge>
+                      </div>
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{mapVehicle ? 'Tata Tigor EV · White · 3 seats shared' : simDriver?.label || 'On the way'}</p>
+                    </div>
+                  </div>
+                )}
+
+                {isRideActive ? (
+                  <div className="flex gap-2">
+                    <Button className="flex-1" size="sm" onClick={() => setView('tracking')}>
+                      <Navigation className="h-3.5 w-3.5" /> Fullscreen tracking
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={handleCancel} className="text-destructive hover:text-destructive">
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    <p className="text-center text-[11px] text-muted-foreground">Auto-dismisses in a few seconds…</p>
+                    <Button className="w-full" size="sm" onClick={clearActiveRideState}>Dismiss · Book new ride</Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Pickup / destination */}
+          <div className="space-y-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="pickup-input">Pickup</Label>
+              <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+                <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  id="pickup-input"
+                  value={pickup}
+                  onFocus={() => setSuggestionField('pickup')}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void searchLocation('pickup') } }}
+                  onChange={e => { setPickup(e.target.value); setSuggestions([]); setPickupConfirmed(false); setGpsActive(false); setMapPickupMode(false) }}
+                  placeholder="Pickup location"
+                  className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                  autoComplete="off"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-1">
+                <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={() => { setMapPickupMode(v => !v); setSuggestionField(null) }} disabled={mapPickupLoading}>
+                  {mapPickupLoading ? <><Loader2 className="h-3 w-3 animate-spin" /> Selecting…</> : mapPickupMode ? 'Cancel map pick' : 'Choose on map'}
+                </Button>
+                <Button variant="ghost" size="sm" className="h-7 gap-1 text-[11px]" onClick={useCurrentLocation} disabled={gpsLoading || mapPickupLoading}>
+                  <LocateFixed className="h-3 w-3" />{gpsLoading ? 'Locating…' : gpsActive ? 'GPS on' : 'Use GPS'}
+                </Button>
+              </div>
+            </div>
+            {suggestionField === 'pickup' && suggestions.length > 0 && (
+              <SuggestionList items={suggestions} onChoose={point => chooseSuggestion('pickup', point)} />
+            )}
+            {locationError && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">{locationError}</p>}
+            <div className="space-y-1.5">
+              <Label htmlFor="dest-input">Destination</Label>
+              <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+                <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                <Input
+                  id="dest-input"
+                  value={dest}
+                  onFocus={() => setSuggestionField('destination')}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void searchLocation('destination') } }}
+                  onChange={e => { setDest(e.target.value); setSuggestions([]); setDestinationConfirmed(false); setDestinationPoint(null); setRouteGeometry([]); setRouteEstimate(null) }}
+                  placeholder="Where to?"
+                  className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            {suggestionField === 'destination' && suggestions.length > 0 && (
+              <SuggestionList items={suggestions} onChoose={point => chooseSuggestion('destination', point)} />
+            )}
+          </div>
+
+          {routeEstimate && (
+            <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Route estimate</span>
+              <strong className="text-foreground">{(routeEstimate.distanceMeters / 1000).toFixed(1)} km · {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</strong>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+            <Label htmlFor="traffic-switch" className="cursor-pointer text-xs font-medium">Use live traffic for route and ETA</Label>
+            <Switch id="traffic-switch" checked={trafficRouting} onCheckedChange={setTrafficRouting} aria-label="Use live traffic" />
+          </div>
+
+          {/* Ride tiers */}
+          <div>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Choose a ride</p>
+            <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Ride options">
+              {RIDE_TIERS.map(tier => {
+                const active = selected === tier.id
+                const TierIcon = tier.Icon
+                return (
+                  <button
+                    key={tier.id}
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setSelected(tier.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(tier.id) } }}
+                    className={cn(
+                      'ride-tier flex items-center justify-between gap-3 rounded-lg border p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      active ? 'border-primary/50 bg-primary/[0.05] shadow-sm' : 'hover:border-primary/30 hover:bg-muted/40',
+                    )}
+                  >
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', active ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
+                        <TierIcon className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[13px] font-bold leading-tight">{tier.name}</span>
+                        <span className="block truncate text-[11px] text-muted-foreground">{tier.desc} · {tier.eta} · {tier.seats} seats</span>
+                      </span>
+                    </span>
+                    <span className={cn('shrink-0 text-[13px] font-extrabold', active ? 'text-primary' : 'text-foreground')}>{tier.price}</span>
+                  </button>
                 )
               })}
             </div>
-
-            {/* Driver card preview */}
-            {displayVehicle && (
-              <div style={s({ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 8, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 10 })}>
-                <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#0d9488', color: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 13 }}>{mapVehicle ? 'RK' : 'D'}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <p style={s({ color: C.text, fontSize: 12, fontWeight: 700 })}>{mapVehicle ? <>Rajesh Kumar <span style={{ color: '#f59e0b', fontSize: 10 }}>★ 4.9</span></> : 'Your driver'}</p>
-                    <span style={s({ color: C.accent, fontSize: 11, fontWeight: 800 })}>{displayVehicle.license_plate}</span>
-                  </div>
-                  <p style={s({ color: C.muted2, fontSize: 10 })}>{mapVehicle ? 'Tata Tigor EV · White · 3 seats shared' : simDriver?.label || 'On the way'}</p>
-                </div>
-              </div>
-            )}
-
-            {isRideActive ? (
-              <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                <button onClick={()=>setView('tracking')} style={s({ flex: 1, padding: '8px', background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color: '#ffffff', border: 'none', borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer' })}>🗺️ Fullscreen Tracking</button>
-                <button onClick={handleCancel} style={s({ padding: '8px 12px', background: 'transparent', border: `1px solid ${C.danger}`, color: C.danger, borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: 'pointer' })}>Cancel</button>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
-                <p style={s({ color: C.muted2, fontSize: 11, textAlign: 'center' })}>Auto-dismisses in a few seconds…</p>
-                <button onClick={clearActiveRideState} style={s({ width: '100%', padding: '8px', background: 'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color: '#ffffff', border: 'none', borderRadius: 7, fontSize: 11, fontWeight: 800, cursor: 'pointer' })}>Dismiss · Book New Ride</button>
-              </div>
-            )}
           </div>
-        )}
 
-        {/* Inputs */}
-        <div style={s({ display:'flex', flexDirection:'column', gap:8 })}>
-          <div style={s({ display:'flex', flexDirection:'column', gap:6, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:'9px 11px' })}>
-            <div style={s({ display:'flex', alignItems:'center', gap:8, minWidth:0 })}>
-              <span>📍</span>
-              <input value={pickup} onFocus={()=>setSuggestionField('pickup')} onKeyDown={e=>{ if(e.key==='Enter') { e.preventDefault(); void searchLocation('pickup') } }} onChange={e=>{ setPickup(e.target.value); setSuggestions([]); setPickupConfirmed(false); setGpsActive(false); setMapPickupMode(false) }} placeholder="Pickup location" style={s({ flex:1, minWidth:0, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
+          <Button className="primary-action w-full" onClick={handleBook} disabled={booking || isRideActive} size="lg">
+            {geocoding ? <><Loader2 className="h-4 w-4 animate-spin" /> Finding locations…</>
+              : booking ? <><Loader2 className="h-4 w-4 animate-spin" /> Booking…</>
+                : isRideActive ? 'Ride in progress'
+                  : <><Zap className="h-4 w-4" /> Request ride</>}
+          </Button>
+
+          {/* Recent */}
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[13px] font-bold">Recent rides</p>
+              <Button variant="ghost" size="sm" className="h-7 gap-1 text-[11px]" onClick={() => setView('trips')}>
+                View all <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
             </div>
-            <div style={s({ display:'flex', justifyContent:'flex-end', alignItems:'center', gap:8, paddingLeft:25 })}>
-              <button onClick={()=>{ setMapPickupMode(value => !value); setSuggestionField(null) }} disabled={mapPickupLoading} title="Choose pickup on map" style={s({ border:'none', background:'none', color:mapPickupMode?C.accent:C.muted2, cursor:mapPickupLoading?'wait':'pointer', fontSize:11, fontWeight:700, whiteSpace:'nowrap', padding:0 })}>
-                {mapPickupLoading ? 'Selecting…' : mapPickupMode ? 'Cancel map' : 'Choose on map'}
-              </button>
-              <button onClick={useCurrentLocation} disabled={gpsLoading || mapPickupLoading} title="Use current GPS location" style={s({ border:'none', background:'none', color:gpsActive?C.accent:C.muted2, cursor:gpsLoading?'wait':'pointer', fontSize:11, fontWeight:700, whiteSpace:'nowrap', padding:0 })}>
-                {gpsLoading ? 'Locating…' : gpsActive ? 'GPS on' : 'Use GPS'}
-              </button>
-            </div>
+            {loading ? <LoadingRows count={3} height="h-[56px]" />
+              : trips.length === 0 ? <DashboardEmptyState icon={CircleDot} title="No rides yet" hint="Your recent bookings will appear here once you request your first ride." />
+                : <div className="flex flex-col gap-1.5">{trips.slice(0, 3).map(t => <TripCard key={t.id} trip={t} onClick={() => openTrip(t)} />)}</div>
+            }
           </div>
-          {suggestionField === 'pickup' && suggestions.length > 0 && (
-            <SuggestionList items={suggestions} onChoose={point=>chooseSuggestion('pickup', point)} />
-          )}
-          {locationError && <p style={s({ color:C.danger, fontSize:11, marginTop:-6, marginBottom:4 })}>{locationError}</p>}
-          <div style={s({ display:'flex', alignItems:'center', gap:8, background:C.surface2, border:`1px solid ${C.border2}`, borderRadius:8, padding:'9px 11px' })}>
-            <span>🎯</span>
-            <input value={dest} onFocus={()=>setSuggestionField('destination')} onKeyDown={e=>{ if(e.key==='Enter') { e.preventDefault(); void searchLocation('destination') } }} onChange={e=>{ setDest(e.target.value); setSuggestions([]); setDestinationConfirmed(false); setDestinationPoint(null); setRouteGeometry([]); setRouteEstimate(null) }} placeholder="Destination" style={s({ flex:1, background:'none', border:'none', color:C.text, fontSize:12, outline:'none' })} />
-          </div>
-          {suggestionField === 'destination' && suggestions.length > 0 && (
-            <SuggestionList items={suggestions} onChoose={point=>chooseSuggestion('destination', point)} />
-          )}
         </div>
-
-        {routeEstimate && (
-          <div style={s({ display:'flex', justifyContent:'space-between', padding:'9px 11px', background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8, color:C.muted2, fontSize:11 })}>
-            <span>Route estimate</span>
-            <strong style={s({ color:C.text })}>{(routeEstimate.distanceMeters / 1000).toFixed(1)} km · {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</strong>
-          </div>
-        )}
-
-        <label style={s({ display:'flex', alignItems:'center', gap:8, color:C.muted2, fontSize:11, cursor:'pointer' })}>
-          <input type="checkbox" checked={trafficRouting} onChange={e=>setTrafficRouting(e.target.checked)} />
-          Use live traffic for route and ETA
-        </label>
-
-        {/* Ride tiers */}
-        <div style={s({ display:'flex', flexDirection:'column', gap:6 })}>
-          {RIDE_TIERS.map(tier => {
-            const active = selected === tier.id
-            return (
-              <div className="ride-tier" key={tier.id} onClick={()=>setSelected(tier.id)} style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 11px', borderRadius:8, border:`1px solid ${active?C.accent:C.border}`, background:active?`${C.accent}10`:'transparent', cursor:'pointer' })}>
-                <div style={s({ display:'flex', alignItems:'center', gap:8 })}>
-                  <span style={{ fontSize:16, fontWeight:800 }}>{tier.icon}</span>
-                  <div>
-                    <p style={s({ color:C.text, fontSize:12, fontWeight:700 })}>{tier.name}</p>
-                    <p style={s({ color:C.muted2, fontSize:10 })}>{tier.desc} · {tier.eta}</p>
-                  </div>
-                </div>
-                <p style={s({ color:active?C.accent:C.text, fontSize:12, fontWeight:700 })}>{tier.price}</p>
-              </div>
-            )
-          })}
-        </div>
-
-        <button className="primary-action" onClick={handleBook} disabled={booking||isRideActive} style={s({ width:'100%', padding:'11px', background:'linear-gradient(135deg, #14b8a6 0%, #0d9488 100%)', color:'#ffffff', border:'none', borderRadius:8, fontSize:13, fontWeight:700, cursor:booking||isRideActive?'not-allowed':'pointer', opacity:booking||isRideActive?0.6:1, boxShadow:'0 4px 16px rgba(0,201,167,0.3)' })}>
-          {geocoding ? 'Finding locations…' : booking ? 'Booking…' : isRideActive ? 'Ride in progress' : 'Request Ride'}
-        </button>
-
-        {/* Recent */}
-        <div>
-          <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 })}>
-            <p style={s({ color:C.text, fontSize:13, fontWeight:700 })}>Recent Rides</p>
-            <button onClick={()=>setView('trips')} style={s({ background:'none', border:'none', color:C.accent, fontSize:11, fontWeight:700, cursor:'pointer' })}>All →</button>
-          </div>
-          {loading ? <p style={s({ color:C.muted, fontSize:12 })}>Loading…</p> :
-           trips.length === 0 ? <p style={s({ color:C.muted, fontSize:12 })}>No rides yet.</p> :
-           trips.slice(0,3).map(t => <TripCard key={t.id} trip={t} onClick={()=>openTrip(t)} />)
-          }
-        </div>
+      </ScrollArea>
       </div>
 
-      {/* ── Right live map ── */}
-      <div className="map-surface" style={{ flex:1, position:'relative', minWidth:0, minHeight:0 }}>
-        <div style={{ position:'absolute', inset:0 }}>
+      {/* ── Live map: centerpiece, full-bleed ── */}
+      <div className="map-surface order-1 relative h-[34vh] w-full shrink-0 lg:absolute lg:inset-0 lg:order-none lg:h-full">
+        <div className="absolute inset-0">
           <AppMap
             center={mapCenter}
             zoom={13}
@@ -547,62 +620,110 @@ export default function PassengerView({ view, setView, toast }) {
             vehicleAnimation={mapVehicleAnimation}
             pickupPulse={mapPickupPulse}
             onMapClick={mapPickupMode ? choosePickupOnMap : undefined}
+            style={{ borderRadius: 0 }}
           />
         </div>
         {mapPickupMode && (
-          <div style={{ position:'absolute', top:54, left:'50%', transform:'translateX(-50%)', background:C.bg2, border:`1px solid ${C.accent}`, boxShadow:'0 2px 10px rgba(0,0,0,0.18)', borderRadius:20, padding:'8px 15px', zIndex:500, pointerEvents:'none' }}>
-            <p style={{ color:C.text, fontSize:12, fontWeight:700 }}>Tap the map to choose pickup</p>
+          <div className="pointer-events-none absolute left-1/2 top-3 z-[500] -translate-x-1/2">
+            <Badge className="shadow-md">Tap the map to choose pickup</Badge>
           </div>
+        )}
+        {isRideActive && activeRide && (
+          <button
+            onClick={() => setView('tracking')}
+            className="absolute left-1/2 top-3 z-[500] hidden -translate-x-1/2 items-center gap-2 rounded-full border border-border/80 bg-card/95 py-1.5 pl-3 pr-2 text-xs font-semibold shadow-lg backdrop-blur transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:left-[calc(404px+((100%-404px)/2))] lg:flex"
+          >
+            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+            Ride #{activeRide.id} · {RIDE_STAGE_LABELS[activeRide.status] || activeRide.status.replace(/_/g, ' ')}
+            <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-primary-foreground">Track</span>
+          </button>
+        )}
+        <div className="absolute bottom-3 left-3 z-[500] hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
+          <MapLegend
+            items={[
+              { color: '#00c9a7', label: 'Pickup' },
+              { color: '#f43f5e', label: 'Drop-off' },
+              { color: '#3b82f6', label: 'Vehicle' },
+            ]}
+          />
+        </div>
+        {routeEstimate && (
+          <Card className="absolute bottom-3 right-3 z-[500] border-border/80 bg-card/95 shadow-md backdrop-blur">
+            <CardContent className="mob-data flex items-center gap-2 px-3 py-2 text-xs">
+              <Navigation className="h-3.5 w-3.5 text-primary" />
+              <strong>{(routeEstimate.distanceMeters / 1000).toFixed(1)} km</strong>
+              <span className="text-muted-foreground">· {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</span>
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>
   )
 }
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
-const STATUS_COLOR = {
-  pending:'#f59e0b', clustered:'#a78bfa', assigned:'#60a5fa',
-  arriving:'#00c9a7', in_progress:'#00c9a7', completed:'#22c55e', cancelled:'#f43f5e',
-}
-function StatusBadge({ status }) {
-  const col = STATUS_COLOR[status] || '#7a90b0'
-  return <span style={s({ fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.07em', color:col, background:col+'22', padding:'2px 8px', borderRadius:6 })}>{status.replace('_',' ')}</span>
-}
-
 function TripCard({ trip, onClick }) {
   return (
-    <div onClick={onClick} style={s({ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'9px 11px', background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8, cursor:'pointer', marginBottom:6 })}>
-      <div style={{ minWidth:0 }}>
-        <p style={s({ color:C.text, fontSize:11, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' })}>→ {trip.destination_label || `${trip.dest_lat?.toFixed(3)}, ${trip.dest_lng?.toFixed(3)}`}</p>
-        <p style={s({ color:C.muted, fontSize:10, marginTop:1 })}>{trip.request_time ? new Date(trip.request_time).toLocaleTimeString() : ''}</p>
-      </div>
-      <StatusBadge status={trip.status} />
-    </div>
+    <Card
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.() } }}
+      tabIndex={0}
+      role="button"
+      className="cursor-pointer shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      <CardContent className="flex items-center justify-between gap-2 p-2.5">
+        <div className="min-w-0">
+          <p className="truncate text-xs font-bold">→ {trip.destination_label || `${trip.dest_lat?.toFixed(3)}, ${trip.dest_lng?.toFixed(3)}`}</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">{trip.request_time ? new Date(trip.request_time).toLocaleTimeString() : ''}</p>
+        </div>
+        <StatusBadge status={trip.status} />
+      </CardContent>
+    </Card>
   )
 }
 
 function TripsView({ trips, loading, setView, onOpenTrip, title = 'My Trips' }) {
   return (
-    <div style={s({ padding:28, maxWidth:720 })}>
-      <div style={s({ display:'flex', alignItems:'center', gap:12, marginBottom:20 })}>
-        <button onClick={()=>setView('home')} style={s({ background:'none', border:'none', color:C.muted2, cursor:'pointer', fontSize:13 })}>← Back</button>
-        <h1 style={s({ color:C.text, fontSize:20, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif' })}>{title}</h1>
-      </div>
-      {loading && <p style={s({ color:C.muted, fontSize:13 })}>Loading…</p>}
-      {!loading && trips.length === 0 && <p style={s({ color:C.muted, fontSize:14 })}>No trips yet.</p>}
-      <div style={s({ display:'flex', flexDirection:'column', gap:8 })}>
+    <div className="mx-auto w-full max-w-[720px] space-y-4 p-4 md:p-7">
+      <PageHeader
+        title={title}
+        description={trips.length ? `${trips.length} booking${trips.length === 1 ? '' : 's'}` : 'Your ride history'}
+        onBack={() => setView('home')}
+        backLabel="Home"
+      />
+      {loading && <LoadingRows count={4} />}
+      {!loading && trips.length === 0 && (
+        <DashboardEmptyState
+          icon={CircleDot}
+          title="No trips yet"
+          hint="Book your first ride from Home — it will show up here with live status."
+          action={<Button size="sm" onClick={() => setView('home')}>Book a ride</Button>}
+        />
+      )}
+      <div className="flex flex-col gap-2">
         {trips.map(t => (
-          <div key={t.id} onClick={()=>onOpenTrip(t)} style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 16px', background:C.surface, border:`1px solid ${C.border}`, borderRadius:10, cursor:'pointer' })}>
-            <div>
-              <div style={s({ display:'flex', alignItems:'center', gap:8, marginBottom:4 })}>
-                <span style={s({ color:C.muted2, fontSize:11 })}>#{t.id}</span>
-                <StatusBadge status={t.status} />
+          <Card
+            key={t.id}
+            onClick={() => onOpenTrip(t)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenTrip(t) } }}
+            tabIndex={0}
+            role="button"
+            className="cursor-pointer shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <CardContent className="flex items-center justify-between gap-3 p-3.5">
+              <div className="min-w-0">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[11px] text-muted-foreground">#{t.id}</span>
+                  <StatusBadge status={t.status} />
+                </div>
+                <p className="truncate text-[13px] font-semibold">
+                  {t.pickup_label || 'Pickup'} <ArrowRight className="mx-1 inline h-3.5 w-3.5 text-muted-foreground" />
+                  {t.destination_label || 'Destination'}
+                </p>
+                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{t.ride_option_name || 'Standard'} · {t.request_time ? new Date(t.request_time).toLocaleString() : ''}</p>
               </div>
-              <p style={s({ color:C.text, fontSize:13, fontWeight:600 })}>📍 {t.pickup_label || 'Pickup'} → 🎯 {t.destination_label || 'Destination'}</p>
-              <p style={s({ color:C.muted, fontSize:11, marginTop:2 })}>{t.ride_option_name || 'Standard'} · {t.request_time ? new Date(t.request_time).toLocaleString() : ''}</p>
-            </div>
-            <span style={s({ color:C.muted, fontSize:18 })}>›</span>
-          </div>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </CardContent>
+          </Card>
         ))}
       </div>
     </div>
@@ -610,62 +731,64 @@ function TripsView({ trips, loading, setView, onOpenTrip, title = 'My Trips' }) 
 }
 
 function TripDetail({ ride, vehicle, onCancel, onBack }) {
-  const canCancel = ['pending','clustered'].includes(ride.status)
+  const canCancel = ['pending', 'clustered'].includes(ride.status)
   return (
-    <div style={s({ padding:28, maxWidth:580 })}>
-      <button onClick={onBack} style={s({ background:'none', border:'none', color:C.muted2, cursor:'pointer', fontSize:13, marginBottom:20 })}>← Back</button>
-      <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:20 })}>
-        <h1 style={s({ color:C.text, fontSize:20, fontWeight:800, fontFamily:'Bricolage Grotesque,sans-serif' })}>Ride #{ride.id}</h1>
-        <StatusBadge status={ride.status} />
-      </div>
-      <div style={s({ display:'flex', flexDirection:'column', gap:10 })}>
-        <InfoCard label="From" value={ride.pickup_label || `${ride.pickup_lat}, ${ride.pickup_lng}`} />
-        <InfoCard label="To"   value={ride.destination_label || `${ride.dest_lat}, ${ride.dest_lng}`} />
-        <InfoCard label="Ride tier" value={ride.ride_option_name || 'Standard'} />
-        {ride.ride_option_price && <InfoCard label="Fare" value={ride.ride_option_price} />}
-        {ride.h3_index  && <InfoCard label="H3 cell"  value={ride.h3_index} mono />}
-        {ride.request_time && <InfoCard label="Requested" value={new Date(ride.request_time).toLocaleString()} />}
-      </div>
+    <div className="mx-auto w-full max-w-[580px] space-y-4 p-4 md:p-7">
+      <PageHeader title={`Ride #${ride.id}`} description={ride.request_time ? new Date(ride.request_time).toLocaleString() : undefined} onBack={onBack} backLabel="Back" actions={<StatusBadge status={ride.status} />} />
+      <Card className="shadow-sm">
+        <CardContent className="flex flex-col gap-2 p-4">
+          <InfoCard label="From" value={ride.pickup_label || `${ride.pickup_lat}, ${ride.pickup_lng}`} />
+          <InfoCard label="To" value={ride.destination_label || `${ride.dest_lat}, ${ride.dest_lng}`} />
+          <InfoCard label="Ride tier" value={ride.ride_option_name || 'Standard'} />
+          {ride.ride_option_price && <InfoCard label="Fare" value={ride.ride_option_price} />}
+          {ride.h3_index && <InfoCard label="H3 cell" value={ride.h3_index} mono />}
+          {ride.request_time && <InfoCard label="Requested" value={new Date(ride.request_time).toLocaleString()} />}
+        </CardContent>
+      </Card>
 
       {vehicle && (
-        <div style={s({ marginTop:16, padding:'14px 16px', background:`${C.accent}10`, border:`1px solid ${C.accent}30`, borderRadius:10 })}>
-          <p style={s({ color:C.accent, fontSize:12, fontWeight:700, marginBottom:8 })}>🚗 Assigned Vehicle</p>
-          <div style={s({ display:'flex', gap:20 })}>
-            <div><p style={s({ color:C.muted2, fontSize:11 })}>Plate</p><p style={s({ color:C.text, fontSize:13, fontWeight:700 })}>{vehicle.license_plate}</p></div>
-            <div><p style={s({ color:C.muted2, fontSize:11 })}>Status</p><p style={s({ color:C.text, fontSize:13, fontWeight:700 })}>{vehicle.status}</p></div>
-            {vehicle.lat && <div><p style={s({ color:C.muted2, fontSize:11 })}>Location</p><p style={s({ color:C.text, fontSize:13, fontWeight:700 })}>{vehicle.lat.toFixed(4)}, {vehicle.lng.toFixed(4)}</p></div>}
-          </div>
-        </div>
+        <Card className="border-primary/25 bg-primary/[0.03] shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-1.5 text-[13px]"><CarFront className="h-4 w-4 text-primary" /> Assigned vehicle</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-x-6 gap-y-2 pb-4">
+            <div><p className="text-[11px] text-muted-foreground">Plate</p><p className="font-mono text-[13px] font-bold">{vehicle.license_plate}</p></div>
+            <div><p className="text-[11px] text-muted-foreground">Status</p><p className="text-[13px] font-bold capitalize">{vehicle.status}</p></div>
+            {vehicle.lat && <div><p className="text-[11px] text-muted-foreground">Location</p><p className="font-mono text-[13px] font-bold">{vehicle.lat.toFixed(4)}, {vehicle.lng.toFixed(4)}</p></div>}
+          </CardContent>
+        </Card>
       )}
       {canCancel && (
-        <button onClick={onCancel} style={s({ marginTop:20, width:'100%', padding:'11px', background:'transparent', border:`1px solid ${C.danger}`, color:C.danger, borderRadius:9, fontSize:13, fontWeight:700, cursor:'pointer' })}>Cancel Ride</button>
+        <Button variant="outline" onClick={onCancel} className="w-full text-destructive hover:text-destructive">
+          <X className="h-4 w-4" /> Cancel ride
+        </Button>
       )}
     </div>
   )
 }
 
 function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
-  const pickupCoords = ride ? { lat:ride.pickup_lat, lng:ride.pickup_lng, label:ride.pickup_label } : null
-  const destCoords   = ride ? { lat:ride.dest_lat,   lng:ride.dest_lng,   label:ride.destination_label } : null
+  const pickupCoords = ride ? { lat: ride.pickup_lat, lng: ride.pickup_lng, label: ride.pickup_label } : null
+  const destCoords = ride ? { lat: ride.dest_lat, lng: ride.dest_lng, label: ride.destination_label } : null
   // Same driver simulation as Home: without a route-linked vehicle, animate
   // the marker from the ride stage so every driver tap is visible here too.
   const simDriver = (!vehicle && ride && ride.pickup_lat != null && ride.dest_lat != null
     && ['assigned', 'arriving', 'in_progress'].includes(ride.status))
     ? (() => {
-        if (ride.status === 'in_progress') {
-          const path = routeGeometry?.length > 1
-            ? routeGeometry
-            : [[ride.pickup_lng, ride.pickup_lat], [ride.dest_lng, ride.dest_lat]]
-          return { vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: path[0][1], lng: path[0][0] }, path, durationMs: 18000 }
-        }
-        const off = ride.status === 'arriving' ? 0.004 : 0.012
-        const start = [ride.pickup_lng + off, ride.pickup_lat + off * 0.6]
-        return {
-          vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: start[1], lng: start[0] },
-          path: [start, [ride.pickup_lng, ride.pickup_lat]],
-          durationMs: ride.status === 'arriving' ? 12000 : 25000,
-        }
-      })()
+      if (ride.status === 'in_progress') {
+        const path = routeGeometry?.length > 1
+          ? routeGeometry
+          : [[ride.pickup_lng, ride.pickup_lat], [ride.dest_lng, ride.dest_lat]]
+        return { vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: path[0][1], lng: path[0][0] }, path, durationMs: 18000 }
+      }
+      const off = ride.status === 'arriving' ? 0.004 : 0.012
+      const start = [ride.pickup_lng + off, ride.pickup_lat + off * 0.6]
+      return {
+        vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: start[1], lng: start[0] },
+        path: [start, [ride.pickup_lng, ride.pickup_lat]],
+        durationMs: ride.status === 'arriving' ? 12000 : 25000,
+      }
+    })()
     : null
   const displayVehicle = vehicle || simDriver?.vehicle || null
   const trackingPickupPulse = !!ride && ['pending', 'clustered'].includes(ride.status)
@@ -675,36 +798,41 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
   const vehicleAnimation = displayVehicle && (routeGeometry?.length > 1 || simDriver)
     ? vehicle
       ? {
-          key: `${displayVehicle.id}:${ride?.status}:${routeGeometry.length}`,
-          vehicleId: displayVehicle.id,
-          path: ['pending', 'clustered', 'assigned', 'arriving'].includes(ride?.status)
-            ? [[displayVehicle.lng, displayVehicle.lat], [ride.pickup_lng, ride.pickup_lat]]
-            : routeGeometry,
-          durationMs: ride?.status === 'in_progress' ? 18000 : 8000,
-          loop: true,
-        }
+        key: `${displayVehicle.id}:${ride?.status}:${routeGeometry.length}`,
+        vehicleId: displayVehicle.id,
+        path: ['pending', 'clustered', 'assigned', 'arriving'].includes(ride?.status)
+          ? [[displayVehicle.lng, displayVehicle.lat], [ride.pickup_lng, ride.pickup_lat]]
+          : routeGeometry,
+        durationMs: ride?.status === 'in_progress' ? 18000 : 8000,
+        loop: true,
+      }
       : {
-          key: `sim-driver:${ride?.id}:${ride?.status}`,
-          vehicleId: displayVehicle.id,
-          path: simDriver.path,
-          durationMs: simDriver.durationMs,
-          loop: true,
-        }
+        key: `sim-driver:${ride?.id}:${ride?.status}`,
+        vehicleId: displayVehicle.id,
+        path: simDriver.path,
+        durationMs: simDriver.durationMs,
+        loop: true,
+      }
     : null
 
   return (
-    <div style={{ display:'flex', flexDirection:'column', flex:1, minHeight:0 }}>
-      <div style={s({ padding:'12px 20px', borderBottom:`1px solid ${C.border}`, display:'flex', alignItems:'center', gap:12, background:C.bg2, flexShrink:0 })}>
-        <button onClick={onBack} style={s({ background:'none', border:'none', color:C.muted2, cursor:'pointer', fontSize:13 })}>← Back</button>
-        <p style={s({ color:C.text, fontSize:14, fontWeight:700 })}>Live Ride Tracking</p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-3 py-2.5 md:px-5">
+        <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5">
+          <ArrowLeft className="h-4 w-4" /> Back
+        </Button>
+        <Separator orientation="vertical" className="h-5" />
+        <p className="text-sm font-bold">Live ride tracking</p>
         {ride && <StatusBadge status={ride.status} />}
-        {displayVehicle
-          ? <p style={s({ color:C.accent, fontSize:12, marginLeft:'auto', fontWeight:700 })}>🚗 {displayVehicle.license_plate}</p>
-          : ride && <p style={s({ color:C.muted2, fontSize:12, marginLeft:'auto' })}>⏳ Awaiting vehicle assignment…</p>}
+        <span className="ml-auto text-xs text-muted-foreground">
+          {displayVehicle
+            ? <Badge variant="secondary" className="gap-1.5 font-mono"><CarFront className="h-3 w-3" /> {displayVehicle.license_plate}</Badge>
+            : ride && 'Awaiting vehicle assignment…'}
+        </span>
       </div>
-      <div style={{ flex:1, minHeight:0 }}>
+      <div className="min-h-0 flex-1">
         {!ride
-          ? <div style={s({ padding:28 })}><p style={s({ color:C.muted, fontSize:14 })}>No active ride.</p></div>
+          ? <div className="mx-auto w-full max-w-[560px] p-4 md:p-7"><DashboardEmptyState icon={Navigation} title="No active ride" hint="Start a booking from Home to track it live here." action={<Button size="sm" onClick={onBack}>Back home</Button>} /></div>
           : <AppMap center={center} zoom={14} height="100%" vehicles={vList} pickup={pickupCoords} destination={destCoords} routeGeometry={routeGeometry} vehicleAnimation={vehicleAnimation} pickupPulse={trackingPickupPulse} followCamera={ride.status === 'in_progress'} />
         }
       </div>
@@ -712,24 +840,31 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
   )
 }
 
-function InfoCard({ label, value, mono=false }) {
+function InfoCard({ label, value, mono = false }) {
   return (
-    <div style={s({ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', background:C.surface2, border:`1px solid ${C.border}`, borderRadius:8 })}>
-      <p style={s({ color:C.muted2, fontSize:12 })}>{label}</p>
-      <p style={s({ color:C.text, fontSize:13, fontWeight:600, fontFamily:mono?'monospace':'inherit' })}>{value}</p>
+    <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2">
+      <p className="shrink-0 text-xs text-muted-foreground">{label}</p>
+      <p className={cn('min-w-0 truncate text-right text-[13px] font-semibold', mono && 'font-mono')}>{value}</p>
     </div>
   )
 }
 
 function SuggestionList({ items, onChoose }) {
   return (
-    <div style={s({ background:C.surface, border:`1px solid ${C.border}`, borderRadius:8, boxShadow:'0 8px 20px rgba(0,0,0,.12)', overflow:'hidden', marginTop:-2, marginBottom:2, position:'relative', zIndex:20 })}>
+    <Card className="relative z-20 overflow-hidden shadow-md" role="listbox" aria-label="Location suggestions">
       {items.map((item, index) => (
-        <button key={`${item.lat}-${item.lng}-${index}`} onMouseDown={event=>event.preventDefault()} onClick={()=>onChoose(item)} style={s({ display:'block', width:'100%', textAlign:'left', border:'none', borderBottom:index < items.length-1 ? `1px solid ${C.border}` : 'none', background:C.surface, color:C.text, padding:'10px 12px', cursor:'pointer', fontSize:11 })}>
-          <span style={s({ display:'block', fontWeight:700 })}>{item.label.split(',')[0]}</span>
-          <span style={s({ display:'block', color:C.muted, marginTop:2, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' })}>{item.label}</span>
+        <button
+          key={`${item.lat}-${item.lng}-${index}`}
+          role="option"
+          aria-selected="false"
+          onMouseDown={event => event.preventDefault()}
+          onClick={() => onChoose(item)}
+          className="block w-full border-b px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+        >
+          <span className="block truncate text-xs font-bold">{item.label.split(',')[0]}</span>
+          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{item.label}</span>
         </button>
       ))}
-    </div>
+    </Card>
   )
 }

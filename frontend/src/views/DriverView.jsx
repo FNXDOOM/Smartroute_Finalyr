@@ -14,6 +14,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { MapLegend } from '@/components/dashboard-shared'
 
 const DEMO_RIDES = DEMO_PRESETS.indiranagar.riders.map((r, i) => ({
   id: r.id,
@@ -433,7 +435,7 @@ export default function DriverView({ user, view, setView, toast }) {
         </Avatar>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-xl font-extrabold tracking-tight md:text-2xl">Driver Dashboard</h1>
+            <h1 className="mob-page-title">Driver Dashboard</h1>
             <Badge variant="secondary" className="gap-1.5">
               <span className="relative flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
@@ -447,19 +449,22 @@ export default function DriverView({ user, view, setView, toast }) {
           </p>
         </div>
         {vehicles.length > 1 ? (
-          <select
-            aria-label="Select vehicle"
-            value={myVehicle?.id ?? ''}
-            onChange={(e) => {
-              const next = vehicles.find((v) => String(v.id) === e.target.value)
+          <Select
+            value={myVehicle ? String(myVehicle.id) : ''}
+            onValueChange={(val) => {
+              const next = vehicles.find((v) => String(v.id) === val)
               if (next) setMyVehicle(next)
             }}
-            className="h-9 rounded-md border border-input bg-background px-2.5 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {vehicles.map((v) => (
-              <option key={v.id} value={v.id}>{v.license_plate} · {v.status}</option>
-            ))}
-          </select>
+            <SelectTrigger className="w-[220px] font-mono text-xs" aria-label="Select vehicle">
+              <SelectValue placeholder="Select vehicle" />
+            </SelectTrigger>
+            <SelectContent>
+              {vehicles.map((v) => (
+                <SelectItem key={v.id} value={String(v.id)}>{v.license_plate} · {v.status}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : myVehicle ? (
           <Badge variant="outline" className="gap-1.5 font-mono">
             <CarFront className="h-3.5 w-3.5" /> {myVehicle.license_plate}
@@ -724,7 +729,7 @@ function StatCard({ icon: Icon, label, value, sub }) {
             <Icon className="h-4 w-4 text-primary" />
           </span>
         </div>
-        <p className="mt-2 truncate font-display text-xl font-extrabold tracking-tight" title={value}>{value}</p>
+        <p className="mob-data mt-2 truncate text-xl font-bold tracking-tight" title={value}>{value}</p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>
       </CardContent>
     </Card>
@@ -907,7 +912,7 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
               <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 <Gauge className="h-3 w-3" /> Speed
               </p>
-              <p className="font-display text-2xl font-extrabold text-teal-300">
+              <p className="mob-data text-2xl font-bold text-teal-300">
                 {simActive ? simSpeed : 0} <span className="text-xs font-semibold">km/h</span>
               </p>
             </div>
@@ -949,7 +954,7 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
           <div>
-            <h1 className="font-display text-lg font-extrabold tracking-tight md:text-xl">My Assigned Routes</h1>
+            <h1 className="mob-page-title text-lg">My Assigned Routes</h1>
             <p className="text-xs text-muted-foreground">Optimized multi-stop plan for this shift</p>
           </div>
         </div>
@@ -1012,11 +1017,11 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="h-[260px] overflow-hidden rounded-lg border">
+            <div className="relative overflow-hidden rounded-lg border">
               <AppMap
                 center={[12.9756, 77.6250]}
                 zoom={13}
-                height="100%"
+                height={260}
                 routeGeometry={DEMO_PRESETS.indiranagar.roadPath}
                 waypoints={activeRoute?.waypoints || [
                   { lat: 12.9784, lng: 77.6408, waypoint_type: 'depot', label: 'Depot' },
@@ -1025,8 +1030,16 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
                   { lat: 12.97190, lng: 77.64124, waypoint_type: 'pickup', label: 'Stop A · Ananya' },
                   { lat: 12.9756, lng: 77.6066, waypoint_type: 'destination', label: 'MG Road' },
                 ]}
+                style={{ borderRadius: 0 }}
               />
             </div>
+            <MapLegend
+              items={[
+                { color: '#3b82f6', label: 'Depot' },
+                { color: '#00c9a7', label: 'Pickup' },
+                { color: '#f43f5e', label: 'Drop-off' },
+              ]}
+            />
             <div className="space-y-0">
               {['Depot · Indiranagar Hub', 'Board Priya · Stop C (100 Feet Rd)', 'Board Rohan · Stop B (100 Feet Rd)', 'Board Ananya · Stop A (100 Feet Rd)', 'Drop Rohan · Church Street', 'Drop Priya · Brigade Road', 'Drop Ananya · MG Road Metro'].map((label, i, arr) => (
                 <div key={label} className="flex gap-3">
