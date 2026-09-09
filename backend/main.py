@@ -22,14 +22,8 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Scheduled jobs normally run in the dedicated worker process (see
-    # backend/worker.py + docker-compose.yml) so the API process only owns
-    # the broadcast loop needed by its connected WebSocket clients.
-    #
-    # ENABLE_BACKGROUND_JOBS_IN_API is an opt-in for local/single-process dev:
-    # without a worker process running, rides that reach "assigned" never
-    # auto-advance to arriving/in_progress/completed, since that transition
-    # is entirely driven by the periodic simulate_ride_dispatch job.
+    # Jobs run in worker; API owns WS broadcast loop.
+    # Opt-in: run jobs in API for local dev.
     if ENABLE_TRACKING_BROADCAST:
         tracking.start_simulation()
     if ENABLE_BACKGROUND_JOBS_IN_API:
@@ -53,13 +47,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def _maybe_add_dev_csp(request: Request, call_next):
-    """During local development, add a relaxed CSP that allows `unsafe-eval` so
-    dev tools and certain dev-only bundles don't trigger CSP errors when the
-    frontend is served through the backend. This middleware enables the relaxed
-    header only when `allowed_origins` appears to include a localhost dev URL.
-
-    IMPORTANT: Do NOT ship this to production. The header reduces CSP security.
-    """
+    """Relaxed CSP for local dev only."""
     response = await call_next(request)
     try:
         origins = ALLOWED_ORIGINS
@@ -74,8 +62,7 @@ async def _maybe_add_dev_csp(request: Request, call_next):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     if is_local_dev:
         response.headers["Content-Security-Policy"] = (
-            # Allow Clerk's hosted assets and API across all relevant directives.
-            # This only applies during local development (see is_local_dev guard above).
+            # Allow Clerk assets (local dev only).
             "default-src 'self' https://*.clerk.accounts.dev; "
             "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://*.clerk.accounts.dev; "
             "style-src 'self' 'unsafe-inline' https://*.clerk.accounts.dev; "
@@ -107,13 +94,13 @@ def root():
 
 @app.get("/health/live", tags=["Health"])
 def liveness():
-    """Process liveness probe; does not require the database."""
+    """Liveness probe."""
     return {"status": "ok", "environment": APP_ENV}
 
 
 @app.get("/health/ready", tags=["Health"])
 def readiness():
-    """Readiness probe used by load balancers and orchestrators."""
+    """Readiness probe."""
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))

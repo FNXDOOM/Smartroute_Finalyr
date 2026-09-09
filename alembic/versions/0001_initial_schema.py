@@ -16,8 +16,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # This is the versioned baseline. Future changes must be new revisions;
-    # application startup never creates or alters tables.
+    # Versioned baseline; startup never alters tables
     Base.metadata.create_all(bind=op.get_bind())
 
 

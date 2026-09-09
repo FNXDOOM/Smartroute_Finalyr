@@ -74,8 +74,7 @@ def fetch_stadia_resource(resource_path: str) -> tuple[bytes, str]:
     safe_path = resource_path.strip().lstrip("/")
     if not safe_path or ".." in safe_path.split("/"):
         raise RuntimeError("Invalid Stadia map resource path")
-    # Stadia's sprite assets use the literal `@2x` suffix. Preserve `@` while
-    # still quoting spaces and other unsafe path characters.
+    # Preserve @ in @2x sprite paths.
     quoted_path = quote(unquote(safe_path), safe="/@:")
     return _request_bytes(f"{STADIA_TILES_URL}/{quoted_path}")
 
@@ -125,8 +124,7 @@ def route_many(locations: list[dict], *, costing: str | None = None) -> dict:
         "directions_options": {"units": "kilometers"},
     }
     if selected_costing in {"auto_traffic", "auto_traffic_premium"}:
-        # Valhalla's type 0 means depart at the current time, allowing the
-        # provider to apply the live traffic profile where the plan supports it.
+        # type 0 = depart now (live traffic).
         body["date_time"] = {"type": 0}
     return _request_json(
         STADIA_ROUTER_URL,
@@ -245,9 +243,7 @@ def extract_nearest_point(data) -> dict | None:
         return None
     point = candidates[0] or {}
 
-    # Valhalla nests the snapped coordinate inside the first correlated
-    # "edges" (or "nodes") entry rather than at the top level of each
-    # location result.
+    # Snapped coords live in nested edges/nodes.
     nested = point.get("location") or point.get("point") or {}
     if not nested:
         nested = next(iter(point.get("edges") or point.get("nodes") or []), {}) or {}

@@ -1,9 +1,4 @@
-"""Project-root Uvicorn entry point.
-
-The backend currently uses top-level imports such as ``database`` and
-``routers``. Add the backend directory to the import path before loading the
-application so ``uvicorn main:app`` works from the project root.
-"""
+"""Root Uvicorn entry; adds backend to path."""
 
 import sys
 from pathlib import Path

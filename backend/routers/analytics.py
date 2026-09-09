@@ -49,7 +49,7 @@ def get_analytics_overview(
 ):
     _require_admin_or_driver(current_user)
 
-    # Use aggregation queries instead of loading entire tables into memory
+    # Aggregate counts; avoid loading tables
     total_rides = db.query(func.count(RideRequest.id)).filter(RideRequest.mode == LIVE_MODE).scalar() or 0
     total_vehicles = db.query(func.count(Vehicle.id)).filter(Vehicle.mode == LIVE_MODE).scalar() or 0
     total_virtual_stops = db.query(func.count(VirtualStop.id)).filter(VirtualStop.mode == LIVE_MODE).scalar() or 0
@@ -57,7 +57,7 @@ def get_analytics_overview(
     total_route_plans = db.query(func.count(RoutePlan.id)).filter(RoutePlan.mode == LIVE_MODE).scalar() or 0
     total_tracking_events = db.query(func.count(TrackingEvent.id)).scalar() or 0
 
-    # Status breakdown via GROUP BY
+    # Status breakdown
     status_rows = (
         db.query(RideRequest.status, func.count(RideRequest.id))
         .filter(RideRequest.mode == LIVE_MODE)
@@ -66,7 +66,7 @@ def get_analytics_overview(
     )
     rides_by_status = {row[0]: row[1] for row in status_rows}
 
-    # Vehicle idle/active counts via GROUP BY
+    # Vehicle counts
     vehicle_status_rows = (
         db.query(Vehicle.status, func.count(Vehicle.id))
         .filter(Vehicle.mode == LIVE_MODE)
@@ -81,15 +81,15 @@ def get_analytics_overview(
         else:
             active_vehicles += cnt
 
-    # Average passengers per virtual stop
+    # Avg passengers per stop
     avg_passengers_row = db.query(func.avg(VirtualStop.passenger_count)).filter(VirtualStop.mode == LIVE_MODE).scalar()
     avg_passengers_per_virtual_stop = round(float(avg_passengers_row or 0.0), 2)
 
-    # Average route distance
+    # Avg route distance
     avg_route_dist_row = db.query(func.avg(RoutePlan.total_distance_meters)).filter(RoutePlan.mode == LIVE_MODE).scalar()
     avg_route_distance_meters = round(float(avg_route_dist_row or 0.0), 2)
 
-    # Average trip distance — computed over a capped sample to stay memory-safe
+    # Avg trip distance (capped sample)
     SAMPLE_LIMIT = 1000
     ride_sample = (
         db.query(
@@ -110,7 +110,7 @@ def get_analytics_overview(
         )
         avg_trip_distance_meters = round(total_dist / len(ride_sample), 2)
 
-    # Route utilisation — aggregate stop passenger counts for assigned stops
+    # Route utilisation
     route_meta_rows = (
         db.query(RoutePlan.route_metadata)
         .filter(RoutePlan.mode == LIVE_MODE)
@@ -176,7 +176,7 @@ def get_analytics_daily(
     start_date = end_date - timedelta(days=days - 1)
     start_dt = datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc)
 
-    # Only fetch rides within the requested window
+    # Rides in window
     rides = (
         db.query(RideRequest)
         .filter(RideRequest.request_time >= start_dt, RideRequest.mode == LIVE_MODE)

@@ -25,23 +25,23 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { KpiStat, DensityBar, MapLegend } from '@/components/dashboard-shared'
 
-// ─── Shared bits ────────────────────────────────────────────────────────────
-// One status style map for the whole admin area (rides, vehicles, jobs).
+// Shared bits
+// Status styles for rides, vehicles, jobs.
 const STATUS_STYLES = {
-  pending: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  clustered: 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-  clustered_status: 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-  assigned: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  arriving: 'border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-300',
-  in_progress: 'border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-300',
-  completed: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  solved: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  cancelled: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
-  idle: 'border-slate-500/30 bg-slate-500/10 text-slate-500 dark:text-slate-400',
-  active: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  en_route: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  offline: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
-  no_pending_requests: 'border-slate-500/30 bg-slate-500/10 text-slate-500 dark:text-slate-400',
+  pending: 'border-border bg-muted text-foreground',
+  clustered: 'border-border bg-muted text-foreground',
+  clustered_status: 'border-border bg-muted text-foreground',
+  assigned: 'border-foreground/30 bg-foreground text-background',
+  arriving: 'border-foreground/30 bg-foreground text-background',
+  in_progress: 'border-foreground/30 bg-foreground text-background',
+  completed: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  solved: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  cancelled: 'border-destructive/30 bg-destructive/10 text-destructive',
+  idle: 'border-border bg-muted text-muted-foreground',
+  active: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  en_route: 'border-foreground/30 bg-foreground text-background',
+  offline: 'border-destructive/30 bg-destructive/10 text-destructive',
+  no_pending_requests: 'border-border bg-muted text-muted-foreground',
 }
 
 function StatusBadge({ status }) {
@@ -116,7 +116,7 @@ function Field({ label, children }) {
   )
 }
 
-// Deferred fetch keeps the lint rule happy (no setState synchronously in an effect).
+// Deferred fetch avoids setState in effect.
 function useDeferredLoad(load) {
   useEffect(() => {
     const timer = setTimeout(() => { void load() }, 0)
@@ -124,7 +124,7 @@ function useDeferredLoad(load) {
   }, [load])
 }
 
-// ─── Root admin router (view keys unchanged — the sidebar depends on them) ───
+// Root admin router
 export default function AdminView({ user, view, setView, toast }) {
   const ctx = { setView, toast }
   if (view === 'admin-rides')     return <RidesPanel          {...ctx} />
@@ -138,7 +138,7 @@ export default function AdminView({ user, view, setView, toast }) {
   return <OverviewPanel user={user} {...ctx} />
 }
 
-// ─── Overview — the calm starting point, not a copy of every other page ─────
+// Overview
 const QUICK_LINKS = [
   { v: 'admin-rides', Icon: ClipboardList, label: 'Rides', desc: 'Track & move every booking' },
   { v: 'admin-vehicles', Icon: Truck, label: 'Fleet', desc: 'Vehicles & capacity' },
@@ -286,7 +286,7 @@ function OverviewPanel({ user, setView, toast }) {
   )
 }
 
-// ─── Rides — find any booking, move it forward ───────────────────────────────
+// Rides
 const RIDE_FILTERS = ['', 'pending', 'clustered', 'assigned', 'in_progress', 'completed', 'cancelled']
 const NEXT_STATUS = { pending: 'clustered', clustered: 'assigned', assigned: 'in_progress', in_progress: 'completed' }
 const NEXT_LABEL = { pending: 'Group', clustered: 'Assign', assigned: 'Start trip', in_progress: 'Complete' }
@@ -404,7 +404,7 @@ function RidesPanel({ setView, toast }) {
   )
 }
 
-// ─── Fleet — vehicles, plus a nudge when drivers wait for approval ──────────
+// Fleet
 function VehiclesPanel({ setView, toast }) {
   const [vehicles, setVehicles] = useState([])
   const [pendingCount, setPendingCount] = useState(0)
@@ -534,7 +534,7 @@ function VehiclesPanel({ setView, toast }) {
   )
 }
 
-// ─── Grouping — pool nearby ride requests together ──────────────────────────
+// Grouping
 function ClusterPanel({ setView, toast }) {
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
@@ -742,7 +742,7 @@ function ClusterPanel({ setView, toast }) {
   )
 }
 
-// ─── Routes — turn groups into multi-stop plans ─────────────────────────────
+// Routes
 function RoutesPanel({ setView, toast }) {
   const [routes, setRoutes] = useState([])
   const [vehicles, setVehicles] = useState([])
@@ -898,7 +898,7 @@ function RoutesPanel({ setView, toast }) {
   )
 }
 
-// ─── Analytics — demand trends + key numbers ────────────────────────────────
+// Analytics
 function AnalyticsPanel({ setView, toast }) {
   const [overview, setOverview] = useState(null)
   const [daily, setDaily] = useState([])
@@ -1014,7 +1014,7 @@ function AnalyticsPanel({ setView, toast }) {
                       <TableCell className="px-4">{new Date(d.day).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</TableCell>
                       <TableCell className="mob-data px-4 font-semibold">{d.ride_requests}</TableCell>
                       <TableCell className="mob-data px-4 text-violet-600 dark:text-violet-400">{d.clustered_rides}</TableCell>
-                      <TableCell className="mob-data px-4 text-emerald-600 dark:text-emerald-400">{d.completed_rides}</TableCell>
+                      <TableCell className="mob-data px-4 text-green-700 dark:text-green-400">{d.completed_rides}</TableCell>
                       <TableCell className="mob-data px-4 text-destructive">{d.cancelled_rides}</TableCell>
                       <TableCell className="mob-data px-4">{d.route_plans}</TableCell>
                     </TableRow>
@@ -1029,7 +1029,7 @@ function AnalyticsPanel({ setView, toast }) {
   )
 }
 
-// ─── Jobs — automation that runs on a schedule, plus manual triggers ───────
+// Jobs
 const JOB_BUTTONS = [
   { key: 'auto_dispatch', label: 'Full dispatch', hint: 'Group → plan → assign', Icon: Zap },
   { key: 'clustering', label: 'Grouping only', hint: 'Pool waiting rides', Icon: FlaskConical },
@@ -1086,7 +1086,7 @@ function JobsPanel({ setView, toast }) {
       {status && (
         <Card>
           <CardContent className="flex flex-wrap items-center gap-3 p-4">
-            <span className={cn('flex h-2.5 w-2.5 rounded-full', status.scheduler_running ? 'animate-pulse bg-emerald-500' : 'bg-destructive')} />
+            <span className={cn('flex h-2.5 w-2.5 rounded-full', status.scheduler_running ? 'animate-pulse bg-green-500' : 'bg-destructive')} />
             <p className="text-sm font-bold">Scheduler {status.scheduler_running ? 'running' : 'stopped'}</p>
             <Separator orientation="vertical" className="hidden h-5 sm:block" />
             <p className="text-xs text-muted-foreground">Grouping every {status.cluster_interval_seconds}s</p>
@@ -1161,7 +1161,7 @@ function JobsPanel({ setView, toast }) {
   )
 }
 
-// ─── Heatmap — where demand builds up ───────────────────────────────────────
+// Heatmap
 function HeatmapPanel({ setView, toast }) {
   const [cells, setCells] = useState([])
   const [loading, setLoading] = useState(false)
@@ -1228,13 +1228,13 @@ function HeatmapPanel({ setView, toast }) {
             heatCells={cells}
             style={{ borderRadius: 0 }}
           />
-          <div className="absolute bottom-3 left-3 z-[500] rounded-lg border border-border/80 bg-card/95 px-3 py-2 shadow-md backdrop-blur">
+          <div className="absolute bottom-3 left-3 z-10 rounded-lg border border-border/80 bg-card/95 px-3 py-2 shadow-md backdrop-blur">
             <p className="mob-section-label mb-1.5">Predicted demand</p>
             <div className="heat-legend-gradient h-1.5 w-40 rounded-full" aria-hidden="true" />
             <div className="mob-data mt-1 flex w-40 justify-between text-[10px] text-muted-foreground"><span>Low</span><span>High</span></div>
           </div>
           {sorted[0] && (
-            <div className="absolute right-3 top-3 z-[500] rounded-lg border border-border/80 bg-card/95 px-3 py-2 shadow-md backdrop-blur">
+            <div className="absolute right-3 top-3 z-10 rounded-lg border border-border/80 bg-card/95 px-3 py-2 shadow-md backdrop-blur">
               <p className="mob-section-label">Hottest zone</p>
               <p className="mob-data text-sm font-bold text-destructive">{sorted[0].predicted_demand?.toFixed(1)} <span className="text-[11px] font-medium text-muted-foreground">· {sorted[0].historical_request_count} past rides</span></p>
             </div>
@@ -1248,7 +1248,7 @@ function HeatmapPanel({ setView, toast }) {
           <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
             <div className="max-h-[320px] overflow-auto">
               <Table>
-                <TableHeader className="sticky top-0 bg-muted/80 backdrop-blur">
+                <TableHeader className="sticky top-0 z-10 bg-muted">
                   <TableRow>
                     {['Zone', 'Lat', 'Lng', 'Past rides', 'Predicted'].map((h) => (
                       <TableHead key={h} className="px-4">{h}</TableHead>
@@ -1278,7 +1278,7 @@ function HeatmapPanel({ setView, toast }) {
   )
 }
 
-// ─── Drivers — the one place driver approvals happen ───────────────────────
+// Drivers
 function PendingDriversPanel({ setView, toast }) {
   const [pending, setPending] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1342,7 +1342,7 @@ function PendingDriversPanel({ setView, toast }) {
       ) : pending.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-1.5 py-12 text-center">
-            <CheckCheck className="h-8 w-8 text-emerald-500" />
+            <CheckCheck className="h-8 w-8 text-green-500" />
             <p className="font-bold">All caught up</p>
             <p className="text-sm text-muted-foreground">Every driver application has been reviewed.</p>
           </CardContent>
@@ -1365,7 +1365,7 @@ function PendingDriversPanel({ setView, toast }) {
                   <Button
                     size="sm"
                     variant="secondary"
-                    className="h-8 gap-1 border border-emerald-500/40 text-emerald-600 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400"
+                    className="h-8 gap-1 border border-emerald-500/40 text-emerald-600 hover:text-green-700 dark:text-green-400 dark:hover:text-emerald-400"
                     disabled={!!verifying[driver.id]}
                     onClick={() => handleVerify(driver.id, 'active')}
                   >

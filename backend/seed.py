@@ -1,13 +1,4 @@
-"""
-seed.py — populate all tables with realistic Bengaluru demo data.
-
-Usage (from backend/ directory):
-    python seed.py              # seed everything
-    python seed.py --reset      # drop existing data first, then seed
-
-The script is idempotent for vehicles, users and ride-option labels:
-re-running without --reset will not duplicate those rows.
-"""
+"""Seed demo Bengaluru data. Usage: python seed.py [--reset]."""
 
 import argparse
 import random
@@ -18,9 +9,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-# ── bootstrap path ──────────────────────────────────────────────────────────
+# Bootstrap
 sys.path.insert(0, ".")
 from database import SessionLocal, create_db_tables, engine
+from utils.auth_utils import hash_password
 from models.user import User
 from models.vehicle import Vehicle
 from models.ride_request import RideRequest
@@ -32,10 +24,10 @@ from models.job_run import JobRun
 from models.demand_snapshot import DemandSnapshot
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 
-# ── constants ───────────────────────────────────────────────────────────────
+# Constants
 random.seed(42)
 
-# Key Bengaluru landmarks (lat, lng, label)
+# Bengaluru landmarks
 BENGALURU_LOCATIONS = [
     (12.9784, 77.6408, "Indiranagar Metro Station"),
     (12.9352, 77.6245, "Embassy TechVillage, ORR"),
@@ -77,7 +69,7 @@ STATUSES = ["pending", "clustered", "assigned", "in_progress", "completed", "can
 STATUS_WEIGHTS = [0.15, 0.10, 0.10, 0.10, 0.45, 0.10]
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# Helpers
 def jitter(lat: float, lng: float, radius: float = 0.02):
     return lat + random.uniform(-radius, radius), lng + random.uniform(-radius, radius)
 
@@ -87,11 +79,11 @@ def past(days: int = 0, hours: int = 0, minutes: int = 0) -> datetime:
 
 
 def fake_h3(lat: float, lng: float) -> str:
-    """Deterministic fake H3 index based on truncated coords (good enough for demo)."""
+    """Fake H3 index for demo."""
     return f"8928308{abs(int(lat*100)):04d}{abs(int(lng*100)):04d}ff"
 
 
-# ── seed functions ────────────────────────────────────────────────────────────
+# Seed funcs
 def seed_users(db: Session) -> list[User]:
     demo = [
         ("Arjun Sharma",   "arjun.sharma@demo.com",   "+91-98765-43210", "passenger"),
@@ -111,7 +103,8 @@ def seed_users(db: Session) -> list[User]:
             continue
         u = User(
             name=name, email=email, phone=phone, role=role,
-            password_hash=secrets.token_urlsafe(32),
+            # Demo password: password123.
+            password_hash=hash_password("password123"),
         )
         db.add(u)
         users.append(u)
@@ -355,7 +348,7 @@ def seed_rebalance_suggestions(db: Session, vehicles: list[Vehicle], job_runs: l
     print(f"  ✓ {count} rebalance suggestions")
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
+# Main
 def main():
     parser = argparse.ArgumentParser(description="Seed the SmartRoute AI database")
     parser.add_argument("--reset", action="store_true", help="Delete all existing data before seeding")

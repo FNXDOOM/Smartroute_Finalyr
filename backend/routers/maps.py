@@ -14,9 +14,7 @@ from services.stadia_client import (
 from utils.auth_utils import get_current_user
 
 router = APIRouter()
-# Derived from config instead of hardcoded so a changed STADIA_TILES_URL
-# (different region/CDN) doesn't silently stop being rewritten, which would
-# otherwise leak the raw Stadia api_key straight to the browser.
+# From config; prevents api_key leak.
 STADIA_HOST = urlsplit(STADIA_TILES_URL).hostname
 PROXY_PREFIX = "/maps/stadia/resource"
 
@@ -27,9 +25,7 @@ def _proxy_url(value: str, base_url: str) -> str:
         return value
     query = [(key, item) for key, item in parse_qsl(parsed.query, keep_blank_values=True) if key != "api_key"]
     suffix = f"?{urlencode(query)}" if query else ""
-    # MapLibre requires style fields like "sprite" to already be absolute -
-    # it resolves them with `new URL()` and no base, so a bare path throws
-    # "Invalid sprite URL ... must be absolute" and aborts the whole style.
+    # MapLibre needs absolute sprite URLs.
     return f"{base_url.rstrip('/')}{PROXY_PREFIX}{parsed.path}{suffix}"
 
 

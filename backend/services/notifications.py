@@ -12,19 +12,22 @@ from models.notification import Notification
 
 
 class NotificationConnectionManager:
-    """
-    Tracks WebSocket connections per user_id so notifications only reach the
-    user they belong to. Previously kept a single flat list and broadcast
-    every notification to every connected client regardless of owner — a
-    real cross-user data leak (User A would see User B's ride/notification
-    events). Fixed by keying connections on user_id.
-    """
+    """Per-user WebSocket connections."""
 
     def __init__(self):
         self.connections_by_user: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int, subprotocol: str | None = None):
-        await websocket.accept(subprotocol=subprotocol)
+        # Echo subprotocol only if client offered it.
+        offered = {
+            part.strip().lower()
+            for part in websocket.headers.get("sec-websocket-protocol", "").split(",")
+            if part.strip()
+        }
+        if subprotocol and subprotocol.lower() in offered:
+            await websocket.accept(subprotocol=subprotocol)
+        else:
+            await websocket.accept()
         self.connections_by_user.setdefault(user_id, []).append(websocket)
 
     def disconnect(self, websocket: WebSocket, user_id: int):

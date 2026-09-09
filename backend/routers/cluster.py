@@ -52,8 +52,7 @@ def run_clustering(
             detail="Only admin or driver users can trigger clustering",
         )
 
-    # The regular admin clustering action must never pull presentation-demo
-    # rides into the live dispatch pool.
+    # Live only; exclude demo rides.
     query = db.query(RideRequest).filter(
         RideRequest.status == "pending",
         RideRequest.mode == LIVE_MODE,

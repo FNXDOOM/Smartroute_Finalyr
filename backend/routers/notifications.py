@@ -104,12 +104,7 @@ def mark_all_notifications_read(
 
 @router.websocket("/ws")
 async def websocket_notifications(websocket: WebSocket):
-    """
-    WebSocket endpoint for real-time notifications.
-    Clients must pass a valid JWT as the ``bearer`` WebSocket subprotocol.
-    Notifications are scoped to the authenticated user — the connection is
-    registered under their user_id so broadcasts never cross between users.
-    """
+    """WS notifications scoped to authed user."""
     token = get_websocket_token(websocket)
     if not token:
         await websocket.close(code=4401, reason="Missing authentication token")

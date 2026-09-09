@@ -15,7 +15,7 @@ class DemandFeatures:
 
 
 def encode_h3_index(h3_index: str) -> int:
-    """Stable compact encoding for a string H3 cell id."""
+    """Compact encoding for H3 cell id."""
     return abs(hash(h3_index)) % 10_000
 
 

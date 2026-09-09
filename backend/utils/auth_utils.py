@@ -1,6 +1,7 @@
 import bcrypt
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import jwt
@@ -18,6 +19,8 @@ from config import (
     CLERK_AUTHORIZED_PARTIES,
     CLERK_ISSUER,
     CLERK_JWKS_URL,
+    LOCAL_JWT_EXPIRES_MINUTES,
+    LOCAL_JWT_SECRET,
 )
 from database import get_db
 from models.user import User
@@ -28,12 +31,17 @@ _clerk_jwks_client: Optional[jwt.PyJWKClient] = None
 
 
 def get_websocket_token(websocket: WebSocket) -> Optional[str]:
-    """Extract a bearer token without putting it in the WebSocket URL.
+    """Extract a bearer token for WebSocket auth.
 
-    Browsers cannot set arbitrary WebSocket headers, so the frontend sends the
-    token as the second WebSocket subprotocol: ``bearer, <JWT>``. A secure
-    HttpOnly cookie is also accepted for deployments that terminate auth at a
-    gateway. Query-string tokens are intentionally rejected.
+    Preferred (web): ``Authorization: Bearer <JWT>`` header or the
+    ``bearer, <JWT>`` WebSocket subprotocol pair, plus HttpOnly cookie
+    fallback for gateway-terminated deployments.
+
+    Native-mobile fallback: ``?token=<JWT>`` query param. Browsers can use
+    subprotocols, but the Flutter ``web_socket_channel`` client connects
+    with a plain query-param token, so accept it here rather than forcing
+    every mobile client to negotiate subprotocols. Query tokens never get
+    logged — only read from the already-parsed query dict.
     """
     authorization = websocket.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
@@ -43,7 +51,15 @@ def get_websocket_token(websocket: WebSocket) -> Optional[str]:
     if len(protocols) >= 2 and protocols[0].lower() == "bearer":
         return protocols[1] or None
 
-    return websocket.cookies.get("access_token")
+    cookie_token = websocket.cookies.get("access_token")
+    if cookie_token:
+        return cookie_token
+
+    query_token = websocket.query_params.get("token")
+    if query_token and query_token.strip():
+        return query_token.strip()
+
+    return None
 
 
 def get_jwks_client() -> jwt.PyJWKClient:
@@ -64,8 +80,49 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
 
 
+def verify_password(password: str, password_hash: str) -> bool:
+    """Check a plaintext password against a bcrypt hash (local mobile auth)."""
+    try:
+        return bcrypt.checkpw(password.encode("utf-8")[:72], password_hash.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def create_local_token(user_id: int) -> str:
+    """Issue an HS256 JWT for a local email/password user (Flutter app)."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": f"local:{user_id}",
+        "user_id": user_id,
+        "provider": "local",
+        "iat": now,
+        "exp": now + timedelta(minutes=LOCAL_JWT_EXPIRES_MINUTES),
+    }
+    return jwt.encode(payload, LOCAL_JWT_SECRET, algorithm="HS256")
+
+
+def decode_local_token(token: str) -> Optional[int]:
+    """Return the user_id if this is a valid local JWT, else None."""
+    try:
+        payload = jwt.decode(token, LOCAL_JWT_SECRET, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return None
+    if payload.get("provider") != "local":
+        return None
+    user_id = payload.get("user_id")
+    if isinstance(user_id, int):
+        return user_id
+    sub = str(payload.get("sub", ""))
+    if sub.startswith("local:"):
+        try:
+            return int(sub.split(":", 1)[1])
+        except ValueError:
+            return None
+    return None
+
+
 def decode_clerk_token(token: str) -> dict:
-    """Verify a Clerk session JWT using Clerk's published JWKS keys."""
+    """Verify Clerk JWT via JWKS."""
     if AUTH_PROVIDER != "clerk":
         raise HTTPException(status_code=500, detail="Clerk authentication is not enabled")
 
@@ -73,13 +130,11 @@ def decode_clerk_token(token: str) -> dict:
         client = get_jwks_client()
         signing_key = client.get_signing_key_from_jwt(token)
         options = {"verify_aud": bool(CLERK_AUDIENCE)}
-        # Clerk instances may serialize the issuer with or without a trailing slash.
-        # Verify the signature first, then compare normalized issuer values below.
+        # Issuer may or may not end with slash.
         kwargs = {"options": {**options, "verify_iss": False}}
         if CLERK_AUDIENCE:
             kwargs["audience"] = CLERK_AUDIENCE
-        # Allow minor clock drift between the local backend machine and Clerk.
-        # This still enforces iat/nbf/exp; it only tolerates up to one minute skew.
+        # Allow 60s clock skew.
         payload = jwt.decode(token, signing_key.key, algorithms=["RS256"], leeway=60, **kwargs)
         token_issuer = str(payload.get("iss", "")).rstrip("/")
         expected_issuer = CLERK_ISSUER.rstrip("/")
@@ -107,14 +162,14 @@ def decode_clerk_token(token: str) -> dict:
 
 
 def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
-    """Retrieve or automatically provision a User from a decoded Clerk JWT payload."""
+    """Get or provision User from Clerk JWT."""
     clerk_user_id = payload.get("sub")
     if not clerk_user_id:
         raise HTTPException(
             status_code=401, detail="Clerk token missing subject claim", headers={"WWW-Authenticate": "Bearer"}
         )
 
-    # Extract role and driver_status from JWT claims if custom template is configured
+    # Role/status from JWT claims, if present
     metadata = payload.get("metadata") or payload.get("public_metadata") or {}
     token_role = metadata.get("role") or payload.get("role")
     token_driver_status = metadata.get("driver_status") or payload.get("driver_status")
@@ -125,11 +180,7 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
         email = payload.get("email") or payload.get("email_address")
         name = payload.get("name") or payload.get("first_name")
         if email:
-            # Same email, different Clerk identity (re-registered account or a
-            # second sign-in method): link instead of crashing on the email
-            # unique constraint. Privileged rows are never auto-linked — a
-            # mismatched login for those gets a clear 409, otherwise anyone
-            # could hijack e.g. the seeded admin by re-registering its email.
+            # Same email, new Clerk identity: link passenger rows only.
             existing = (
                 db.query(User)
                 .filter(func.lower(User.email) == email.strip().lower())
@@ -166,8 +217,7 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
             )
             db.add(user)
             changed = True
-    # Sync role from Clerk JWT claims if explicitly provided in session token.
-    # Runs for linked, freshly created, and returning users alike.
+    # Sync role from JWT claims, if provided.
     if token_role and token_role in {"passenger", "driver", "admin"} and user.role != token_role:
         user.role = token_role
         changed = True
@@ -178,7 +228,7 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
         try:
             db.commit()
         except IntegrityError:
-            # Lost a creation race with a concurrent first login: use whoever won.
+            # Creation race: use winner.
             db.rollback()
             user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
             if user is None:
@@ -191,13 +241,21 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
 
 
 def get_user_from_token(token: str, db: Session) -> User:
-    """Verify the Clerk token and return the associated database User model."""
+    """Verify token; return DB user. Local JWT first, then Clerk."""
+    local_user_id = decode_local_token(token)
+    if local_user_id is not None:
+        user = db.query(User).filter(User.id == local_user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=401, detail="User not found", headers={"WWW-Authenticate": "Bearer"}
+            )
+        return user
     payload = decode_clerk_token(token)
     return get_or_create_user_from_payload(payload, db)
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
-    """FastAPI dependency to verify the Clerk token and return the mapped application profile."""
+    """Auth dependency; returns current user."""
     return get_user_from_token(token, db)
 
 

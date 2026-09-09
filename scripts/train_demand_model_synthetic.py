@@ -1,18 +1,4 @@
-"""
-Train the SmartRouteAI demand model using SYNTHETIC data.
-
-Use this if you can't download the NYC TLC dataset or want a fast offline demo.
-Generates statistically realistic demand patterns:
-  - Morning rush (7–9am) and evening rush (5–7pm) peaks
-  - Weekend ~20% lower demand
-  - Spatial hotspots (city centre > suburbs)
-  - Random noise
-
-Produces the same ml/models/demand_model.pkl the backend expects.
-
-Usage:
-    python scripts/train_demand_model_synthetic.py
-"""
+"""Train demand model on synthetic data."""
 from __future__ import annotations
 
 import os
@@ -33,9 +19,7 @@ from sklearn.metrics import mean_absolute_error
 from backend.services.prediction.feature_engineering import encode_h3_index
 from backend.services.clustering.h3_partitioner import get_h3_index
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CONFIG — adjust city centre and spread to match your deployment city
-# ─────────────────────────────────────────────────────────────────────────────
+# Config: city centre and spread
 
 # Dubai (matches the seed_db.py default)
 CITY_CENTER    = (25.2048, 55.2708)
@@ -50,9 +34,7 @@ FEATURE_ORDER = ["hour", "day_of_week", "h3_zone", "historical_count", "is_weeke
 rng = np.random.default_rng(42)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DEMAND SHAPE — mirrors real urban ride-hailing patterns
-# ─────────────────────────────────────────────────────────────────────────────
+# Demand shape: urban ride patterns
 
 HOUR_MULTIPLIERS = {
     0: 0.3, 1: 0.2, 2: 0.15, 3: 0.1, 4: 0.1, 5: 0.2,
@@ -74,15 +56,15 @@ DOW_MULTIPLIERS = {
 
 
 def _make_zone_centers(n: int) -> list[tuple[float, float, float]]:
-    """Return (lat, lng, base_demand) for N synthetic hotspot zones."""
+    """Return lat/lng/demand for N zones."""
     zones = []
     for _ in range(n):
-        # Distance from centre: closer zones = higher base demand
+        # Closer zones get higher demand
         radius = rng.uniform(0, SPREAD_DEGREES)
         angle  = rng.uniform(0, 2 * 3.14159)
         lat    = CITY_CENTER[0] + radius * float(np.cos(angle))
         lng    = CITY_CENTER[1] + radius * float(np.sin(angle))
-        # Base demand decays with distance from centre
+        # Demand decays with distance
         base   = max(2.0, 30.0 * (1 - radius / SPREAD_DEGREES) + rng.uniform(1, 10))
         zones.append((lat, lng, base))
     return zones
@@ -93,7 +75,7 @@ def generate_dataset() -> pd.DataFrame:
 
     zone_centers = _make_zone_centers(N_ZONES)
 
-    # Pre-compute H3 index and encoded zone for each synthetic zone
+    # Precompute H3 and encoded zones
     zone_h3 = [
         get_h3_index(lat, lng, H3_RESOLUTION)
         for lat, lng, _ in zone_centers
@@ -110,9 +92,9 @@ def generate_dataset() -> pd.DataFrame:
             hour_mult = HOUR_MULTIPLIERS[hour]
 
             for zone_idx, (_, _, base_demand) in enumerate(zone_centers):
-                # Expected demand for this zone/hour/day
+                # Expected demand per zone/hour/day
                 expected = base_demand * hour_mult * dow_mult
-                # Add Poisson noise — realistic for count data
+                # Add Poisson noise for counts
                 actual = int(rng.poisson(max(0.1, expected)))
 
                 rows.append({
@@ -121,7 +103,7 @@ def generate_dataset() -> pd.DataFrame:
                     "h3_zone":          zone_encoded[zone_idx],
                     "is_weekend":       is_weekend,
                     "demand":           actual,
-                    # historical_count filled in next step
+                    # historical_count added later
                 })
 
     df = pd.DataFrame(rows)
@@ -130,7 +112,7 @@ def generate_dataset() -> pd.DataFrame:
 
 
 def add_historical_count(df: pd.DataFrame) -> pd.DataFrame:
-    """historical_count = mean demand for (h3_zone, hour) across all days."""
+    """Mean demand per (zone, hour)."""
     avg = (
         df.groupby(["h3_zone", "hour"])["demand"]
         .mean()

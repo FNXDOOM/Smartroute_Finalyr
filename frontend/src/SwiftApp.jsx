@@ -27,8 +27,7 @@ import { useTheme } from '@/hooks/use-theme'
 import AppTopBar from '@/components/AppTopBar'
 import { PageHeader, DashboardEmptyState } from '@/components/dashboard-shared'
 
-// Keep role-specific screens (and their map/chart dependencies) out of the
-// initial authentication bundle. Only the view for the signed-in role loads.
+// Lazy-load role screens to slim auth bundle.
 const PassengerView = lazy(() => import('./views/PassengerView'))
 const DriverView = lazy(() => import('./views/DriverView'))
 const AdminView = lazy(() => import('./views/AdminView'))
@@ -38,11 +37,10 @@ const DriverApplyView = lazy(() => import('./views/DriverApplyView'))
 import DriverLoginForm from './components/DriverLoginForm.jsx'
 import DriverVerificationGate from './components/DriverVerificationGate.jsx'
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// Constants
 const authInitStartedAt = Date.now()
 
-// Ported from dev: route-icon brand mark (uses existing RouteIcon import,
-// no new dependency). Replaces the plain "S" boxes.
+// Route-icon brand mark.
 function SmartRouteMark({ size = 18 }) {
   return <RouteIcon aria-hidden="true" size={size} strokeWidth={2.5} />
 }
@@ -53,16 +51,16 @@ function initialView() {
   return 'login'
 }
 
-// ─── Toast system (shadcn/sonner pattern, custom state kept intact) ──────────
+// Toast system
 function ToastBar({ toasts, dismiss }) {
   const styles = {
-    success: { icon: CheckCircle2, cls: 'text-emerald-500', bar: 'hsl(160 70% 40%)' },
+    success: { icon: CheckCircle2, cls: 'text-green-600 dark:text-green-400', bar: 'hsl(142 70% 35%)' },
     warning: { icon: TriangleAlert, cls: 'text-amber-500', bar: 'hsl(38 90% 50%)' },
     error: { icon: XCircle, cls: 'text-destructive', bar: 'hsl(var(--destructive))' },
-    info: { icon: Info, cls: 'text-sky-500', bar: 'hsl(200 85% 50%)' },
+    info: { icon: Info, cls: 'text-foreground', bar: 'hsl(var(--foreground))' },
   }
   return (
-    <div className="pointer-events-none fixed right-4 top-16 z-[9999] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2" role="status" aria-live="polite">
+    <div className="pointer-events-none fixed right-4 top-16 z-[70] flex max-h-[calc(100vh-5rem)] w-[min(360px,calc(100vw-2rem))] flex-col gap-2 overflow-y-auto" role="status" aria-live="polite">
       {toasts.map((t) => {
         const S = styles[t.type] || styles.info
         const Icon = S.icon
@@ -86,31 +84,29 @@ function ToastBar({ toasts, dismiss }) {
   )
 }
 
-// ─── Auth screens (shadcn) ────────────────────────────────────────────────────
-// Clerk renders inside an iframe-like shadow tree and does NOT read our CSS
-// variables, so we must feed it explicit light/dark tokens. Without this the
-// Google button + headings render dark-on-dark in dark mode.
+// Auth screens
+// Clerk needs explicit light/dark tokens.
 function getClerkAppearance(theme) {
   const dark = theme === 'dark'
   return {
     variables: dark
       ? {
-          colorPrimary: '#00c9a7',
-          colorBackground: '#151c2b',
-          colorText: '#e8eef7',
-          colorTextSecondary: '#a9b4c7',
-          colorInputBackground: '#1c2436',
-          colorInputText: '#e8eef7',
-          borderRadius: '10px',
+          colorPrimary: '#fafafa',
+          colorBackground: '#141414',
+          colorText: '#fafafa',
+          colorTextSecondary: '#a3a3a3',
+          colorInputBackground: '#1c1c1c',
+          colorInputText: '#fafafa',
+          borderRadius: '12px',
         }
       : {
-          colorPrimary: '#0d9488',
+          colorPrimary: '#111111',
           colorBackground: '#ffffff',
           colorText: '#111111',
           colorTextSecondary: '#555555',
-          colorInputBackground: '#f7f7f7',
+          colorInputBackground: '#f5f5f5',
           colorInputText: '#111111',
-          borderRadius: '10px',
+          borderRadius: '12px',
         },
     elements: {
       card: 'shadow-none bg-transparent',
@@ -250,10 +246,10 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
   )
 }
 
-// ─── Loading screen (shadcn + Empty/Skeleton states) ──────────────────────────
+// Loading screen
 function LoadingScreen({ onGuestLogin }) {
   return (
-    <div className="loading-screen flex h-full w-full flex-col items-center justify-center gap-4 overflow-y-auto p-6 text-center">
+    <div className="loading-screen flex max-h-full min-h-0 h-full w-full flex-col items-center justify-center gap-4 overflow-y-auto p-6 text-center">
       <div className="loading-orbit" aria-hidden="true">
         <div className="loading-orbit-ring" />
         <div className="loading-orbit-core"><SmartRouteMark size={30} /></div>
@@ -304,7 +300,7 @@ function BootstrapErrorScreen({ onRetry, message }) {
   )
 }
 
-// ─── Root App ─────────────────────────────────────────────────────────────────
+// Root app
 export default function App() {
   const [view, setView] = useState(initialView)
   const [user, setUser] = useState(null)
@@ -349,9 +345,7 @@ export default function App() {
     await signOut()
   }, [signOut])
 
-  // Re-fetch the backend profile (e.g. after driver onboarding promotes the
-  // role) and route to the correct home. An explicit targetView overrides
-  // the role-based home (used to land on the in-app driver application).
+  // Refresh profile and route to role home.
   const refreshAuthProfile = useCallback(async (targetView) => {
     const uid = clerkUserRef.current?.id
     if (!uid) return
@@ -429,7 +423,7 @@ export default function App() {
     }
   }, [isLoaded, isSignedIn, clerkUserId, toast])
 
-  // Keep the inbox and toast state in sync with ride lifecycle events.
+  // Sync inbox and toasts with ride events.
   const userId = user?.id
   useEffect(() => {
     if (!isLoaded || !isSignedIn || !userId) return
@@ -460,7 +454,7 @@ export default function App() {
     toast('success', `Welcome, ${guestUser.name}!`, 'All transit simulations and features are active.')
   }, [toast])
 
-  // Route protection guard ensuring users cannot access views unauthorized for their role
+  // Guard views by role.
   const safeSetView = useCallback((targetView) => {
     if (!user) {
       setView(targetView)
@@ -492,15 +486,7 @@ export default function App() {
 
   return (
     <TooltipProvider delay={100}>
-    <div className="h-screen w-screen overflow-hidden bg-background font-sans text-foreground">
-      <style>{`
-        @keyframes fade-in { from { opacity:0; transform:translateY(6px) } to { opacity:1; transform:none } }
-        .toast-in { animation: fade-in 0.2s ease }
-        ::-webkit-scrollbar { width:4px; height:4px }
-        ::-webkit-scrollbar-track { background:transparent }
-        ::-webkit-scrollbar-thumb { background:hsl(var(--border)); border-radius:4px }
-      `}</style>
-
+    <div className="h-dvh w-screen overflow-hidden bg-background font-sans text-foreground">
       <ToastBar toasts={toasts} dismiss={id => setToasts(p => p.filter(t => t.id !== id))} />
 
       {user
@@ -532,10 +518,8 @@ function roleHome(role) {
   return 'home'
 }
 
-// ─── App Shell (shadcn) ─────────────────────────────────────────────────────────
-// Modern SaaS shell: grouped sidebar (dashboard-01/sidebar-01 pattern),
-// sticky TopBar with breadcrumbs + notifications + account menu, mobile Sheet
-// nav. Routing keys and all business logic unchanged.
+// App shell
+// Sidebar, TopBar, mobile nav; logic unchanged.
 function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast, theme, onToggleTheme, onRefreshProfile }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -738,8 +722,8 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
   )
 }
 
-// ─── Role Router ──────────────────────────────────────────────────────────────
-// Views that need full-height (contain maps)
+// Role router
+// Full-height views have maps
 const FULLHEIGHT_VIEWS = ['home','tracking','driver-map','driver-routes','presentation-demo']
 
 function RoleRouter({ user, view, setView, notifications, setNotifications, toast, onRefreshProfile }) {
@@ -766,7 +750,7 @@ function RoleRouter({ user, view, setView, notifications, setNotifications, toas
   )
 }
 
-// ─── Inbox (shadcn + Empty state) ─────────────────────────────────────────────
+// Inbox
 function InboxView({ notifications, setNotifications, toast }) {
   const markAll = async () => {
     try { await notificationsApi.markAllRead(); setNotifications(notifications.map((n) => ({ ...n, is_read: true }))); toast('success', 'All notifications marked as read') } catch (error) { void error }
@@ -814,7 +798,7 @@ function InboxView({ notifications, setNotifications, toast }) {
   )
 }
 
-// ─── Profile (shadcn + PageHeader) ────────────────────────────────────────────
+// Profile
 function ProfileView({ user }) {
   const [saving, setSaving] = useState(false)
   const [name, setName] = useState(user.name)

@@ -423,19 +423,13 @@ def run_auto_dispatch_pipeline(
     mode: str = LIVE_MODE,
     demo_run_id: Optional[str] = None,
 ) -> Dict:
-    """
-    Runs the full end-to-end AI Dispatch Pipeline:
-    1. Clusters pending requests into virtual stops using HDBSCAN & K-Medoids + road snapping.
-    2. Gathers clustered virtual stops and idle vehicles.
-    3. Optimizes multi-passenger routes using Google OR-Tools CVRP solver.
-    4. Dynamically assigns vehicles using Hungarian matching and updates ride status to 'assigned'.
-    """
+    """Run full dispatch: cluster, route, assign."""
     mode = validate_ride_mode(mode)
     if mode == PRESENTATION_DEMO_MODE and not demo_run_id:
         raise ValueError("demo_run_id is required for presentation_demo mode")
     job_run = _start_job_run(db, "auto_dispatch_pipeline", triggered_by_user_id, is_scheduled)
     try:
-        # Step 1: Run clustering on any pending requests
+        # Step 1: cluster pending requests
         cluster_res = run_cluster_job(
             db,
             triggered_by_user_id=triggered_by_user_id,
@@ -444,7 +438,7 @@ def run_auto_dispatch_pipeline(
             demo_run_id=demo_run_id,
         )
 
-        # Step 2: Find all clustered virtual stops that do not have an active route plan
+        # Clustered stops without active routes.
         clustered_rides = apply_ride_scope(
             db.query(RideRequest), mode, demo_run_id
         ).filter(
@@ -614,7 +608,7 @@ def run_auto_dispatch_pipeline(
                     )
                 )
 
-            # Update all member ride requests to assigned
+            # Mark member rides assigned
             passenger_user_ids = []
             for wp in waypoint_payloads:
                 if wp["stop_id"]:
@@ -661,16 +655,7 @@ def run_auto_dispatch_pipeline(
 
 
 def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Dict:
-    """
-    Simulates the active ride lifecycle (assigned -> arriving -> in_progress -> completed)
-    every few seconds to feed real-time WebSocket events to the frontend.
-
-    Only pipeline-owned rides (with a virtual stop from clustering / route
-    optimization) are advanced. Rides a driver accepted and drives by hand
-    have no virtual stop — auto-advancing those would race the driver's taps
-    and finish the trip within seconds, before the passenger ever sees the
-    pickup-to-destination stages.
-    """
+    """Advance pipeline rides for live WS demo."""
     job_run = _start_job_run(db, "simulate_ride_dispatch", None, is_scheduled)
     try:
         active_rides = db.query(RideRequest).filter(
@@ -703,7 +688,7 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
                 )
                 updates_count += 1
 
-                # If completed, check if vehicle can return to idle
+                # If done, free vehicle if idle
                 if new_status == "completed" and ride.virtual_stop_id:
                     waypoint = db.query(RouteWaypointRecord).filter(
                         RouteWaypointRecord.stop_id == ride.virtual_stop_id
@@ -743,7 +728,7 @@ async def _run_periodic(name: str, interval_seconds: int, runner):
         while True:
             db = SessionLocal()
             try:
-                # All job runners accept db as the first positional argument
+                # Job runners take db first
                 runner(db)
                 now = datetime.now(timezone.utc)
                 if name == "cluster_pending_rides":

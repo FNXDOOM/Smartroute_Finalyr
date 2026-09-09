@@ -34,7 +34,7 @@ from utils.ride_scope import (
 
 router = APIRouter()
 
-# Valid ride statuses — enforced on every write
+# Valid statuses
 VALID_RIDE_STATUSES = {"pending", "clustered", "assigned", "arriving", "in_progress", "completed", "cancelled"}
 
 
@@ -44,7 +44,7 @@ def create_ride_request(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Submit a new ride request for the authenticated passenger"""
+    """Submit a ride request."""
     if not all(
         is_india_location(lat, lng)
         for lat, lng in (
@@ -56,7 +56,7 @@ def create_ride_request(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Pickup and destination must be within the supported India service area",
         )
-    # Calculate Uber H3 spatial cell index
+    # H3 spatial index
     h3_idx = get_h3_index(ride_in.pickup_lat, ride_in.pickup_lng, resolution=9)
 
     new_request = RideRequest(
@@ -173,8 +173,7 @@ def create_demo_clustered_riders(
             )
         pickup_name = pickup_label or "Selected pickup"
         destination_name = destination_label or "Selected destination"
-        # Keep the requests close enough to demonstrate HDBSCAN while allowing
-        # the selected pickup and destination to be visible as separate points.
+        # Cluster nearby points; keep pickup/drop visible.
         pickup_offsets = [(0.0, 0.0), (0.00002, 0.00002), (-0.00002, 0.00002)]
         destination_offsets = [(0.0, 0.0), (0.00002, -0.00002), (-0.00002, -0.00002)]
         presets = [
@@ -197,7 +196,7 @@ def create_demo_clustered_riders(
             {"plat": 12.93518, "plng": 77.62447, "plbl": "Koramangala 5th Block (West)", "dlat": 12.9734, "dlng": 77.6075, "dlbl": "Brigade Road"},
         ]
     else:
-        # Indiranagar — all three within the same H3 cell (8961892eddbffff)
+        # Indiranagar: same H3 cell
         presets = [
             {"plat": 12.97190, "plng": 77.64124, "plbl": "Indiranagar 100 Feet Rd", "dlat": 12.9756, "dlng": 77.6066, "dlbl": "MG Road Metro"},
             {"plat": 12.97192, "plng": 77.64126, "plbl": "Indiranagar 100 Feet Rd (East)", "dlat": 12.9749, "dlng": 77.6080, "dlbl": "Church Street"},
@@ -412,7 +411,7 @@ def get_ride_request_by_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Ride request #{ride_id} not found",
         )
-    # Check authorization (passenger owner or admin)
+    # Owner or admin only
     if ride.user_id != current_user.id and current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -427,13 +426,7 @@ def get_ride_vehicle(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Passenger-scoped: which vehicle (if any) is currently assigned to this ride.
-
-    Resolves via: ride.virtual_stop_id == waypoint.stop_id (and ride.id is in
-    that waypoint's passenger_ids) -> waypoint.route_plan_id -> RoutePlan.vehicle_id.
-    Returns null if no route has been optimized for this ride yet.
-    """
+    """Assigned vehicle for this ride, if any."""
     ride = db.query(RideRequest).filter(RideRequest.id == ride_id).first()
     if not ride:
         raise HTTPException(
@@ -483,7 +476,7 @@ def list_ride_requests(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List ride requests across the system. Admin/driver only."""
+    """List rides. Admin/driver only."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -515,7 +508,7 @@ def update_ride_request_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update status of a ride request (e.g. clustered, assigned, in_progress, completed, cancelled)"""
+    """Update ride status."""
     ride = db.query(RideRequest).filter(RideRequest.id == ride_id).first()
     if not ride:
         raise HTTPException(
@@ -523,7 +516,7 @@ def update_ride_request_status(
             detail=f"Ride request #{ride_id} not found",
         )
 
-    # Check permission
+    # Owner, admin, or driver only
     if ride.user_id != current_user.id and current_user.role not in ["admin", "driver"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -549,10 +542,7 @@ def update_ride_request_status(
         "in_progress",
         "completed",
     ):
-        # Manual takeover: a driver/admin driving the stages by hand owns the
-        # trip from here on. Dropping the pipeline linkage stops the
-        # auto-dispatch simulator (which only advances route-linked rides)
-        # from racing these taps and finishing the ride in seconds.
+        # Manual drive: unlink pipeline so simulator skips it.
         ride.virtual_stop_id = None
         ride.cluster_id = None
     create_notification(

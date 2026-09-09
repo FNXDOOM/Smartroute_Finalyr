@@ -49,8 +49,7 @@ def cluster_passengers(
             cluster_selection_method="leaf",
         )
         labels = clusterer.fit_predict(np.radians(coords))
-        # If HDBSCAN still produces all noise (can happen with very few points),
-        # fall through to DBSCAN which is more reliable for small, tight groups.
+        # All noise: fall back to DBSCAN.
         if (labels == -1).all():
             raise ValueError("HDBSCAN produced all-noise; using DBSCAN fallback")
     except Exception:

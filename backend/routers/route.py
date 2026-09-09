@@ -164,8 +164,7 @@ def optimize_routes(
                     for waypoint in waypoint_payloads
                 ]))
             except RuntimeError:
-                # Dispatch remains usable with the local road matrix even if
-                # the optional hosted route geometry is unavailable.
+                # Fallback to local matrix if hosted geometry fails.
                 road_route = {}
         route_distance = road_route.get("distanceMeters") or float(route_data["distance_m"])
         estimated_duration = road_route.get("durationSeconds") or (

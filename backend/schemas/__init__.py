@@ -1,1 +1,1 @@
-# Pydantic schemas package for SmartRouteAI backend
+# Schemas package

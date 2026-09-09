@@ -36,7 +36,7 @@ def _require_admin_or_driver(current_user: User) -> None:
 
 
 def _require_job_access(current_user: User, mode: str) -> None:
-    """Keep live controls restricted while allowing isolated demo playback."""
+    """Restrict live controls; allow demo playback."""
     if current_user.role in {"admin", "driver"} or mode == PRESENTATION_DEMO_MODE:
         return
     raise HTTPException(

@@ -34,8 +34,7 @@ def road_route(
             try:
                 data = route(from_lat, from_lng, to_lat, to_lng, costing="auto_traffic")
             except RuntimeError:
-                # Traffic routing is plan-dependent. Keep normal routing available
-                # when the configured Stadia plan does not support live traffic.
+                # Fallback if plan lacks traffic support.
                 data = route(from_lat, from_lng, to_lat, to_lng, costing="auto")
         else:
             data = route(from_lat, from_lng, to_lat, to_lng, costing="auto")

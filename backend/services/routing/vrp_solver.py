@@ -8,11 +8,7 @@ from utils.geo import haversine_meters as _haversine_meters
 
 
 def build_distance_matrix(stops: List[Dict]) -> List[List[int]]:
-    """
-    Build a symmetric integer distance matrix (meters) from a list of stops.
-    Each stop dict must have 'lat' and 'lng' keys.
-    Index 0 is reserved as the depot.
-    """
+    """Build symmetric distance matrix in meters."""
     n = len(stops)
     matrix = [[0] * n for _ in range(n)]
     for i in range(n):
@@ -27,12 +23,7 @@ def build_distance_matrix(stops: List[Dict]) -> List[List[int]]:
 
 
 def build_road_distance_matrix(stops: List[Dict]) -> List[List[int]]:
-    """Build a drivable distance matrix from the local OSM road graph.
-
-    The graph download can fail when OSM data is unavailable or when stops are
-    outside the graph coverage. In those cases, retain the optimizer's safe
-    fallback instead of failing an entire dispatch run.
-    """
+    """Build drivable matrix; fallback to haversine."""
     matrix = build_distance_matrix(stops)
     if len(stops) < 2:
         return matrix
@@ -60,13 +51,13 @@ def build_road_distance_matrix(stops: List[Dict]) -> List[List[int]]:
                 if i != j and destination_node in lengths:
                     matrix[i][j] = int(round(lengths[destination_node]))
     except Exception:
-        # Keep the Haversine values for pairs that cannot be resolved on-road.
+        # Keep haversine fallback for off-road pairs.
         return matrix
     return matrix
 
 
 def _matrix_rows(data: Dict[str, Any]) -> list:
-    """Accept the common Stadia/Valhalla matrix response shapes."""
+    """Parse Stadia matrix shapes."""
     return (
         data.get("sources_to_targets")
         or data.get("sourcesToTargets")
@@ -80,14 +71,7 @@ def build_stadia_distance_matrix(
     sources: List[Dict],
     targets: Optional[List[Dict]] = None,
 ) -> Optional[List[List[int]]]:
-    """Fetch a road matrix for dispatch when Stadia is configured.
-
-    ``sources`` and ``targets`` may be different-sized lists. This matters for
-    fleet assignment, where vehicle origins and route pickup points are not a
-    single square matrix. Stadia's matrix service is capped by the number of
-    source/target elements, so larger jobs deliberately use the local OSM road
-    graph instead.
-    """
+    """Fetch Stadia road matrix if configured."""
     targets = sources if targets is None else targets
     if not sources or not targets or len(sources) > 25 or len(targets) > 25:
         return None
@@ -114,7 +98,7 @@ def build_stadia_distance_matrix(
                 distance = item
             if distance is None:
                 return None
-            # The request uses units=kilometers; keep OR-Tools in meters.
+            # Request in km; OR-Tools needs meters
             try:
                 result[i][j] = max(0, int(round(float(distance) * 1000)))
             except (TypeError, ValueError):
@@ -126,7 +110,7 @@ def build_road_distance_to_targets(
     sources: List[Dict],
     targets: List[Dict],
 ) -> Optional[List[List[int]]]:
-    """Build a local OSM road-distance matrix for different origins/targets."""
+    """Build OSM matrix for origins/targets."""
     if not sources or not targets:
         return None
 
@@ -170,19 +154,7 @@ def solve_vrp(
     depot_idx: int = 0,
     vehicle_capacities: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    """
-    Solve the Capacitated Vehicle Routing Problem (CVRP) using Google OR-Tools.
-
-    Args:
-        stops: List of dicts with 'lat', 'lng', 'demand' (passenger count). Index 0 = depot.
-        num_vehicles: Number of available vehicles.
-        vehicle_capacity: Fallback capacity when per-vehicle capacities are not provided.
-        depot_idx: Index of the depot node.
-        vehicle_capacities: Optional per-vehicle capacity list.
-
-    Returns:
-        Dict with 'routes' (list of node-index lists per vehicle) and 'total_distance_m'.
-    """
+    """Solve CVRP with OR-Tools."""
     try:
         from ortools.constraint_solver import routing_enums_pb2, pywrapcp
     except ImportError:

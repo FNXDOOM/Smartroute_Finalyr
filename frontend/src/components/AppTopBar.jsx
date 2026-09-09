@@ -16,8 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ThemeToggle } from '@/components/theme-toggle'
 
-// Human-readable title for every view key used by the sidebar router.
-// Keeps the top bar consistent without touching routing logic.
+// View titles for sidebar router.
 export const VIEW_META = {
   home: { title: 'Book a ride', crumb: 'Passenger / Home' },
   trips: { title: 'My trips', crumb: 'Passenger / Trips' },
@@ -58,7 +57,7 @@ export default function AppTopBar({
   const recent = notifications.slice(0, 5)
 
   return (
-    <header className="app-topbar sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b bg-card/95 px-3 backdrop-blur supports-backdrop-filter:bg-card/80 md:px-5">
+    <header className="app-topbar sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b bg-background/90 px-3 backdrop-blur supports-backdrop-filter:bg-background/80 md:px-5">
       <Button
         variant="ghost"
         size="icon"

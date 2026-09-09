@@ -243,8 +243,7 @@ export default function PassengerView({ view, setView, toast }) {
           clearInterval(pollRef.current)
           if (r.status === 'completed') toast('success', 'Ride completed!', 'Tap Dismiss to book a new ride.')
           else toast('info', 'Ride ' + r.status)
-          // Auto-dismiss so the COMPLETED card + Cancel button don't linger
-          // forever and block new bookings. User can also dismiss manually.
+          // Auto-dismiss finished card to allow new bookings.
           if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current)
           dismissTimeoutRef.current = setTimeout(() => {
             setActiveRide(null); setRideVehicle(null)
@@ -302,10 +301,7 @@ export default function PassengerView({ view, setView, toast }) {
     } catch(e) { toast('error','Cannot cancel', e?.response?.data?.detail||'') }
   }
 
-  // Opening a trip from Recent Rides / My Trips should only take over Home's
-  // "Active Booking" card (and live vehicle polling) for rides still actually
-  // in progress. Completed/cancelled rides open read-only via viewingRide so
-  // they stop lingering on Home after the user navigates back.
+  // Only active trips take over Home booking card.
   const openTrip = useCallback((trip) => {
     if (['completed', 'cancelled'].includes(trip.status)) {
       setViewingRide(trip)
@@ -325,16 +321,12 @@ export default function PassengerView({ view, setView, toast }) {
   }
   if (view === 'tracking') return <TrackingView ride={activeRide} vehicle={rideVehicle} routeGeometry={routeGeometry} onBack={()=>setView('home')} />
 
-  // Home / Booking layout
+  // Home booking layout
   const pickupCoords  = { lat:pickupPoint.lat, lng:pickupPoint.lng, label: pickup||'Current location' }
   const destCoords    = destinationPoint || null
-  // Normal passenger rides show a vehicle only after the backend assigns one.
-  // The presentation screen owns its synthetic vehicle separately.
+  // Show vehicle only after backend assigns one.
   const mapVehicle = rideVehicle
-  // Live driver simulation for normal-mode rides a driver accepted directly:
-  // no route-linked vehicle exists yet, so animate a driver marker from the
-  // ride stage itself — approaching pickup, then along the real route — until
-  // the driver advances each stage from their panel.
+  // Simulate driver marker from ride stage.
   const simDriver = (!mapVehicle && activeRide && activeRide.pickup_lat != null && activeRide.dest_lat != null
     && ['assigned', 'arriving', 'in_progress'].includes(activeRide.status))
     ? (() => {
@@ -399,7 +391,7 @@ export default function PassengerView({ view, setView, toast }) {
     <div className="booking-layout relative flex min-h-0 flex-1 flex-col overflow-hidden lg:block">
       {/* ── Floating booking panel: bottom sheet on mobile, floating card on desktop ── */}
       <div className="relative z-10 order-2 flex min-h-0 flex-1 flex-col lg:pointer-events-none lg:absolute lg:bottom-4 lg:left-4 lg:top-4 lg:order-none lg:w-[372px] lg:flex-none">
-      <ScrollArea className="booking-panel md:rounded-t-2xl md:border-t pointer-events-auto w-full min-h-0 flex-1 border-background/0 bg-card shadow-[0_-8px_30px_rgba(0,0,0,0.12)] lg:h-full lg:rounded-xl lg:border lg:border-border/80 lg:bg-card/95 lg:shadow-xl lg:backdrop-blur">
+      <ScrollArea className="booking-panel rounded-t-2xl border-t pointer-events-auto w-full min-h-0 flex-1 border-border/60 bg-card shadow-[0_-8px_30px_rgba(0,0,0,0.12)] lg:h-full lg:rounded-2xl lg:border lg:border-border/80 lg:bg-card/95 lg:shadow-xl lg:backdrop-blur">
         <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border lg:hidden" aria-hidden="true" />
         <div className="flex flex-col gap-4 p-4 md:p-5">
           <div>
@@ -421,7 +413,7 @@ export default function PassengerView({ view, setView, toast }) {
 
                 <div>
                   <Progress value={activeProgress} aria-label={`Ride stage ${activeStageIndex + 1} of ${RIDE_STAGES.length}`} />
-                  <ol className="mt-2 grid grid-cols-6 gap-1" aria-label="Ride progress">
+                  <ol className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-6" aria-label="Ride progress">
                     {RIDE_STAGES.map((key, idx) => {
                       const passed = activeStageIndex >= idx
                       const current = activeRide.status === key
@@ -430,16 +422,19 @@ export default function PassengerView({ view, setView, toast }) {
                           <span
                             className={cn(
                               'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold',
-                              current ? 'bg-primary text-primary-foreground ring-2 ring-primary/30'
-                                : passed ? 'bg-emerald-500 text-white'
+                              current ? 'bg-foreground text-background ring-2 ring-foreground/30'
+                                : passed ? 'bg-foreground text-background'
                                   : 'bg-muted text-muted-foreground',
                             )}
                             aria-current={current ? 'step' : undefined}
                           >
                             {passed && !current ? <CheckCircle2 className="h-3 w-3" /> : idx + 1}
                           </span>
-                          <span className={cn('truncate text-[9px] font-semibold leading-tight', current ? 'text-foreground' : passed ? 'text-foreground/80' : 'text-muted-foreground')}>
+                          <span className={cn('hidden truncate text-[9px] font-semibold leading-tight sm:block', current ? 'text-foreground' : passed ? 'text-foreground/80' : 'text-muted-foreground')}>
                             {RIDE_STAGE_LABELS[key]}
+                          </span>
+                          <span className={cn('truncate text-[9px] font-semibold leading-tight sm:hidden', current ? 'text-foreground' : 'text-muted-foreground')}>
+                            {current ? RIDE_STAGE_LABELS[key] : idx + 1}
                           </span>
                         </li>
                       )
@@ -560,14 +555,13 @@ export default function PassengerView({ view, setView, toast }) {
                     role="radio"
                     aria-checked={active}
                     onClick={() => setSelected(tier.id)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(tier.id) } }}
                     className={cn(
-                      'ride-tier flex items-center justify-between gap-3 rounded-lg border p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      active ? 'border-primary/50 bg-primary/[0.05] shadow-sm' : 'hover:border-primary/30 hover:bg-muted/40',
+                      'ride-tier flex items-center justify-between gap-3 rounded-2xl border p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      active ? 'border-foreground/60 bg-foreground/[0.04] shadow-sm' : 'hover:border-foreground/30 hover:bg-muted/40',
                     )}
                   >
                     <span className="flex min-w-0 items-center gap-2.5">
-                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg', active ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
+                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground')}>
                         <TierIcon className="h-4 w-4" aria-hidden="true" />
                       </span>
                       <span className="min-w-0">
@@ -575,14 +569,14 @@ export default function PassengerView({ view, setView, toast }) {
                         <span className="block truncate text-[11px] text-muted-foreground">{tier.desc} · {tier.eta} · {tier.seats} seats</span>
                       </span>
                     </span>
-                    <span className={cn('shrink-0 text-[13px] font-extrabold', active ? 'text-primary' : 'text-foreground')}>{tier.price}</span>
+                    <span className="shrink-0 text-[13px] font-extrabold text-foreground">{tier.price}</span>
                   </button>
                 )
               })}
             </div>
           </div>
 
-          <Button className="primary-action w-full" onClick={handleBook} disabled={booking || isRideActive} size="lg">
+          <Button className="primary-action uber-cta w-full" onClick={handleBook} disabled={booking || isRideActive} size="lg">
             {geocoding ? <><Loader2 className="h-4 w-4 animate-spin" /> Finding locations…</>
               : booking ? <><Loader2 className="h-4 w-4 animate-spin" /> Booking…</>
                 : isRideActive ? 'Ride in progress'
@@ -607,7 +601,7 @@ export default function PassengerView({ view, setView, toast }) {
       </div>
 
       {/* ── Live map: centerpiece, full-bleed ── */}
-      <div className="map-surface order-1 relative h-[34vh] w-full shrink-0 lg:absolute lg:inset-0 lg:order-none lg:h-full">
+      <div className="map-surface order-1 relative h-[30dvh] min-h-[240px] w-full shrink-0 overflow-hidden rounded-b-2xl lg:absolute lg:inset-0 lg:order-none lg:h-full lg:rounded-none">
         <div className="absolute inset-0">
           <AppMap
             center={mapCenter}
@@ -624,31 +618,31 @@ export default function PassengerView({ view, setView, toast }) {
           />
         </div>
         {mapPickupMode && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-[500] -translate-x-1/2">
+          <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2">
             <Badge className="shadow-md">Tap the map to choose pickup</Badge>
           </div>
         )}
         {isRideActive && activeRide && (
           <button
             onClick={() => setView('tracking')}
-            className="absolute left-1/2 top-3 z-[500] hidden -translate-x-1/2 items-center gap-2 rounded-full border border-border/80 bg-card/95 py-1.5 pl-3 pr-2 text-xs font-semibold shadow-lg backdrop-blur transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:left-[calc(404px+((100%-404px)/2))] lg:flex"
+            className="absolute left-1/2 top-3 z-10 hidden -translate-x-1/2 items-center gap-2 rounded-full border border-border/80 bg-card/95 py-1.5 pl-3 pr-2 text-xs font-semibold shadow-lg backdrop-blur transition-colors hover:border-foreground/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:left-[calc(404px+((100%-404px)/2))] lg:flex"
           >
-            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+            <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" aria-hidden="true" />
             Ride #{activeRide.id} · {RIDE_STAGE_LABELS[activeRide.status] || activeRide.status.replace(/_/g, ' ')}
-            <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-primary-foreground">Track</span>
+            <span className="rounded-full bg-foreground px-2 py-0.5 text-[11px] font-bold text-background">Track</span>
           </button>
         )}
-        <div className="absolute bottom-3 left-3 z-[500] hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
+        <div className="absolute bottom-3 left-3 z-10 hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
           <MapLegend
             items={[
-              { color: '#00c9a7', label: 'Pickup' },
-              { color: '#f43f5e', label: 'Drop-off' },
-              { color: '#3b82f6', label: 'Vehicle' },
+              { color: '#111111', label: 'Pickup' },
+              { color: '#16a34a', label: 'Drop-off' },
+              { color: '#525252', label: 'Vehicle' },
             ]}
           />
         </div>
         {routeEstimate && (
-          <Card className="absolute bottom-3 right-3 z-[500] border-border/80 bg-card/95 shadow-md backdrop-blur">
+          <Card className="absolute bottom-3 right-3 z-10 border-border/80 bg-card/95 shadow-md backdrop-blur">
             <CardContent className="mob-data flex items-center gap-2 px-3 py-2 text-xs">
               <Navigation className="h-3.5 w-3.5 text-primary" />
               <strong>{(routeEstimate.distanceMeters / 1000).toFixed(1)} km</strong>
@@ -770,8 +764,7 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
 function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
   const pickupCoords = ride ? { lat: ride.pickup_lat, lng: ride.pickup_lng, label: ride.pickup_label } : null
   const destCoords = ride ? { lat: ride.dest_lat, lng: ride.dest_lng, label: ride.destination_label } : null
-  // Same driver simulation as Home: without a route-linked vehicle, animate
-  // the marker from the ride stage so every driver tap is visible here too.
+  // Same driver simulation as Home.
   const simDriver = (!vehicle && ride && ride.pickup_lat != null && ride.dest_lat != null
     && ['assigned', 'arriving', 'in_progress'].includes(ride.status))
     ? (() => {
@@ -851,7 +844,7 @@ function InfoCard({ label, value, mono = false }) {
 
 function SuggestionList({ items, onChoose }) {
   return (
-    <Card className="relative z-20 overflow-hidden shadow-md" role="listbox" aria-label="Location suggestions">
+    <Card className="relative z-20 max-h-56 overflow-y-auto shadow-md" role="listbox" aria-label="Location suggestions">
       {items.map((item, index) => (
         <button
           key={`${item.lat}-${item.lng}-${index}`}

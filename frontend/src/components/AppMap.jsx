@@ -1,4 +1,4 @@
-/** Shared MapLibre map used by passenger, driver, and admin views. */
+// Shared MapLibre map for all views.
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import * as maplibregl from 'maplibre-gl'
@@ -37,7 +37,7 @@ function applyDarkMapTheme(map) {
         map.setPaintProperty(layer.id, 'text-opacity', .78)
       }
     } catch {
-      // Some vendor layers expose a layout-only paint property set.
+      // Skip layout-only vendor layers.
     }
   }
 }
@@ -53,11 +53,11 @@ function backendMapUrl(url) {
 }
 
 const colours = {
-  pickup: '#00c9a7',
-  destination: '#f43f5e',
-  depot: '#3b82f6',
-  waypoint: '#a78bfa',
-  route: '#00c9a7',
+  pickup: '#111111',
+  destination: '#16a34a',
+  depot: '#525252',
+  waypoint: '#737373',
+  route: '#16a34a',
 }
 
 function markerElement(label, type = 'pickup') {
@@ -70,7 +70,7 @@ function markerElement(label, type = 'pickup') {
   const isHome = type === 'rider_home'
   const isVirtual = type === 'virtual_stop' || type === 'waypoint'
 
-  const bg = isDest ? '#f43f5e' : isDepot ? '#3b82f6' : isHome ? '#f59e0b' : isVirtual ? '#a78bfa' : '#00c9a7'
+  const bg = isDest ? '#16a34a' : isDepot ? '#525252' : isHome ? '#111111' : isVirtual ? '#737373' : '#111111'
   const borderRadius = isDest || isDepot || isHome ? '50%' : '50% 50% 50% 0'
 
   inner.style.cssText = `
@@ -98,9 +98,7 @@ function markerElement(label, type = 'pickup') {
 
 function vehicleMarkerElement() {
   const el = document.createElement('div')
-  // MapLibre owns the root marker transform. Applying the CSS drop animation
-  // here would overwrite that transform and make the vehicle appear stuck or
-  // disappear while setLngLat moves it.
+  // Keep root transform for MapLibre positioning.
   el.className = 'sr-vehicle-root'
   el.style.cssText = `position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;`
 
@@ -126,7 +124,7 @@ function vehicleMarkerElement() {
     position: absolute;
     inset: 4px;
     border-radius: 50%;
-    background: var(--pin-color, #00c9a7);
+    background: var(--pin-color, #111111);
     opacity: 0.35;
     animation: sr-pulse 2s cubic-bezier(0, .4, .3, 1) infinite;
     pointer-events: none;
@@ -141,8 +139,8 @@ function vehicleMarkerElement() {
     height: 32px;
     border-radius: 50%;
     background: #0f172a;
-    border: 2px solid var(--pin-color, #00c9a7);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 8px var(--pin-color, #00c9a7);
+    border: 2px solid var(--pin-color, #111111);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 8px var(--pin-color, #111111);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -162,7 +160,7 @@ function vehicleMarkerElement() {
     height: 0;
     border-left: 5px solid transparent;
     border-right: 5px solid transparent;
-    border-bottom: 7px solid var(--pin-color, #00c9a7);
+    border-bottom: 7px solid var(--pin-color, #111111);
   `
   inner.appendChild(pointer)
 
@@ -203,7 +201,7 @@ function escapeHtml(value) {
 }
 
 function vehicleColor(status) {
-  return status === 'active' || status === 'en_route' ? '#00c9a7' : status === 'idle' ? '#60a5fa' : '#f43f5e'
+  return status === 'active' || status === 'en_route' ? '#16a34a' : status === 'idle' ? '#737373' : '#dc2626'
 }
 
 function cleanupMap(map, animationRef, routeAnimationRef, markersRef) {
@@ -217,9 +215,7 @@ function cleanupMap(map, animationRef, routeAnimationRef, markersRef) {
   map?.remove()
 }
 
-// Module-level stable defaults: inline `= []` defaults allocate a fresh array
-// on every render, which retriggers the overlay effect below each tick and
-// makes every pin replay its drop-in animation as a rapid blink.
+// Stable empty defaults to avoid overlay re-runs.
 const EMPTY_ARRAY = []
 
 export default function AppMap({
@@ -307,19 +303,19 @@ export default function AppMap({
 
       map.on('load', () => {
         setMapError('')
-        applyDarkMapTheme(map)
+        if (document.documentElement.classList.contains('dark')) applyDarkMapTheme(map)
         
-        // Add neon glowing route layers
+        // Green route line with soft casing.
         map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
         map.addLayer({
           id: 'route-line-casing',
           type: 'line',
           source: 'route',
           paint: {
-            'line-color': '#00c9a7',
+            'line-color': '#16a34a',
             'line-width': 8,
-            'line-opacity': 0.35,
-            'line-blur': 3,
+            'line-opacity': 0.25,
+            'line-blur': 2,
           },
         })
         map.addLayer({
@@ -327,14 +323,13 @@ export default function AppMap({
           type: 'line',
           source: 'route',
           paint: {
-            'line-color': '#00c9a7',
+            'line-color': '#16a34a',
             'line-width': 4.5,
             'line-opacity': 0.95,
           },
         })
 
-        // Dashed walking legs show how a rider reaches their assigned
-        // virtual stop instead of implying a door-to-door pickup.
+        // Dashed lines to assigned virtual stops.
         map.addSource('walking', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
         map.addLayer({
           id: 'walking-lines',
@@ -348,9 +343,7 @@ export default function AppMap({
           },
         })
 
-        // WebGL-backed point layers stay on the map while React telemetry is
-        // updating. This is more reliable than repeatedly mounting HTML
-        // markers during a live route simulation.
+        // Use WebGL layers for live simulation markers.
         map.addSource('stops', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
         map.addLayer({
           id: 'stop-halos', type: 'circle', source: 'stops',
@@ -419,9 +412,7 @@ export default function AppMap({
 
   useEffect(() => {
     const map = mapRef.current
-    // A map may keep loading tiles even after its sources are ready. Check
-    // the source itself, otherwise live simulation updates can be skipped and
-    // leave the vehicle at its initial coordinate.
+    // Check source readiness before live updates.
     if (map?.getSource('route')) {
       updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers })
     }
@@ -451,15 +442,15 @@ export default function AppMap({
 
   const cssHeight = typeof height === 'number' ? `${height}px` : height
   return (
-    <div ref={containerRef} style={{ width: '100%', height: cssHeight, position: 'relative', borderRadius: 12, overflow: 'hidden', ...style }}>
+    <div ref={containerRef} style={{ width: '100%', height: cssHeight, position: 'relative', borderRadius: 'inherit', overflow: 'hidden', ...style }}>
       <style>{`
         .sr-drop { animation: sr-drop-in .45s cubic-bezier(.34,1.56,.64,1) both; }
         @keyframes sr-drop-in { 0% { transform: scale(0) translateY(-10px); opacity: 0 } 60% { transform: scale(1.15) translateY(0); opacity: 1 } 100% { transform: scale(1) } }
-        .sr-pulse-ring { position:absolute; left:-18px; top:-18px; width:36px; height:36px; border-radius:50%; background:var(--pulse-color,#00c9a7); opacity:.55; animation: sr-pulse 2s cubic-bezier(0,.4,.3,1) infinite; pointer-events:none; }
+        .sr-pulse-ring { position:absolute; left:-18px; top:-18px; width:36px; height:36px; border-radius:50%; background:var(--pulse-color,#111111); opacity:.55; animation: sr-pulse 2s cubic-bezier(0,.4,.3,1) infinite; pointer-events:none; }
         .sr-pulse-1 { animation-delay:.66s }
         .sr-pulse-2 { animation-delay:1.3s }
         @keyframes sr-pulse { from { transform:scale(.4); opacity:.55 } to { transform:scale(2.8); opacity:0 } }
-        @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 15px rgba(0,201,167,0.4) } 50% { box-shadow: 0 0 25px rgba(0,201,167,0.7) } }
+        @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 15px rgba(22,163,74,0.4) } 50% { box-shadow: 0 0 25px rgba(22,163,74,0.7) } }
       `}</style>
       {mapError && (
         <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', padding:24, background:'rgba(37,42,40,.96)', color:'#d7d4c8', textAlign:'center', zIndex:2, pointerEvents:'none' }}>
@@ -651,7 +642,7 @@ function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, 
       markersRef.current.set(id, marker)
     }
 
-    // Skip position overwrite if this vehicle is currently being path-animated
+    // Skip overwrite during path animation.
     if (id === animatingId) return
 
     const from = marker.getLngLat()
@@ -702,7 +693,7 @@ function animateVehicleAlongPath(map, animation, markersRef, animationRef, follo
   let marker = markersRef.current.get(markerId)
   if (!marker) {
     const element = vehicleMarkerElement()
-    element.style.setProperty('--pin-color', '#00c9a7')
+    element.style.setProperty('--pin-color', '#111111')
     marker = new maplibregl.Marker({ element, anchor: 'center' }).setLngLat(animation.path[0]).addTo(map)
     markersRef.current.set(markerId, marker)
   }
@@ -721,8 +712,7 @@ function animateVehicleAlongPath(map, animation, markersRef, animationRef, follo
     if (bearing != null) marker.setRotation(bearing)
 
     if (followCamera && map) {
-      // This callback runs on every animation frame. A new easeTo transition
-      // per frame queues camera animations and causes visible map jitter.
+      // Use jumpTo to avoid camera jitter.
       map.jumpTo({ center: position, zoom: Math.max(14, map.getZoom()) })
     }
 

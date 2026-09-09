@@ -12,11 +12,7 @@ def sync_clerk_user_metadata(
     clerk_user_id: str,
     public_metadata: Dict[str, Any],
 ) -> bool:
-    """
-    Synchronize user metadata (e.g. role, driver_status) back into Clerk's publicMetadata.
-    Requires CLERK_SECRET_KEY in environment variables. If omitted, operates gracefully
-    without raising fatal errors.
-    """
+    """Sync user metadata to Clerk publicMetadata."""
     if not clerk_user_id:
         return False
 

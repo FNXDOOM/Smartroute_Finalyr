@@ -7,10 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-// In-app driver onboarding bridge. Reached after driver-portal sign-in when
-// the account is still a passenger (the login screen unmounts on sign-in, so
-// the application step cannot live there). Also doubles as a plate-change
-// form for active drivers. Admins are blocked: submitting would demote them.
+// Driver onboarding bridge; also plate-change form.
 export default function DriverApplyView({ user, setView, toast, onApplied }) {
   const { getToken } = useAuth()
   const [plate, setPlate] = useState('')
@@ -47,7 +44,7 @@ export default function DriverApplyView({ user, setView, toast, onApplied }) {
     setError('')
     setLoading(true)
     try {
-      // Attach our own token: deterministic regardless of interceptor state.
+      // Attach token explicitly.
       const token = await getToken().catch(() => null)
       await authApi.applyDriver({ license_plate: value }, token || undefined)
       toast?.('success', 'Driver application submitted', 'An admin will review your application shortly.')

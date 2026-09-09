@@ -11,15 +11,10 @@ from services.background_jobs import run_auto_dispatch_pipeline
 
 
 def test_auto_dispatch_pipeline_groups_and_assigns_rides():
-    """
-    Integration test: creates 3 pending ride requests within the same H3 cell
-    (all within 20m of each other in Indiranagar), then runs the full AI
-    auto-dispatch pipeline and asserts that clustering, route solving, and
-    vehicle assignment all succeed.
-    """
+    """Pipeline test: cluster, route, assign 3 rides."""
     db = SessionLocal()
     try:
-        # Create test user if not existing
+        # Create test user if missing
         user = db.query(User).filter(User.email == "pipeline_tester@example.com").first()
         if not user:
             user = User(
@@ -33,7 +28,7 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
             db.commit()
             db.refresh(user)
 
-        # Create test vehicle if none (must be idle for dispatch to work)
+        # Create idle test vehicle if missing
         vehicle = db.query(Vehicle).filter(Vehicle.license_plate == "KA-01-TEST-99").first()
         if not vehicle:
             vehicle = Vehicle(
@@ -55,7 +50,7 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
         db.query(RideRequest).filter(RideRequest.user_id == user.id).delete()
         db.commit()
 
-        # 3 ride requests within 20m of each other — all fall in H3 cell 8961892eddbffff
+        # 3 rides within 20m in same H3 cell
         presets = [
             {"plat": 12.97190, "plng": 77.64124, "dlat": 12.9756, "dlng": 77.6066},
             {"plat": 12.97192, "plng": 77.64126, "dlat": 12.9749, "dlng": 77.6080},
@@ -84,14 +79,14 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
             db.refresh(r)
             assert r.status == "pending"
 
-        # Execute the full 4-step AI Dispatch Pipeline
+        # Run full dispatch pipeline
         result = run_auto_dispatch_pipeline(db, triggered_by_user_id=user.id, is_scheduled=False)
 
         assert result["clusters_formed"] >= 1, f"Expected >=1 cluster, got {result}"
         assert result["routes_optimized"] >= 1, f"Expected >=1 route, got {result}"
         assert result["assigned_rides"] >= 2, f"Expected >=2 rides assigned, got {result}"
 
-        # Verify rides were updated to 'assigned'
+        # Verify rides assigned
         assigned_count = 0
         for r in created_rides:
             db.refresh(r)

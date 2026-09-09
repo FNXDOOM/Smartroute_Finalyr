@@ -41,8 +41,7 @@ def list_vehicles(
     return query.order_by(Vehicle.id.asc()).all()
 
 
-# NOTE: /idle MUST be declared before /{vehicle_id} so FastAPI does not
-# swallow the literal string "idle" as an integer path parameter.
+# /idle before /{vehicle_id}; avoids route conflict.
 @router.get("/idle", response_model=List[VehicleResponse])
 def list_idle_vehicles(
     db: Session = Depends(get_db),
@@ -103,12 +102,7 @@ def assign_idle_vehicles_to_routes(
         for index, vehicle in enumerate(located_vehicles)
     } if road_costs is not None else {}
 
-    # Capacity-aware costs: a vehicle must never be matched to a route it
-    # cannot seat. Infeasible pairs get a prohibitive cost so the Hungarian
-    # solver avoids them whenever a feasible alternative exists; any
-    # infeasible pair it still returns (e.g. more routes than vehicles) is
-    # filtered out below and reported via the unassigned lists.
-    # passenger_count=0 means "unknown" and stays feasible for all vehicles.
+    # Capacity-aware costs; 0 = unknown, always feasible.
     INFEASIBLE_COST = 10**12
     cost_matrix = []
     feasible_matrix = []
@@ -117,11 +111,10 @@ def assign_idle_vehicles_to_routes(
             vehicle_costs = located_costs[vehicle.id]
         else:
             if vehicle.lat is None or vehicle.lng is None:
-                # Missing GPS is never selected ahead of a located vehicle.
+                # Missing GPS ranks last.
                 vehicle_costs = [999_999 for _ in routes]
             else:
-                # A provider/OSM outage should not make dispatch fail. This is
-                # only an outage fallback; normal assignment uses road costs.
+                # Outage fallback; normal path uses road costs.
                 vehicle_costs = [
                     int(haversine_meters(vehicle.lat, vehicle.lng, route.lat, route.lng))
                     for route in routes
@@ -143,7 +136,7 @@ def assign_idle_vehicles_to_routes(
 
     for vehicle_idx, route_idx in matched_pairs:
         if not feasible_matrix[vehicle_idx][route_idx]:
-            # Over capacity: leave both the vehicle and the route unassigned.
+            # Over capacity: skip pair.
             continue
         vehicle = vehicles[vehicle_idx]
         route = routes[route_idx]

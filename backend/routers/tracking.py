@@ -41,7 +41,16 @@ class ConnectionManager:
         self.active_connections: List[TrackingConnection] = []
 
     async def connect(self, websocket: WebSocket, user_id: int, role: str):
-        await websocket.accept(subprotocol="bearer")
+        # Flutter omits bearer; accept without subprotocol.
+        offered = {
+            part.strip().lower()
+            for part in websocket.headers.get("sec-websocket-protocol", "").split(",")
+            if part.strip()
+        }
+        if "bearer" in offered:
+            await websocket.accept(subprotocol="bearer")
+        else:
+            await websocket.accept()
         self.active_connections.append(TrackingConnection(websocket, user_id, role))
 
     def disconnect(self, websocket: WebSocket):
@@ -274,8 +283,7 @@ async def update_vehicle_location(
                 matched_lng, matched_lat = matched_geometry[-1]
                 map_matched = True
         except RuntimeError:
-            # GPS telemetry must continue even when the optional map-matching
-            # request is unavailable or the account has no routing quota.
+            # Keep GPS updates on map-match failure.
             pass
 
     vehicle.lat = matched_lat
@@ -344,8 +352,7 @@ async def update_vehicle_location(
     db.refresh(vehicle)
     db.refresh(event)
 
-    # Broadcast through the scoped manager so passengers only receive their
-    # assigned vehicle, while admin/driver connections receive fleet updates.
+    # Scoped broadcast: passengers get own vehicle only.
     asyncio.create_task(manager.broadcast_vehicle_update(_serialize_vehicle(vehicle), _serialize_event(event)))
 
     return VehicleSnapshot.model_validate(vehicle)
@@ -355,7 +362,8 @@ async def update_vehicle_location(
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for live vehicle tracking.
-    Clients must pass a valid JWT as the ``bearer`` WebSocket subprotocol.
+    Web clients send the JWT as the ``bearer`` WebSocket subprotocol;
+    native mobile clients (Flutter) send ``?token=<JWT>`` instead.
     """
     token = get_websocket_token(websocket)
     if not token:

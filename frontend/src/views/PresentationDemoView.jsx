@@ -19,7 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { MapLegend, KpiStat } from '@/components/dashboard-shared'
 
-// Presentation-only icon mapping for pipeline stages (logic uses DEMO_STAGES ids).
+// Stage icons for pipeline.
 const STAGE_ICONS = { SPAWN: Users, CLUSTER: Dna, VIRTUAL_STOP: Signpost, VRP_SOLVE: Zap, DRIVE_SIM: CarFront }
 
 function interpolateDemoPath(path, progress) {
@@ -142,9 +142,7 @@ export default function PresentationDemoView({ toast }) {
   const [currentStage, setCurrentStage] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(1)
-  // Keep the route still by default so the auto visibly travels along it.
-  // Users can enable Follow to use the Uber-style camera that keeps the auto
-  // centered while the map moves underneath it.
+  // Keep map still; Follow tracks the auto.
   const [followCamera, setFollowCamera] = useState(false)
 
   const activePreset = DEMO_PRESETS[selectedZone] || DEMO_PRESETS.indiranagar
@@ -315,7 +313,7 @@ export default function PresentationDemoView({ toast }) {
     }
   }
 
-  // ── Step 1: Spawn Riders ──
+  // Step 1: Spawn riders
   const stepSpawnRiders = async () => {
     setCurrentStage(1)
     addLog(`👥 Step 1: Generating 3 passenger requests near ${demoPickup.label}...`, 'accent')
@@ -339,9 +337,7 @@ export default function PresentationDemoView({ toast }) {
         ride_option_name: 'SwiftX Shared Auto',
         ride_option_price: '₹12–15',
       })), demoRunId)
-      // Track the real backend ride IDs so the final drive-sim step can
-      // persist "completed" back to these actual rows, not just the local
-      // preset animation.
+      // Track backend ride IDs for completion.
       demoRideIdsRef.current = Array.isArray(created) ? created.map(r => r.id) : []
       addLog(`✓ Passenger 1 booked ${demoPickup.label} → ${demoDestination.label}; shared-auto capacity reserved for 2 more`, 'success')
       addLog('✓ Passenger 2 near TC Palya accepted: 150 m walk to virtual stop (within 200 m)', 'success')
@@ -364,7 +360,7 @@ export default function PresentationDemoView({ toast }) {
     }))
   }
 
-  // ── Step 2: HDBSCAN Clustering ──
+  // Step 2: Cluster
   const stepCluster = async () => {
     setCurrentStage(2)
     addLog('🧬 Step 2: Executing HDBSCAN density clustering on pickup coordinates...', 'accent')
@@ -381,7 +377,7 @@ export default function PresentationDemoView({ toast }) {
     }))
   }
 
-  // ── Step 3: Virtual Stop Placement ──
+  // Step 3: Virtual stop
   const stepVirtualStop = async () => {
     setCurrentStage(3)
     addLog('🚏 Step 3: Computing K-Medoids centroid and snapping to drivable OSM road network...', 'accent')
@@ -397,7 +393,7 @@ export default function PresentationDemoView({ toast }) {
     }))
   }
 
-  // ── Step 4: OR-Tools CVRP + Hungarian Assignment ──
+  // Step 4: Solve routes
   const stepVrpSolve = async () => {
     setCurrentStage(4)
     addLog('⚡ Step 4: Solving Capacitated Vehicle Routing Problem (CVRP) via Google OR-Tools...', 'accent')
@@ -421,7 +417,7 @@ export default function PresentationDemoView({ toast }) {
     }))
   }
 
-  // ── Step 5: Live Driving Traversal Simulation ──
+  // Step 5: Drive sim
   const startDriveSimulation = (resume = false) => {
     setCurrentStage(5)
     setIsPlaying(true)
@@ -436,10 +432,7 @@ export default function PresentationDemoView({ toast }) {
     const selectedPath = demoRoutePathRef.current
     const path = (selectedPath.length > 1 ? selectedPath : fallbackDemoPath()).filter(point => Array.isArray(point) && point.length >= 2)
     if (path.length < 2) return
-    // AppMap receives this path once, then the requestAnimationFrame loop below
-    // is the sole owner of the vehicle's live position. Keeping the static
-    // overlays out of each frame prevents MapLibre markers being removed and
-    // recreated while the auto is moving.
+    // Path set once; loop owns live position.
     setSimData(prev => ({
       ...prev,
       routeGeometry: path,
@@ -448,8 +441,7 @@ export default function PresentationDemoView({ toast }) {
     }))
     const routeDistance = Math.max(1000, Math.round(routeEstimate?.distanceMeters || 4200))
     const routeDuration = Math.max(120, Math.round(routeEstimate?.durationSeconds || 480))
-    // Keep 1x presentation runs long enough to visibly follow the vehicle
-    // through the assigned route. Higher speeds remain available for demos.
+    // Keep 1x runs long enough to follow vehicle.
     const durationMs = Math.max(10000, Math.round(60000 / speedMultiplier))
     let elapsedMs = resume ? driveElapsedMsRef.current : 0
     let previousTime = performance.now()
@@ -512,7 +504,7 @@ export default function PresentationDemoView({ toast }) {
         setCurrentStage(6)
         addLog(`🎉 Route completed! All 3 passengers successfully delivered to ${demoDestination.label}.`, 'success')
         toast?.('success', 'Simulation Complete!', `3 riders pooled · ${(routeDistance / 1000).toFixed(1)} km shared · 1.4 kg CO₂ saved`)
-        // Persist completion back to the real presentation-demo ride records.
+        // Persist completion to demo rides.
         Promise.all(demoRideIdsRef.current.map(id => ridesApi.updateStatus(id, 'completed').catch(() => {})))
       } else {
         driveFrameRef.current = requestAnimationFrame(frame)
@@ -769,7 +761,7 @@ export default function PresentationDemoView({ toast }) {
           <div className="flex flex-col gap-1.5" role="list">
             {demoRiders.map(rider => {
               const liveRider = simData.riders.find(item => item.id === rider.id) || rider
-              const stateColor = liveRider.status === 'in_vehicle' ? 'text-emerald-600 dark:text-emerald-400' : liveRider.status === 'boarding' ? 'text-primary' : 'text-muted-foreground'
+              const stateColor = liveRider.status === 'in_vehicle' ? 'text-green-700 dark:text-green-400' : liveRider.status === 'boarding' ? 'text-primary' : 'text-muted-foreground'
               return (
                 <div key={rider.id} role="listitem" className="flex items-center gap-2.5 rounded-lg border bg-muted/40 px-2.5 py-2">
                   <Avatar className="h-7 w-7 shrink-0">
@@ -809,7 +801,7 @@ export default function PresentationDemoView({ toast }) {
               >
                 <span className={cn(
                   'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                  isActive ? 'bg-primary text-primary-foreground' : isPassed ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground',
+                  isActive ? 'bg-primary text-primary-foreground' : isPassed ? 'bg-green-600/15 text-green-700 dark:text-green-400' : 'bg-muted text-muted-foreground',
                 )}>
                   {isPassed && !isActive ? <CheckCircle2 className="h-4 w-4" /> : <StageIcon className="h-4 w-4" />}
                 </span>
@@ -830,7 +822,7 @@ export default function PresentationDemoView({ toast }) {
           <ScrollArea className="min-h-[120px] flex-1 rounded-lg border bg-slate-950/[0.03] dark:bg-black/40">
             <div className="flex flex-col gap-1 p-2.5 font-mono text-[11px] leading-relaxed">
               {simData.logs.map((log, i) => (
-                <div key={i} className={cn(log.type === 'success' ? 'text-emerald-600 dark:text-emerald-400' : log.type === 'accent' ? 'text-primary' : 'text-muted-foreground')}>
+                <div key={i} className={cn(log.type === 'success' ? 'text-green-700 dark:text-green-400' : log.type === 'accent' ? 'text-primary' : 'text-muted-foreground')}>
                   <span className="mr-1.5 opacity-60">[{log.time}]</span>
                   <span>{log.text}</span>
                 </div>
@@ -847,8 +839,7 @@ export default function PresentationDemoView({ toast }) {
       <div className="order-1 relative h-[34vh] w-full shrink-0 lg:absolute lg:inset-0 lg:order-none lg:h-full">
         <div className="absolute inset-0">
         <AppMap
-          // A fixed map center lets the vehicle marker visibly move when
-          // Follow is off; AppMap handles the moving camera when it is on.
+          // Fixed center; Follow moves camera.
           center={[demoPickup.lat, demoPickup.lng]}
           zoom={14}
           height="100%"
@@ -867,7 +858,7 @@ export default function PresentationDemoView({ toast }) {
         </div>
 
         {/* Floating dispatch instruction */}
-        <div className="absolute left-3 right-3 top-3 z-[500] flex items-center gap-2.5 rounded-xl border border-border/80 bg-card/95 px-3 py-2.5 shadow-lg backdrop-blur md:left-4 md:right-auto md:max-w-[520px]">
+        <div className="absolute left-3 right-3 top-3 z-10 flex items-center gap-2.5 rounded-xl border border-border/80 bg-card/95 px-3 py-2.5 shadow-lg backdrop-blur md:left-4 md:right-auto md:max-w-[520px]">
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <Zap className="h-4 w-4" />
           </span>
@@ -881,13 +872,13 @@ export default function PresentationDemoView({ toast }) {
           </Badge>
         </div>
 
-        <div className="absolute bottom-3 left-3 z-[500] hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
+        <div className="absolute bottom-3 left-3 z-10 hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
           <MapLegend
             items={[
-              { color: '#00c9a7', label: 'Route / vehicle' },
-              { color: '#a78bfa', label: 'Virtual stop' },
-              { color: '#f59e0b', label: 'Walking leg' },
-              { color: '#f43f5e', label: 'Destination' },
+              { color: '#16a34a', label: 'Route / vehicle' },
+              { color: '#737373', label: 'Virtual stop' },
+              { color: '#525252', label: 'Walking leg' },
+              { color: '#16a34a', label: 'Destination' },
             ]}
           />
         </div>

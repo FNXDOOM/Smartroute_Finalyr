@@ -7,23 +7,22 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 
-// Single status style map shared by passenger / driver / admin / inbox.
-// Keeps ride, vehicle and job states visually consistent everywhere.
+// Shared status styles for all dashboards.
 export const STATUS_STYLES = {
-  pending: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  clustered: 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-  clustered_status: 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-  assigned: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  arriving: 'border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-300',
-  in_progress: 'border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-300',
-  completed: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  solved: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  cancelled: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
-  idle: 'border-slate-500/30 bg-slate-500/10 text-slate-500 dark:text-slate-400',
-  active: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  en_route: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  offline: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
-  no_pending_requests: 'border-slate-500/30 bg-slate-500/10 text-slate-500 dark:text-slate-400',
+  pending: 'border-border bg-muted text-foreground',
+  clustered: 'border-border bg-muted text-foreground',
+  clustered_status: 'border-border bg-muted text-foreground',
+  assigned: 'border-foreground/30 bg-foreground text-background',
+  arriving: 'border-foreground/30 bg-foreground text-background',
+  in_progress: 'border-foreground/30 bg-foreground text-background',
+  completed: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  solved: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  cancelled: 'border-destructive/30 bg-destructive/10 text-destructive',
+  idle: 'border-border bg-muted text-muted-foreground',
+  active: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  en_route: 'border-foreground/30 bg-foreground text-background',
+  offline: 'border-destructive/30 bg-destructive/10 text-destructive',
+  no_pending_requests: 'border-border bg-muted text-muted-foreground',
 }
 
 export function StatusBadge({ status, className }) {
@@ -72,8 +71,7 @@ export function StatCard({ icon: Icon, label, value, sub }) {
   )
 }
 
-/* Compact KPI for map overlays / floating panels: label + tabular value,
-   no card chrome of its own. */
+/* Compact KPI for map overlays. */
 export function KpiStat({ label, value, sub, className }) {
   return (
     <div className={className}>
@@ -84,8 +82,7 @@ export function KpiStat({ label, value, sub, className }) {
   )
 }
 
-/* Density bar: compact horizontal meter for cluster size / demand intensity.
-   colorClass sets the fill (e.g. bg-violet-500, bg-primary). */
+/* Compact meter for cluster size/demand. */
 export function DensityBar({ value, max, colorClass = 'bg-primary', className, label }) {
   const pct = max > 0 ? Math.max(4, Math.min(100, (value / max) * 100)) : 0
   return (
@@ -97,7 +94,7 @@ export function DensityBar({ value, max, colorClass = 'bg-primary', className, l
   )
 }
 
-/* Map legend: floating-friendly key for marker / cluster / heat colors. */
+/* Key for marker/cluster/heat colors. */
 export function MapLegend({ items, className }) {
   return (
     <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5', className)} aria-label="Map legend">
