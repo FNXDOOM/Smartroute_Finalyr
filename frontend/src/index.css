@@ -1,6 +1,9 @@
 @import "@fontsource-variable/geist";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+/* Tailwind v3 toolchain (see tailwind.config.js + tailwindcss-animate).
+   v4-only imports (tw-animate-css, shadcn/tailwind.css with @theme/@utility/
+   @custom-variant) are intentionally omitted: Tailwind 3.4.1 cannot compile
+   them and Vite warns "Unknown at rule". Orientation variants use the v3-
+   compatible data-[orientation=...] syntax instead of data-horizontal/vertical. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

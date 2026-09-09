@@ -218,6 +218,94 @@ function cleanupMap(map, animationRef, routeAnimationRef, markersRef) {
 // Stable empty defaults to avoid overlay re-runs.
 const EMPTY_ARRAY = []
 
+function setupBaseSourcesAndLayers(map) {
+  // Reusable after setStyle reloads (setStyle removes custom sources/layers).
+  // Guards keep initial load idempotent.
+  if (!map.getSource('route')) {
+    map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer({
+      id: 'route-line-casing',
+      type: 'line',
+      source: 'route',
+      paint: {
+        'line-color': '#16a34a',
+        'line-width': 8,
+        'line-opacity': 0.25,
+        'line-blur': 2,
+      },
+    })
+    map.addLayer({
+      id: 'route-line',
+      type: 'line',
+      source: 'route',
+      paint: {
+        'line-color': '#16a34a',
+        'line-width': 4.5,
+        'line-opacity': 0.95,
+      },
+    })
+  }
+  if (!map.getSource('walking')) {
+    map.addSource('walking', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer({
+      id: 'walking-lines',
+      type: 'line',
+      source: 'walking',
+      paint: {
+        'line-color': '#f59e0b',
+        'line-width': 3,
+        'line-opacity': 0.9,
+        'line-dasharray': [1.5, 1.5],
+      },
+    })
+  }
+  if (!map.getSource('stops')) {
+    map.addSource('stops', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer({
+      id: 'stop-halos', type: 'circle', source: 'stops',
+      paint: { 'circle-radius': 22, 'circle-color': ['get', 'color'], 'circle-opacity': .18, 'circle-blur': .35 },
+    })
+    map.addLayer({
+      id: 'stop-points', type: 'circle', source: 'stops',
+      paint: { 'circle-radius': 15, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
+    })
+    map.addLayer({
+      id: 'stop-labels', type: 'symbol', source: 'stops',
+      layout: { 'text-field': ['get', 'markerLabel'], 'text-size': 11, 'text-allow-overlap': true },
+      paint: { 'text-color': '#ffffff', 'text-halo-color': '#0f172a', 'text-halo-width': 1 },
+    })
+  }
+  if (!map.getSource('vehicles')) {
+    map.addSource('vehicles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer({
+      id: 'vehicle-halos', type: 'circle', source: 'vehicles',
+      paint: { 'circle-radius': 28, 'circle-color': ['get', 'color'], 'circle-opacity': .2, 'circle-blur': .45 },
+    })
+    map.addLayer({
+      id: 'vehicle-points', type: 'circle', source: 'vehicles',
+      paint: { 'circle-radius': 18, 'circle-color': '#0f172a', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 },
+    })
+    map.addLayer({
+      id: 'vehicle-labels', type: 'symbol', source: 'vehicles',
+      layout: { 'text-field': '🚗', 'text-size': 15, 'text-allow-overlap': true },
+      paint: { 'text-color': '#ffffff' },
+    })
+  }
+  if (!map.getSource('heat')) {
+    map.addSource('heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
+    map.addLayer({
+      id: 'heat-circles',
+      type: 'circle',
+      source: 'heat',
+      paint: {
+        'circle-color': ['interpolate', ['linear'], ['get', 'intensity'], 0, '#60a5fa', .5, '#f59e0e', 1, '#f43f5e'],
+        'circle-radius': 20,
+        'circle-opacity': .55,
+      },
+    })
+  }
+}
+
 export default function AppMap({
   center = [12.9784, 77.6408],
   zoom = 13,
@@ -304,89 +392,8 @@ export default function AppMap({
       map.on('load', () => {
         setMapError('')
         if (document.documentElement.classList.contains('dark')) applyDarkMapTheme(map)
-        
-        // Green route line with soft casing.
-        map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-        map.addLayer({
-          id: 'route-line-casing',
-          type: 'line',
-          source: 'route',
-          paint: {
-            'line-color': '#16a34a',
-            'line-width': 8,
-            'line-opacity': 0.25,
-            'line-blur': 2,
-          },
-        })
-        map.addLayer({
-          id: 'route-line',
-          type: 'line',
-          source: 'route',
-          paint: {
-            'line-color': '#16a34a',
-            'line-width': 4.5,
-            'line-opacity': 0.95,
-          },
-        })
 
-        // Dashed lines to assigned virtual stops.
-        map.addSource('walking', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-        map.addLayer({
-          id: 'walking-lines',
-          type: 'line',
-          source: 'walking',
-          paint: {
-            'line-color': '#f59e0b',
-            'line-width': 3,
-            'line-opacity': 0.9,
-            'line-dasharray': [1.5, 1.5],
-          },
-        })
-
-        // Use WebGL layers for live simulation markers.
-        map.addSource('stops', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-        map.addLayer({
-          id: 'stop-halos', type: 'circle', source: 'stops',
-          paint: { 'circle-radius': 22, 'circle-color': ['get', 'color'], 'circle-opacity': .18, 'circle-blur': .35 },
-        })
-        map.addLayer({
-          id: 'stop-points', type: 'circle', source: 'stops',
-          paint: { 'circle-radius': 15, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
-        })
-        map.addLayer({
-          id: 'stop-labels', type: 'symbol', source: 'stops',
-          layout: { 'text-field': ['get', 'markerLabel'], 'text-size': 11, 'text-allow-overlap': true },
-          paint: { 'text-color': '#ffffff', 'text-halo-color': '#0f172a', 'text-halo-width': 1 },
-        })
-
-        map.addSource('vehicles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-        map.addLayer({
-          id: 'vehicle-halos', type: 'circle', source: 'vehicles',
-          paint: { 'circle-radius': 28, 'circle-color': ['get', 'color'], 'circle-opacity': .2, 'circle-blur': .45 },
-        })
-        map.addLayer({
-          id: 'vehicle-points', type: 'circle', source: 'vehicles',
-          paint: { 'circle-radius': 18, 'circle-color': '#0f172a', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 },
-        })
-        map.addLayer({
-          id: 'vehicle-labels', type: 'symbol', source: 'vehicles',
-          layout: { 'text-field': '🚗', 'text-size': 15, 'text-allow-overlap': true },
-          paint: { 'text-color': '#ffffff' },
-        })
-
-        // Heatmap demand cells
-        map.addSource('heat', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
-        map.addLayer({
-          id: 'heat-circles',
-          type: 'circle',
-          source: 'heat',
-          paint: {
-            'circle-color': ['interpolate', ['linear'], ['get', 'intensity'], 0, '#60a5fa', .5, '#f59e0e', 1, '#f43f5e'],
-            'circle-radius': 20,
-            'circle-opacity': .55,
-          },
-        })
-
+        setupBaseSourcesAndLayers(map)
         updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers })
         syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion, vehicleRenderMode)
         animateVehicleAlongPath(map, vehicleAnimation, markersRef, routeAnimationRef, followCamera)
@@ -403,6 +410,40 @@ export default function AppMap({
       mapRef.current = null
     }
   }, [getToken])
+
+  const latestPropsRef = useRef(null)
+  useEffect(() => {
+    latestPropsRef.current = { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers, vehicles, vehicleAnimation, vehicleMotion, vehicleRenderMode, followCamera }
+  })
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const map = mapRef.current
+      if (!map || !map.isStyleLoaded()) return
+      if (document.documentElement.classList.contains('dark')) {
+        applyDarkMapTheme(map)
+      } else {
+        // Restore the original light style; setStyle drops custom sources/layers.
+        try {
+          map.setStyle(STADIA_STYLE_URL)
+          map.once('idle', () => {
+            const current = mapRef.current
+            if (!current || current !== map || !current.isStyleLoaded()) return
+            setupBaseSourcesAndLayers(current)
+            const snap = latestPropsRef.current
+            if (!snap) return
+            updateOverlays(current, snap)
+            syncMarkers(current, snap.vehicles, markersRef, animationRef, snap.vehicleAnimation, snap.vehicleMotion, snap.vehicleRenderMode)
+            animateVehicleAlongPath(current, snap.vehicleAnimation, markersRef, routeAnimationRef, snap.followCamera)
+          })
+        } catch {
+          // Keep the current style when reload fails.
+        }
+      }
+    })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    return () => observer.disconnect()
+  }, [])
 
   const [centerLat, centerLng] = center
   useEffect(() => {

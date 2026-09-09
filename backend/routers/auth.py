@@ -37,8 +37,11 @@ def register_local_user(register_in: UserRegister, db: Session = Depends(get_db)
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    name = register_in.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name must not be empty.")
     user = User(
-        name=register_in.name.strip(),
+        name=name,
         email=register_in.email.strip(),
         phone=(register_in.phone or "").strip(),
         password_hash=hash_password(register_in.password),

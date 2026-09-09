@@ -700,38 +700,38 @@ function ClusterPanel({ setView, toast }) {
                       {run.created_at ? <span>{new Date(run.created_at).toLocaleString()}</span> : null}
                     </div>
                     <DensityBar value={run.clusters_formed || 0} max={maxGroups} colorClass="bg-violet-500" label={`Run ${run.id}: ${run.clusters_formed} groups`} />
-                    {open && (
-                      <div className="mt-3 space-y-2 border-t pt-3" onClick={(e) => e.stopPropagation()}>
-                        {selectedStops.length > 0 && (
-                          <div>
-                            <div className="mb-1.5 overflow-hidden rounded-lg border">
-                              <AppMap
-                                center={[selectedStops[0].lat, selectedStops[0].lng]}
-                                zoom={13}
-                                height={220}
-                                waypoints={selectedStops}
-                                style={{ borderRadius: 0 }}
-                              />
-                            </div>
-                            <p className="mb-2 text-[11px] text-muted-foreground">{selectedStops.length} pooled {selectedStops.length === 1 ? 'stop' : 'stops'} · violet pins sized equally, bar = riders</p>
-                          </div>
-                        )}
-                        {(run.cluster_summary || []).slice(0, 8).map((cs) => (
-                          <div key={cs.cluster_id} className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-2.5 py-2">
-                            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-500" aria-hidden="true" />
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-baseline justify-between gap-2">
-                                <p className="text-[11px] font-semibold">Group #{cs.cluster_id}</p>
-                                <p className="mob-data shrink-0 text-[11px] text-muted-foreground">{cs.passenger_count} riders</p>
-                              </div>
-                              <DensityBar value={cs.passenger_count || 0} max={maxRiders} colorClass="bg-violet-500" className="mt-1" />
-                              <p className="mob-data mt-1 truncate text-[10px] text-muted-foreground">stop {cs.virtual_stop_lat?.toFixed(4)}, {cs.virtual_stop_lng?.toFixed(4)}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </button>
+                  {open && (
+                    <CardContent className="space-y-2 pt-0" onClick={(e) => e.stopPropagation()}>
+                      {selectedStops.length > 0 && (
+                        <div>
+                          <div className="mb-1.5 overflow-hidden rounded-lg border">
+                            <AppMap
+                              center={[selectedStops[0].lat, selectedStops[0].lng]}
+                              zoom={13}
+                              height={220}
+                              waypoints={selectedStops}
+                              style={{ borderRadius: 0 }}
+                            />
+                          </div>
+                          <p className="mb-2 text-[11px] text-muted-foreground">{selectedStops.length} pooled {selectedStops.length === 1 ? 'stop' : 'stops'} · violet pins sized equally, bar = riders</p>
+                        </div>
+                      )}
+                      {(run.cluster_summary || []).slice(0, 8).map((cs) => (
+                        <div key={cs.cluster_id} className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-2.5 py-2">
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-500" aria-hidden="true" />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <p className="text-[11px] font-semibold">Group #{cs.cluster_id}</p>
+                              <p className="mob-data shrink-0 text-[11px] text-muted-foreground">{cs.passenger_count} riders</p>
+                            </div>
+                            <DensityBar value={cs.passenger_count || 0} max={maxRiders} colorClass="bg-violet-500" className="mt-1" />
+                            <p className="mob-data mt-1 truncate text-[10px] text-muted-foreground">stop {cs.virtual_stop_lat?.toFixed(4)}, {cs.virtual_stop_lng?.toFixed(4)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+                  )}
                 </Card>
               )
             })

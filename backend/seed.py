@@ -1,6 +1,7 @@
 """Seed demo Bengaluru data. Usage: python seed.py [--reset]."""
 
 import argparse
+import os
 import random
 import secrets
 import sys
@@ -96,15 +97,31 @@ def seed_users(db: Session) -> list[User]:
         ("Admin User",     "admin@smartroute.ai",     "+91-77665-54433", "admin"),
     ]
     users = []
+    admin_password = os.getenv("SEED_ADMIN_PASSWORD", "").strip()
+    app_env = os.getenv("APP_ENV", "development").lower()
     for name, email, phone, role in demo:
         existing = db.query(User).filter(User.email == email).first()
         if existing:
             users.append(existing)
             continue
+        if role == "admin":
+            if admin_password:
+                password = admin_password
+            elif app_env in ("production", "staging"):
+                raise RuntimeError(
+                    "Refusing to seed admin with default password in "
+                    f"{app_env}. Set SEED_ADMIN_PASSWORD."
+                )
+            else:
+                # Development-only default demo credential.
+                print("  ! using default dev admin password (set SEED_ADMIN_PASSWORD to override)")
+                password = "password123"
+        else:
+            # Demo password: password123.
+            password = "password123"
         u = User(
             name=name, email=email, phone=phone, role=role,
-            # Demo password: password123.
-            password_hash=hash_password("password123"),
+            password_hash=hash_password(password),
         )
         db.add(u)
         users.append(u)

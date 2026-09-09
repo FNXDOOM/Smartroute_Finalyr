@@ -26,7 +26,14 @@ AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "clerk").lower()
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.getenv("CLERK_ISSUER", "")
 # Local JWT for Flutter; Clerk for web.
-LOCAL_JWT_SECRET = os.getenv("LOCAL_JWT_SECRET", "dev-only-change-me-in-production").strip()
+# Required: no predictable fallback. Startup fails when missing/placeholder.
+LOCAL_JWT_SECRET = os.getenv("LOCAL_JWT_SECRET", "").strip()
+_LOCAL_JWT_PLACEHOLDER = "dev-only-change-me-in-production"
+if not LOCAL_JWT_SECRET or LOCAL_JWT_SECRET == _LOCAL_JWT_PLACEHOLDER:
+    raise RuntimeError(
+        "LOCAL_JWT_SECRET is required. Set a strong random value in "
+        "backend/.env (see backend/.env.example)."
+    )
 LOCAL_JWT_EXPIRES_MINUTES = int(os.getenv("LOCAL_JWT_EXPIRES_MINUTES", "10080"))  # 7 days
 CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "")
 CLERK_ALLOW_NATIVE_CLIENTS = os.getenv("CLERK_ALLOW_NATIVE_CLIENTS", "false").lower() == "true"

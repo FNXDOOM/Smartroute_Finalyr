@@ -120,23 +120,27 @@ def create_db_tables(bind_engine=None):
             if "clerk_user_id" not in columns:
                 with target_engine.begin() as connection:
                     connection.execute(text("ALTER TABLE users ADD COLUMN clerk_user_id VARCHAR"))
+            if "driver_status" not in columns:
+                with target_engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN driver_status VARCHAR NOT NULL DEFAULT 'active'"))
+            # Indexes independently of whether columns were newly added.
+            if "clerk_user_id" in _sqlite_columns("users"):
                 with target_engine.begin() as connection:
                     connection.execute(text(
                         "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
                         "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
                     ))
-            if "driver_status" not in columns:
-                with target_engine.begin() as connection:
-                    connection.execute(text("ALTER TABLE users ADD COLUMN driver_status VARCHAR NOT NULL DEFAULT 'active'"))
         vehicle_columns = _sqlite_columns("vehicles")
-        if "vehicles" in existing_tables and "driver_user_id" not in vehicle_columns:
-            with target_engine.begin() as connection:
-                connection.execute(text("ALTER TABLE vehicles ADD COLUMN driver_user_id INTEGER"))
-            with target_engine.begin() as connection:
-                connection.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
-                    "ON vehicles (driver_user_id)"
-                ))
+        if "vehicles" in existing_tables:
+            if "driver_user_id" not in vehicle_columns:
+                with target_engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE vehicles ADD COLUMN driver_user_id INTEGER"))
+            if "driver_user_id" in _sqlite_columns("vehicles"):
+                with target_engine.begin() as connection:
+                    connection.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
+                        "ON vehicles (driver_user_id)"
+                    ))
         for table in ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles"):
             if table not in existing_tables:
                 continue
