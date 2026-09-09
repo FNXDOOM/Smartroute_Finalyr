@@ -5,6 +5,7 @@ from utils.geo import haversine_meters
 
 
 def _extract_pickup_coords(request) -> Tuple[float, float]:
+    """Extract pickup coordinates from a ride request."""
     if hasattr(request, "pickup_lat") and hasattr(request, "pickup_lng"):
         return float(request.pickup_lat), float(request.pickup_lng)
     if hasattr(request, "lat") and hasattr(request, "lng"):

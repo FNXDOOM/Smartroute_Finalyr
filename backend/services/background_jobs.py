@@ -52,6 +52,7 @@ _TASKS: List[asyncio.Task] = []
 
 
 def _start_job_run(db: Session, job_name: str, triggered_by_user_id: Optional[int], is_scheduled: bool = True) -> JobRun:
+    """Create and persist a running background-job record."""
     job_run = JobRun(
         job_name=job_name,
         status="running",
@@ -65,6 +66,7 @@ def _start_job_run(db: Session, job_name: str, triggered_by_user_id: Optional[in
 
 
 def _finish_job_run(db: Session, job_run: JobRun, status: str, summary: Dict, error_message: Optional[str] = None) -> None:
+    """Finalize a background-job record with its outcome."""
     job_run.status = status
     job_run.summary = summary
     job_run.error_message = error_message
@@ -81,6 +83,7 @@ def run_cluster_job(
     mode: str = LIVE_MODE,
     demo_run_id: Optional[str] = None,
 ) -> Dict:
+    """Execute clustering and record the background-job outcome."""
     try:
         mode = validate_ride_mode(mode)
         ride_query = apply_ride_scope(db.query(RideRequest), mode, demo_run_id)
@@ -240,6 +243,7 @@ def run_demand_refresh_job(
     triggered_by_user_id: Optional[int] = None,
     is_scheduled: bool = True,
 ) -> Dict:
+    """Refresh demand forecasts and record the job outcome."""
     job_run = _start_job_run(db, "refresh_demand_snapshots", triggered_by_user_id, is_scheduled)
     try:
         ref_time = reference_time or datetime.now(timezone.utc)
@@ -305,6 +309,7 @@ def run_vehicle_rebalance_job(
     triggered_by_user_id: Optional[int] = None,
     is_scheduled: bool = True,
 ) -> Dict:
+    """Generate rebalancing suggestions and record the job outcome."""
     job_run = _start_job_run(db, "rebalance_idle_vehicles", triggered_by_user_id, is_scheduled)
     try:
         idle_vehicles = db.query(Vehicle).filter(
@@ -723,6 +728,7 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
 
 
 async def _run_periodic(name: str, interval_seconds: int, runner):
+    """Run a background job repeatedly at the configured interval."""
     STATE.active_tasks.append(name)
     try:
         while True:
@@ -750,6 +756,7 @@ async def _run_periodic(name: str, interval_seconds: int, runner):
 
 
 def start_background_jobs() -> None:
+    """Start the periodic background-job tasks."""
     if STATE.running:
         return
 
@@ -763,6 +770,7 @@ def start_background_jobs() -> None:
 
 
 async def stop_background_jobs() -> None:
+    """Cancel the running periodic background-job tasks."""
     if not _TASKS:
         STATE.running = False
         return
@@ -774,6 +782,7 @@ async def stop_background_jobs() -> None:
 
 
 def get_background_job_state() -> Dict:
+    """Return scheduler state for each background job."""
     return {
         "running": STATE.running,
         "last_cluster_run_at": STATE.last_cluster_run_at,

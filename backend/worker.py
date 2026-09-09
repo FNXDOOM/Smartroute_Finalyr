@@ -7,6 +7,7 @@ from services.background_jobs import start_background_jobs, stop_background_jobs
 
 
 async def run_worker() -> None:
+    """Run background jobs until the worker is stopped."""
     start_background_jobs()
     try:
         await asyncio.Event().wait()

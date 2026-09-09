@@ -21,6 +21,7 @@ def snap_to_road(graph, lat: float, lng: float) -> Tuple[float, float, str]:
 # Cache graphs by grid cell
 @functools.lru_cache(maxsize=16)
 def _cached_road_graph(grid_lat: float, grid_lng: float, dist: int):
+    """Load and cache the road graph around a coordinate."""
     try:
         import osmnx as ox
         return ox.graph_from_point((grid_lat, grid_lng), dist=dist, network_type="drive")

@@ -38,9 +38,11 @@ class TrackingConnection:
 
 class ConnectionManager:
     def __init__(self):
+        """Initialize the ConnectionManager."""
         self.active_connections: List[TrackingConnection] = []
 
     async def connect(self, websocket: WebSocket, user_id: int, role: str):
+        """Register a WebSocket connection."""
         # Flutter omits bearer; accept without subprotocol.
         offered = {
             part.strip().lower()
@@ -54,9 +56,11 @@ class ConnectionManager:
         self.active_connections.append(TrackingConnection(websocket, user_id, role))
 
     def disconnect(self, websocket: WebSocket):
+        """Remove a WebSocket connection."""
         self.active_connections = [entry for entry in self.active_connections if entry.websocket is not websocket]
 
     async def broadcast_snapshot(self, db: Session, vehicles: list[Vehicle], events: list[TrackingEvent]):
+        """Broadcast the latest tracking snapshot to all clients."""
         dead = []
         for entry in self.active_connections:
             try:
@@ -79,6 +83,7 @@ class ConnectionManager:
             self.disconnect(websocket)
 
     async def broadcast_vehicle_update(self, vehicle: dict, event: dict):
+        """Broadcast one vehicle update to all connected clients."""
         db = SessionLocal()
         try:
             dead = []
@@ -141,6 +146,7 @@ _simulation_task = None
 
 
 def _serialize_vehicle(vehicle: Vehicle) -> dict:
+    """Convert a vehicle model into tracking payload data."""
     return {
         "id": vehicle.id,
         "license_plate": vehicle.license_plate,
@@ -152,6 +158,7 @@ def _serialize_vehicle(vehicle: Vehicle) -> dict:
 
 
 def _serialize_event(event: TrackingEvent) -> dict:
+    """Convert a tracking event model into payload data."""
     return {
         "id": event.id,
         "vehicle_id": event.vehicle_id,
@@ -167,6 +174,7 @@ def _serialize_event(event: TrackingEvent) -> dict:
 
 
 def _get_snapshot(db: Session, limit: int = 20) -> tuple[list[VehicleSnapshot], list[TrackingEventResponse]]:
+    """Build the current vehicle tracking snapshot."""
     vehicles = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE).order_by(Vehicle.id.asc()).all()
     events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit).all()
     vehicle_snapshots = [VehicleSnapshot.model_validate(vehicle) for vehicle in vehicles]
@@ -202,6 +210,7 @@ def get_tracking_feed(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return the latest vehicle locations and tracking events."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -223,6 +232,7 @@ def list_tracking_events(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return recent tracking events for a vehicle."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

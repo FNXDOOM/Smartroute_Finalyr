@@ -105,6 +105,7 @@ def create_db_tables(bind_engine=None):
         from sqlalchemy.exc import NoSuchTableError
 
         def _sqlite_columns(table_name: str) -> set:
+            """Return the column names for an existing SQLite table."""
             try:
                 return {
                     column["name"]
@@ -168,9 +169,9 @@ def create_db_tables(bind_engine=None):
 
 
 def get_db():
+    """Yield a database session and close it afterward."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-

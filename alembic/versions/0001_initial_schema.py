@@ -16,9 +16,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    """Apply the initial database schema migration."""
     # Versioned baseline; startup never alters tables
     Base.metadata.create_all(bind=op.get_bind())
 
 
 def downgrade() -> None:
+    """Revert the initial database schema migration."""
     Base.metadata.drop_all(bind=op.get_bind())

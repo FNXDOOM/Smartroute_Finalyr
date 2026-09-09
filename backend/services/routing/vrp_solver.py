@@ -173,12 +173,14 @@ def solve_vrp(
     routing = pywrapcp.RoutingModel(manager)
 
     def distance_callback(from_index, to_index):
+        """Return the routing distance between two indexed locations."""
         return distance_matrix[manager.IndexToNode(from_index)][manager.IndexToNode(to_index)]
 
     transit_cb_idx = routing.RegisterTransitCallback(distance_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_cb_idx)
 
     def demand_callback(from_index):
+        """Return the passenger demand for an indexed location."""
         return demands[manager.IndexToNode(from_index)]
 
     demand_cb_idx = routing.RegisterUnaryTransitCallback(demand_callback)

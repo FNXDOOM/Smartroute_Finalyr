@@ -20,6 +20,7 @@ PROXY_PREFIX = "/maps/stadia/resource"
 
 
 def _proxy_url(value: str, base_url: str) -> str:
+    """Build a URL for a proxied Stadia resource."""
     parsed = urlsplit(value)
     if parsed.hostname != STADIA_HOST:
         return value
@@ -30,6 +31,7 @@ def _proxy_url(value: str, base_url: str) -> str:
 
 
 def _rewrite_style(value, base_url: str):
+    """Rewrite remote style resources to use local proxy routes."""
     if isinstance(value, str):
         return _proxy_url(value, base_url)
     if isinstance(value, list):
@@ -41,6 +43,7 @@ def _rewrite_style(value, base_url: str):
 
 @router.get("/style.json")
 def stadia_style(request: Request, _: User = Depends(get_current_user)):
+    """Return the proxied Stadia map style."""
     base_url = str(request.base_url).rstrip("/")
     try:
         style = _rewrite_style(deepcopy(fetch_stadia_style()), base_url)
@@ -55,6 +58,7 @@ def stadia_resource(
     request: Request,
     _: User = Depends(get_current_user),
 ):
+    """Return a proxied Stadia map resource."""
     base_url = str(request.base_url).rstrip("/")
     try:
         content, content_type = fetch_stadia_resource(resource_path)

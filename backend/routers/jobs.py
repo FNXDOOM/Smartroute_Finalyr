@@ -28,6 +28,7 @@ router = APIRouter()
 
 
 def _require_admin_or_driver(current_user: User) -> None:
+    """Require the current user to be an administrator or driver."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -47,6 +48,7 @@ def _require_job_access(current_user: User, mode: str) -> None:
 
 @router.get("/status", response_model=BackgroundJobStatusResponse)
 def get_job_status(current_user: User = Depends(get_current_user)):
+    """Return the scheduler state and latest job outcomes."""
     _require_admin_or_driver(current_user)
     state = get_background_job_state()
     return BackgroundJobStatusResponse(
@@ -68,6 +70,7 @@ def list_job_runs(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Return recent runs for background jobs."""
     _require_admin_or_driver(current_user)
     runs = db.query(JobRun).order_by(JobRun.started_at.desc()).limit(limit).all()
     return [JobRunResponse.model_validate(run) for run in runs]
@@ -79,6 +82,7 @@ def list_demand_snapshots(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Return recent demand forecasts."""
     _require_admin_or_driver(current_user)
     snapshots = db.query(DemandSnapshot).order_by(DemandSnapshot.created_at.desc()).limit(limit).all()
     return [DemandSnapshotResponse.model_validate(snapshot) for snapshot in snapshots]
@@ -90,6 +94,7 @@ def list_rebalance_suggestions(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Return recent vehicle-rebalancing suggestions."""
     _require_admin_or_driver(current_user)
     suggestions = (
         db.query(VehicleRebalanceSuggestion)
@@ -107,6 +112,7 @@ def run_auto_dispatch_now(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Run automatic ride dispatch immediately."""
     try:
         mode = validate_ride_mode(mode)
         _require_job_access(current_user, mode)
@@ -128,6 +134,7 @@ def run_cluster_now(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Run ride clustering immediately."""
     try:
         mode = validate_ride_mode(mode)
         _require_job_access(current_user, mode)
@@ -147,6 +154,7 @@ def run_demand_now(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Refresh demand predictions immediately."""
     _require_admin_or_driver(current_user)
     return run_demand_refresh_job(db, triggered_by_user_id=current_user.id, is_scheduled=False)
 
@@ -156,6 +164,6 @@ def run_rebalance_now(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """Generate vehicle-rebalancing suggestions immediately."""
     _require_admin_or_driver(current_user)
     return run_vehicle_rebalance_job(db, triggered_by_user_id=current_user.id, is_scheduled=False)
-

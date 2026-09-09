@@ -24,6 +24,7 @@ def road_route(
     traffic: bool = Query(False),
     _: User = Depends(get_current_user),
 ):
+    """Return a road route between two coordinates."""
     if not all(
         is_india_location(lat, lng)
         for lat, lng in ((from_lat, from_lng), (to_lat, to_lng))
@@ -53,6 +54,7 @@ def nearest_road(
     lng: float = Query(..., ge=-180, le=180),
     _: User = Depends(get_current_user),
 ):
+    """Return the nearest road locations for supplied coordinates."""
     if not is_india_location(lat, lng):
         raise HTTPException(status_code=422, detail="Location is outside India")
     try:
@@ -72,6 +74,7 @@ def match_trace(
     locations: list[dict],
     _: User = Depends(get_current_user),
 ):
+    """Match a coordinate trace to the road network."""
     if not 2 <= len(locations) <= 100:
         raise HTTPException(status_code=422, detail="At least 2 and at most 100 GPS points are required")
     normalized = []
@@ -93,6 +96,7 @@ def route_matrix(
     payload: dict,
     current_user: User = Depends(get_current_user),
 ):
+    """Return a travel-cost matrix for source and target locations."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin or driver users can request a route matrix")
     sources = payload.get("sources") or []

@@ -30,6 +30,7 @@ def list_vehicles(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return vehicles visible to the current user."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -47,6 +48,7 @@ def list_idle_vehicles(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return active vehicles that are available for assignment."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -68,6 +70,7 @@ def assign_idle_vehicles_to_routes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Assign idle vehicles to routes."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -175,6 +178,7 @@ def create_vehicle(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Create a vehicle record."""
     if current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -209,6 +213,7 @@ def update_vehicle(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Update a vehicle record."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

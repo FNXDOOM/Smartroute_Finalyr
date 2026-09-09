@@ -10,6 +10,7 @@ INDIA_BOUNDS = {
 
 
 def is_india_location(lat: float, lng: float) -> bool:
+    """Return whether the coordinates fall within India."""
     return (
         INDIA_BOUNDS["min_lat"] <= lat <= INDIA_BOUNDS["max_lat"]
         and INDIA_BOUNDS["min_lng"] <= lng <= INDIA_BOUNDS["max_lng"]

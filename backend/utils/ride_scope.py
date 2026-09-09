@@ -9,6 +9,7 @@ VALID_RIDE_MODES = {LIVE_MODE, PRESENTATION_DEMO_MODE}
 
 
 def validate_ride_mode(mode: str) -> str:
+    """Validate and normalize a ride mode."""
     normalized = (mode or LIVE_MODE).strip().lower()
     if normalized not in VALID_RIDE_MODES:
         raise ValueError(f"Invalid ride mode: {mode}")

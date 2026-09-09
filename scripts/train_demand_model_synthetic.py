@@ -71,6 +71,7 @@ def _make_zone_centers(n: int) -> list[tuple[float, float, float]]:
 
 
 def generate_dataset() -> pd.DataFrame:
+    """Generate synthetic demand-model training data."""
     print(f"[synth] Generating {N_DAYS} days × {N_ZONES} zones × 24 hours …")
 
     zone_centers = _make_zone_centers(N_ZONES)
@@ -124,6 +125,7 @@ def add_historical_count(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def train(df: pd.DataFrame) -> XGBRegressor:
+    """Train and persist the synthetic demand model."""
     X = df[FEATURE_ORDER].values
     y = df["demand"].values
 
@@ -159,6 +161,7 @@ def train(df: pd.DataFrame) -> XGBRegressor:
 
 
 def main():
+    """Run the command-line entry point."""
     print("=" * 60)
     print("  SmartRouteAI — Demand Model Training (Synthetic)")
     print(f"  City   : {CITY_CENTER}")

@@ -3,6 +3,7 @@ from typing import List, Tuple
 
 
 def _extract_coords(point) -> Tuple[float, float]:
+    """Extract coordinates from a ride request."""
     if hasattr(point, "pickup_lat") and hasattr(point, "pickup_lng"):
         return float(point.pickup_lat), float(point.pickup_lng)
     if hasattr(point, "lat") and hasattr(point, "lng"):

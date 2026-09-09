@@ -23,6 +23,7 @@ router = APIRouter()
 
 
 def _require_admin_or_driver(current_user: User) -> None:
+    """Require the current user to be an administrator or driver."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -31,6 +32,7 @@ def _require_admin_or_driver(current_user: User) -> None:
 
 
 def _route_passenger_count(route: RoutePlan, stops_by_id: Dict[int, VirtualStop]) -> int:
+    """Return the passenger count recorded in route metadata."""
     assigned_stop_ids = []
     if route.route_metadata and isinstance(route.route_metadata, dict):
         assigned_stop_ids = route.route_metadata.get("assigned_stop_ids", []) or []
@@ -47,6 +49,7 @@ def get_analytics_overview(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return aggregate operational metrics for live rides."""
     _require_admin_or_driver(current_user)
 
     # Aggregate counts; avoid loading tables
@@ -164,6 +167,7 @@ def get_analytics_daily(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return daily ride metrics for the requested lookback period."""
     _require_admin_or_driver(current_user)
 
     if days < 1 or days > 90:

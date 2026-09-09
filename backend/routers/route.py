@@ -37,6 +37,7 @@ def optimize_routes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Build and persist optimized routes for eligible clusters."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -274,6 +275,7 @@ def list_routes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return route plans visible to the current user."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -296,6 +298,7 @@ def get_route_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return recently generated route plans."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

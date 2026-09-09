@@ -22,6 +22,7 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Manage application startup and shutdown tasks."""
     # Jobs run in worker; API owns WS broadcast loop.
     # Opt-in: run jobs in API for local dev.
     if ENABLE_TRACKING_BROADCAST:
@@ -89,6 +90,7 @@ app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
 
 @app.get("/")
 def root():
+    """Return basic API service metadata."""
     return {"message": "SmartRouteAI API is running"}
 
 

@@ -21,6 +21,7 @@ router = APIRouter()
 
 
 def _get_notification_for_user(db: Session, notification_id: int, user_id: int) -> Notification:
+    """Return a notification after verifying that the user owns it."""
     notification = (
         db.query(Notification)
         .filter(Notification.id == notification_id, Notification.user_id == user_id)
@@ -38,6 +39,7 @@ def list_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return notifications belonging to the current user."""
     query = db.query(Notification).filter(Notification.user_id == current_user.id)
     if unread_only:
         query = query.filter(Notification.is_read.is_(False))
@@ -60,6 +62,7 @@ def unread_count(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return the number of unread notifications."""
     count = (
         db.query(Notification)
         .filter(Notification.user_id == current_user.id, Notification.is_read.is_(False))
@@ -74,6 +77,7 @@ def mark_notification_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Mark one notification owned by the current user as read."""
     notification = _get_notification_for_user(db, notification_id, current_user.id)
     if not notification.is_read:
         notification.is_read = True
@@ -88,6 +92,7 @@ def mark_all_notifications_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Mark every notification for the current user as read."""
     notifications = (
         db.query(Notification)
         .filter(Notification.user_id == current_user.id, Notification.is_read.is_(False))

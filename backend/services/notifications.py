@@ -15,9 +15,11 @@ class NotificationConnectionManager:
     """Per-user WebSocket connections."""
 
     def __init__(self):
+        """Initialize the NotificationConnectionManager."""
         self.connections_by_user: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int, subprotocol: str | None = None):
+        """Register a WebSocket connection."""
         # Echo subprotocol only if client offered it.
         offered = {
             part.strip().lower()
@@ -31,6 +33,7 @@ class NotificationConnectionManager:
         self.connections_by_user.setdefault(user_id, []).append(websocket)
 
     def disconnect(self, websocket: WebSocket, user_id: int):
+        """Remove a WebSocket connection."""
         connections = self.connections_by_user.get(user_id)
         if not connections:
             return
@@ -40,6 +43,7 @@ class NotificationConnectionManager:
             self.connections_by_user.pop(user_id, None)
 
     async def send_to_user(self, user_id: int, message: str):
+        """Send a payload to every connection owned by a user."""
         connections = self.connections_by_user.get(user_id)
         if not connections:
             return
@@ -57,6 +61,7 @@ manager = NotificationConnectionManager()
 
 
 def serialize_notification(notification: Notification) -> dict:
+    """Convert a notification model into WebSocket payload data."""
     return {
         "id": notification.id,
         "user_id": notification.user_id,
@@ -84,6 +89,7 @@ def create_notification(
         metadata: Optional[dict[str, Any]] = None,
     broadcast: bool = True,
 ) -> Notification:
+    """Create a notification and deliver it to connected clients."""
     notification = Notification(
         user_id=user_id,
         notification_type=notification_type,
@@ -128,6 +134,7 @@ def create_notifications_for_users(
     metadata: Optional[dict[str, Any]] = None,
     broadcast: bool = True,
 ) -> List[Notification]:
+    """Create and deliver the same notification to multiple users."""
     notifications: List[Notification] = []
     for user_id in sorted(set(int(user_id) for user_id in user_ids)):
         notifications.append(
