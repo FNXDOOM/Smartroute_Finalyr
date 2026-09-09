@@ -1,14 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 
-/**
- * Generic reconnecting WebSocket hook.
- * factory: (token) => WebSocket instance
- * getToken: () => Promise<string> — called fresh before every (re)connect
- * attempt, never cached across retries. Clerk session tokens are short-lived
- * (~60s) and are meant to be re-fetched per use; reusing one token snapshot
- * across reconnect attempts means every retry after the first minute fails
- * verification and gets rejected before the server even accepts the socket.
- */
+// Reconnecting WebSocket with fresh tokens.
 export function useWebSocket(factory, getToken, onMessage, enabled = true) {
   const wsRef = useRef(null);
   const retryRef = useRef(null);

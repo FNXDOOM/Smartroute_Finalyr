@@ -16,10 +16,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # This is the versioned baseline. Future changes must be new revisions;
-    # application startup never creates or alters tables.
+    """Apply the initial database schema migration."""
+    # Versioned baseline; startup never alters tables
     Base.metadata.create_all(bind=op.get_bind())
 
 
 def downgrade() -> None:
+    """Revert the initial database schema migration."""
     Base.metadata.drop_all(bind=op.get_bind())

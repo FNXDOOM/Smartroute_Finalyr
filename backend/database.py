@@ -38,7 +38,7 @@ PortableGeometry = (
 
 
 def drop_db_tables(bind_engine=None):
-    """Safely drop database tables ignoring Spatialite DDL hooks on SQLite"""
+    """Drop tables; ignore Spatialite errors."""
     target_engine = bind_engine or engine
     try:
         Base.metadata.drop_all(bind=target_engine)
@@ -51,7 +51,7 @@ def drop_db_tables(bind_engine=None):
 
 
 def create_db_tables(bind_engine=None):
-    """Create database tables for the explicitly configured database."""
+    """Create tables for configured DB."""
     target_engine = bind_engine or engine
     try:
         Base.metadata.create_all(bind=target_engine)
@@ -65,9 +65,7 @@ def create_db_tables(bind_engine=None):
         else:
             raise e
 
-    # create_all() does not add columns to an existing table. Keep this small
-    # compatibility migration here until the project has a full Alembic
-    # migration history.
+    # Backfill columns; create_all skips existing tables.
     if target_engine.dialect.name == "postgresql":
         with target_engine.begin() as connection:
             connection.execute(text(
@@ -104,29 +102,50 @@ def create_db_tables(bind_engine=None):
                     f"CREATE INDEX IF NOT EXISTS ix_{table}_demo_run_id ON {table} (demo_run_id)"
                 ))
     elif target_engine.dialect.name == "sqlite":
-        columns = {column[1] for column in inspect(target_engine).get_columns("users")}
-        if "clerk_user_id" not in columns:
-            with target_engine.begin() as connection:
-                connection.execute(text("ALTER TABLE users ADD COLUMN clerk_user_id VARCHAR"))
-            with target_engine.begin() as connection:
-                connection.execute(text(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
-                    "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
-                ))
-        if "driver_status" not in columns:
-            with target_engine.begin() as connection:
-                connection.execute(text("ALTER TABLE users ADD COLUMN driver_status VARCHAR NOT NULL DEFAULT 'active'"))
-        vehicle_columns = {column[1] for column in inspect(target_engine).get_columns("vehicles")}
-        if "driver_user_id" not in vehicle_columns:
-            with target_engine.begin() as connection:
-                connection.execute(text("ALTER TABLE vehicles ADD COLUMN driver_user_id INTEGER"))
-            with target_engine.begin() as connection:
-                connection.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
-                    "ON vehicles (driver_user_id)"
-                ))
+        from sqlalchemy.exc import NoSuchTableError
+
+        def _sqlite_columns(table_name: str) -> set:
+            """Return the column names for an existing SQLite table."""
+            try:
+                return {
+                    column["name"]
+                    for column in inspect(target_engine).get_columns(table_name)
+                }
+            except NoSuchTableError:
+                return set()
+
+        existing_tables = set(inspect(target_engine).get_table_names())
+
+        columns = _sqlite_columns("users")
+        if "users" in existing_tables:
+            if "clerk_user_id" not in columns:
+                with target_engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN clerk_user_id VARCHAR"))
+            if "driver_status" not in columns:
+                with target_engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN driver_status VARCHAR NOT NULL DEFAULT 'active'"))
+            # Indexes independently of whether columns were newly added.
+            if "clerk_user_id" in _sqlite_columns("users"):
+                with target_engine.begin() as connection:
+                    connection.execute(text(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
+                        "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
+                    ))
+        vehicle_columns = _sqlite_columns("vehicles")
+        if "vehicles" in existing_tables:
+            if "driver_user_id" not in vehicle_columns:
+                with target_engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE vehicles ADD COLUMN driver_user_id INTEGER"))
+            if "driver_user_id" in _sqlite_columns("vehicles"):
+                with target_engine.begin() as connection:
+                    connection.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
+                        "ON vehicles (driver_user_id)"
+                    ))
         for table in ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles"):
-            columns = {column[1] for column in inspect(target_engine).get_columns(table)}
+            if table not in existing_tables:
+                continue
+            columns = _sqlite_columns(table)
             with target_engine.begin() as connection:
                 if "ride_mode" not in columns and "mode" in columns:
                     connection.execute(text(f"ALTER TABLE {table} RENAME COLUMN mode TO ride_mode"))
@@ -150,9 +169,9 @@ def create_db_tables(bind_engine=None):
 
 
 def get_db():
+    """Yield a database session and close it afterward."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-

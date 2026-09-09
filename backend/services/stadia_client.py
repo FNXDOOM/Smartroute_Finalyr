@@ -19,6 +19,7 @@ from config import (
 
 
 def _request_json(url: str, *, params: dict | None = None, body: dict | None = None) -> dict:
+    """Request a Stadia endpoint and return its JSON response."""
     if not STADIA_API_KEY:
         raise RuntimeError("Stadia API is not configured on the server")
 
@@ -42,6 +43,7 @@ def _request_json(url: str, *, params: dict | None = None, body: dict | None = N
 
 
 def _request_bytes(url: str, *, params: dict | None = None) -> tuple[bytes, str]:
+    """Request a Stadia endpoint and return its raw response body."""
     if not STADIA_API_KEY:
         raise RuntimeError("Stadia API is not configured on the server")
 
@@ -63,6 +65,7 @@ def _request_bytes(url: str, *, params: dict | None = None) -> tuple[bytes, str]
 
 
 def fetch_stadia_style() -> dict:
+    """Fetch the configured Stadia map style."""
     data, _ = _request_bytes(f"{STADIA_TILES_URL}/{STADIA_MAP_STYLE_PATH}")
     try:
         return json.loads(data.decode("utf-8"))
@@ -71,16 +74,17 @@ def fetch_stadia_style() -> dict:
 
 
 def fetch_stadia_resource(resource_path: str) -> tuple[bytes, str]:
+    """Fetch a validated resource from the Stadia tiles service."""
     safe_path = resource_path.strip().lstrip("/")
     if not safe_path or ".." in safe_path.split("/"):
         raise RuntimeError("Invalid Stadia map resource path")
-    # Stadia's sprite assets use the literal `@2x` suffix. Preserve `@` while
-    # still quoting spaces and other unsafe path characters.
+    # Preserve @ in @2x sprite paths.
     quoted_path = quote(unquote(safe_path), safe="/@:")
     return _request_bytes(f"{STADIA_TILES_URL}/{quoted_path}")
 
 
 def autocomplete(text: str, *, focus_point: str | None = None) -> dict:
+    """Return location suggestions for a search term."""
     params = {"text": text, "lang": "en", "boundary.country": "IND", "size": 8}
     if focus_point:
         lng, lat = focus_point.split(",", 1)
@@ -90,12 +94,14 @@ def autocomplete(text: str, *, focus_point: str | None = None) -> dict:
 
 
 def reverse_geocode(lat: float, lng: float) -> dict:
+    """Resolve coordinates to a nearby address."""
     return _request_json(
         f"{STADIA_GEOCODER_URL}/reverse", params={"point.lat": lat, "point.lon": lng}
     )
 
 
 def forward_geocode(text: str) -> dict:
+    """Resolve a place name to matching locations."""
     return _request_json(
         f"{STADIA_GEOCODER_URL}/search",
         params={"text": text, "lang": "en", "boundary.country": "IND", "size": 8},
@@ -110,6 +116,7 @@ def route(
     *,
     costing: str | None = None,
 ) -> dict:
+    """Return a route between two coordinates."""
     return route_many([
         {"lat": from_lat, "lon": from_lng},
         {"lat": to_lat, "lon": to_lng},
@@ -117,6 +124,7 @@ def route(
 
 
 def route_many(locations: list[dict], *, costing: str | None = None) -> dict:
+    """Return a route through an ordered list of locations."""
     selected_costing = costing or STADIA_ROUTING_COSTING
     body = {
         "locations": locations,
@@ -125,8 +133,7 @@ def route_many(locations: list[dict], *, costing: str | None = None) -> dict:
         "directions_options": {"units": "kilometers"},
     }
     if selected_costing in {"auto_traffic", "auto_traffic_premium"}:
-        # Valhalla's type 0 means depart at the current time, allowing the
-        # provider to apply the live traffic profile where the plan supports it.
+        # type 0 = depart now (live traffic).
         body["date_time"] = {"type": 0}
     return _request_json(
         STADIA_ROUTER_URL,
@@ -135,10 +142,12 @@ def route_many(locations: list[dict], *, costing: str | None = None) -> dict:
 
 
 def nearest_roads(locations: list[dict]) -> dict:
+    """Snap locations to their nearest roads."""
     return _request_json(STADIA_NEAREST_ROADS_URL, body={"locations": locations, "verbose": True})
 
 
 def matrix(sources: list[dict], targets: list[dict], *, costing: str | None = None) -> dict:
+    """Return a travel-cost matrix for source and target locations."""
     return _request_json(
         STADIA_MATRIX_URL,
         body={
@@ -151,6 +160,7 @@ def matrix(sources: list[dict], targets: list[dict], *, costing: str | None = No
 
 
 def map_match(locations: list[dict], *, costing: str | None = None) -> dict:
+    """Match an ordered coordinate trace to roads."""
     return _request_json(
         STADIA_MAP_MATCH_URL,
         body={
@@ -163,6 +173,7 @@ def map_match(locations: list[dict], *, costing: str | None = None) -> dict:
 
 
 def _decode_polyline(encoded: str, precision: int = 6) -> list[list[float]]:
+    """Decode an encoded route polyline into coordinates."""
     coordinates = []
     index = lat = lng = 0
     factor = 10 ** precision
@@ -245,9 +256,7 @@ def extract_nearest_point(data) -> dict | None:
         return None
     point = candidates[0] or {}
 
-    # Valhalla nests the snapped coordinate inside the first correlated
-    # "edges" (or "nodes") entry rather than at the top level of each
-    # location result.
+    # Snapped coords live in nested edges/nodes.
     nested = point.get("location") or point.get("point") or {}
     if not nested:
         nested = next(iter(point.get("edges") or point.get("nodes") or []), {}) or {}

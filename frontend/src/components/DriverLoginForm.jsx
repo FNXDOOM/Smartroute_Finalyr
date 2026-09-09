@@ -24,9 +24,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   const [pendingVerification, setPendingVerification] = useState(false)
   const [code, setCode] = useState('')
 
-  // ─── Wait for Clerk to hand out a usable session token ───────────────────────
-  // Firing an authenticated call the instant after setActive races session
-  // propagation and comes back 401. Poll briefly instead.
+  // Poll briefly for Clerk session token.
   const waitForSessionToken = async (tries = 6, delayMs = 800) => {
     for (let i = 0; i < tries; i += 1) {
       try {
@@ -38,7 +36,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
     return null
   }
 
-  // ─── Driver Sign In (Strictly Credential-Based) ──────────────────────────────
+  // Driver sign-in with credentials.
   const handleDriverSignIn = async (e) => {
     e.preventDefault()
     if (!isSignInLoaded) return
@@ -54,10 +52,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
 
       if (result.status === 'complete') {
         await setSignInActive({ session: result.createdSessionId })
-        // Returning drivers already carry their role. Accounts that never
-        // finished onboarding (still passenger) are routed to the in-app
-        // driver application view — it must live inside the app because the
-        // login screen unmounts the moment sign-in completes.
+        // Route non-drivers to driver application.
         try {
           await waitForSessionToken(3, 700)
           const profile = await authApi.getProfile()
@@ -80,10 +75,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
     }
   }
 
-  // ─── Promote the fresh Clerk account to driver + register the vehicle ────────
-  // Backend auto-provisions every new user as passenger; this is the step
-  // that flips role to driver / pending_verification (admin approval still
-  // required before dispatch access).
+  // Promote new account to driver role.
   const submitDriverApplication = async () => {
     const plate = licensePlate.trim().toUpperCase()
     if (!plate) {
@@ -109,7 +101,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
     }
   }
 
-  // ─── Driver Sign Up & Vehicle Registration ──────────────────────────────────
+  // Driver sign-up and vehicle registration.
   const handleDriverSignUp = async (e) => {
     e.preventDefault()
     if (!isSignUpLoaded) return
@@ -130,12 +122,11 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
 
       if (result.status === 'complete') {
         await setSignUpActive({ session: result.createdSessionId })
-        // Promote to driver (or surface the plate error); then refresh to
-        // server truth via onSuccess.
+        // Promote to driver, then refresh.
         await submitDriverApplication()
         await onSuccess?.()
       } else if (result.status === 'missing_requirements') {
-        // Prepare email verification if required by Clerk policy
+        // Prepare email verification if needed.
         await signUp.prepareEmailAddressVerification({ strategy: 'email_code' })
         setPendingVerification(true)
         setNoticeMsg(`Verification code sent to ${identifier.trim()}. Enter it below to complete driver onboarding.`)
@@ -148,7 +139,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
     }
   }
 
-  // ─── Verify emailed code to finish driver onboarding ─────────────────────────
+  // Verify email code to finish onboarding.
   const handleVerifyCode = async (e) => {
     e.preventDefault()
     if (!isSignUpLoaded || !code.trim()) return

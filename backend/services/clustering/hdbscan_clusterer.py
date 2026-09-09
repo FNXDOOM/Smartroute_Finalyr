@@ -5,6 +5,7 @@ from utils.geo import haversine_meters
 
 
 def _extract_pickup_coords(request) -> Tuple[float, float]:
+    """Extract pickup coordinates from a ride request."""
     if hasattr(request, "pickup_lat") and hasattr(request, "pickup_lng"):
         return float(request.pickup_lat), float(request.pickup_lng)
     if hasattr(request, "lat") and hasattr(request, "lng"):
@@ -49,8 +50,7 @@ def cluster_passengers(
             cluster_selection_method="leaf",
         )
         labels = clusterer.fit_predict(np.radians(coords))
-        # If HDBSCAN still produces all noise (can happen with very few points),
-        # fall through to DBSCAN which is more reliable for small, tight groups.
+        # All noise: fall back to DBSCAN.
         if (labels == -1).all():
             raise ValueError("HDBSCAN produced all-noise; using DBSCAN fallback")
     except Exception:

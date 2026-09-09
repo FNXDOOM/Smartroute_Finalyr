@@ -30,6 +30,7 @@ router = APIRouter()
 
 
 def _cluster_centroid(requests: List[RideRequest]) -> tuple[float, float]:
+    """Return the average coordinates for a cluster."""
     if not requests:
         return 0.0, 0.0
     lat_sum = sum(req.pickup_lat for req in requests)
@@ -46,14 +47,14 @@ def run_clustering(
     current_user: User = Depends(get_current_user),
     h3_index: Optional[str] = Query(None, description="Optional H3 index filter"),
 ):
+    """Cluster unassigned ride requests and persist the result."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can trigger clustering",
         )
 
-    # The regular admin clustering action must never pull presentation-demo
-    # rides into the live dispatch pool.
+    # Live only; exclude demo rides.
     query = db.query(RideRequest).filter(
         RideRequest.status == "pending",
         RideRequest.mode == LIVE_MODE,
@@ -187,6 +188,7 @@ def list_cluster_runs(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return recent clustering runs visible to the current user."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -209,6 +211,7 @@ def get_cluster_run(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return one clustering run after applying access controls."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

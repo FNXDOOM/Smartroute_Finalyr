@@ -28,13 +28,14 @@ def test_websocket_token_uses_bearer_subprotocol():
     assert get_websocket_token(websocket) == "eyJ.test.token"
 
 
-def test_websocket_query_tokens_are_rejected():
+def test_websocket_query_token_accepted_for_native_clients():
+    # Flutter fallback: ?token= allowed, header preferred
     websocket = SimpleNamespace(
         headers={},
         cookies={},
         query_params={"token": "eyJ.test.token"},
     )
-    assert get_websocket_token(websocket) is None
+    assert get_websocket_token(websocket) == "eyJ.test.token"
 
 
 def test_liveness_probe_is_public():

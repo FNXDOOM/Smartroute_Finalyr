@@ -14,26 +14,24 @@ from services.stadia_client import (
 from utils.auth_utils import get_current_user
 
 router = APIRouter()
-# Derived from config instead of hardcoded so a changed STADIA_TILES_URL
-# (different region/CDN) doesn't silently stop being rewritten, which would
-# otherwise leak the raw Stadia api_key straight to the browser.
+# From config; prevents api_key leak.
 STADIA_HOST = urlsplit(STADIA_TILES_URL).hostname
 PROXY_PREFIX = "/maps/stadia/resource"
 
 
 def _proxy_url(value: str, base_url: str) -> str:
+    """Build a URL for a proxied Stadia resource."""
     parsed = urlsplit(value)
     if parsed.hostname != STADIA_HOST:
         return value
     query = [(key, item) for key, item in parse_qsl(parsed.query, keep_blank_values=True) if key != "api_key"]
     suffix = f"?{urlencode(query)}" if query else ""
-    # MapLibre requires style fields like "sprite" to already be absolute -
-    # it resolves them with `new URL()` and no base, so a bare path throws
-    # "Invalid sprite URL ... must be absolute" and aborts the whole style.
+    # MapLibre needs absolute sprite URLs.
     return f"{base_url.rstrip('/')}{PROXY_PREFIX}{parsed.path}{suffix}"
 
 
 def _rewrite_style(value, base_url: str):
+    """Rewrite remote style resources to use local proxy routes."""
     if isinstance(value, str):
         return _proxy_url(value, base_url)
     if isinstance(value, list):
@@ -45,6 +43,7 @@ def _rewrite_style(value, base_url: str):
 
 @router.get("/style.json")
 def stadia_style(request: Request, _: User = Depends(get_current_user)):
+    """Return the proxied Stadia map style."""
     base_url = str(request.base_url).rstrip("/")
     try:
         style = _rewrite_style(deepcopy(fetch_stadia_style()), base_url)
@@ -59,6 +58,7 @@ def stadia_resource(
     request: Request,
     _: User = Depends(get_current_user),
 ):
+    """Return a proxied Stadia map resource."""
     base_url = str(request.base_url).rstrip("/")
     try:
         content, content_type = fetch_stadia_resource(resource_path)

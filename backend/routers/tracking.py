@@ -38,16 +38,29 @@ class TrackingConnection:
 
 class ConnectionManager:
     def __init__(self):
+        """Initialize the ConnectionManager."""
         self.active_connections: List[TrackingConnection] = []
 
     async def connect(self, websocket: WebSocket, user_id: int, role: str):
-        await websocket.accept(subprotocol="bearer")
+        """Register a WebSocket connection."""
+        # Flutter omits bearer; accept without subprotocol.
+        offered = {
+            part.strip().lower()
+            for part in websocket.headers.get("sec-websocket-protocol", "").split(",")
+            if part.strip()
+        }
+        if "bearer" in offered:
+            await websocket.accept(subprotocol="bearer")
+        else:
+            await websocket.accept()
         self.active_connections.append(TrackingConnection(websocket, user_id, role))
 
     def disconnect(self, websocket: WebSocket):
+        """Remove a WebSocket connection."""
         self.active_connections = [entry for entry in self.active_connections if entry.websocket is not websocket]
 
     async def broadcast_snapshot(self, db: Session, vehicles: list[Vehicle], events: list[TrackingEvent]):
+        """Broadcast the latest tracking snapshot to all clients."""
         dead = []
         for entry in self.active_connections:
             try:
@@ -70,6 +83,7 @@ class ConnectionManager:
             self.disconnect(websocket)
 
     async def broadcast_vehicle_update(self, vehicle: dict, event: dict):
+        """Broadcast one vehicle update to all connected clients."""
         db = SessionLocal()
         try:
             dead = []
@@ -132,6 +146,7 @@ _simulation_task = None
 
 
 def _serialize_vehicle(vehicle: Vehicle) -> dict:
+    """Convert a vehicle model into tracking payload data."""
     return {
         "id": vehicle.id,
         "license_plate": vehicle.license_plate,
@@ -143,6 +158,7 @@ def _serialize_vehicle(vehicle: Vehicle) -> dict:
 
 
 def _serialize_event(event: TrackingEvent) -> dict:
+    """Convert a tracking event model into payload data."""
     return {
         "id": event.id,
         "vehicle_id": event.vehicle_id,
@@ -158,6 +174,7 @@ def _serialize_event(event: TrackingEvent) -> dict:
 
 
 def _get_snapshot(db: Session, limit: int = 20) -> tuple[list[VehicleSnapshot], list[TrackingEventResponse]]:
+    """Build the current vehicle tracking snapshot."""
     vehicles = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE).order_by(Vehicle.id.asc()).all()
     events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit).all()
     vehicle_snapshots = [VehicleSnapshot.model_validate(vehicle) for vehicle in vehicles]
@@ -193,6 +210,7 @@ def get_tracking_feed(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return the latest vehicle locations and tracking events."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -214,6 +232,7 @@ def list_tracking_events(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return recent tracking events for a vehicle."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -274,8 +293,7 @@ async def update_vehicle_location(
                 matched_lng, matched_lat = matched_geometry[-1]
                 map_matched = True
         except RuntimeError:
-            # GPS telemetry must continue even when the optional map-matching
-            # request is unavailable or the account has no routing quota.
+            # Keep GPS updates on map-match failure.
             pass
 
     vehicle.lat = matched_lat
@@ -344,8 +362,7 @@ async def update_vehicle_location(
     db.refresh(vehicle)
     db.refresh(event)
 
-    # Broadcast through the scoped manager so passengers only receive their
-    # assigned vehicle, while admin/driver connections receive fleet updates.
+    # Scoped broadcast: passengers get own vehicle only.
     asyncio.create_task(manager.broadcast_vehicle_update(_serialize_vehicle(vehicle), _serialize_event(event)))
 
     return VehicleSnapshot.model_validate(vehicle)
@@ -355,7 +372,8 @@ async def update_vehicle_location(
 async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket endpoint for live vehicle tracking.
-    Clients must pass a valid JWT as the ``bearer`` WebSocket subprotocol.
+    Web clients send the JWT as the ``bearer`` WebSocket subprotocol;
+    native mobile clients (Flutter) send ``?token=<JWT>`` instead.
     """
     token = get_websocket_token(websocket)
     if not token:

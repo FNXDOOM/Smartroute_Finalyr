@@ -14,6 +14,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { MapLegend } from '@/components/dashboard-shared'
 
 const DEMO_RIDES = DEMO_PRESETS.indiranagar.riders.map((r, i) => ({
   id: r.id,
@@ -43,18 +45,12 @@ function nearestSegIndex(lng, lat, path) {
   return best
 }
 
-// Board segment of each demo rider on the full pooled path (Priya idx 1,
-// Rohan idx 2, Ananya idx 3). Computed, not hardcoded, so the data fix above
-// and the sim/manifest thresholds can't drift apart.
+// Demo rider board segments on pooled path.
 const demoBoardSeg = Object.fromEntries(
   DEMO_RIDES.map((r) => [r.id, nearestSegIndex(r.plng, r.plat, FULL_PATH)]),
 )
 
-// Per-ride animation path. The pooled roadPath ends at each rider's door in
-// order: idx 9 = Church St (Rohan, stop 2), idx 10 = Brigade Rd (Priya,
-// stop 3), idx 11 = MG Road (Ananya, stop 1). Truncating there gives each of
-// the 3 previews a visibly different route + end marker instead of replaying
-// the same full animation.
+// Per-ride path truncated for distinct previews.
 function pathForRide(ride) {
   if (!ride || ride.plat == null || ride.dlat == null) return FULL_PATH
   if (ride.stopOrder === 2) {
@@ -93,8 +89,7 @@ export default function DriverView({ user, view, setView, toast }) {
 
   const loadData = useCallback(async () => {
     try {
-      // No status filter: the driver needs incoming (pending/clustered) as
-      // well as active trips on one screen.
+      // Load all rides; driver needs incoming and active.
       const [v, r, ro] = await Promise.all([vehiclesApi.list(), ridesApi.getAll({ limit: 50 }), routeApi.history(10)])
       const list = Array.isArray(r) ? r : []
       setVehicles(Array.isArray(v)?v:[])
@@ -107,8 +102,7 @@ export default function DriverView({ user, view, setView, toast }) {
     setLoading(false)
   }, [toast])
 
-  // Light poll so a passenger's normal-mode request lands in Incoming within
-  // seconds. Only the ride list refreshes; vehicles/routes stay as loaded.
+// Poll rides so new requests appear in Incoming.
   const refreshRides = useCallback(async () => {
     try {
       const r = await ridesApi.getAll({ limit: 50 })
@@ -148,8 +142,7 @@ export default function DriverView({ user, view, setView, toast }) {
         if (!token || dead) return
         wsRef.current = createTrackingWS(token, (msg) => {
           if (dead) return
-          // Only the driver's own vehicle matters here; the fleet snapshot
-          // isn't displayed on this panel.
+          // Only track driver's own vehicle.
           if (msg.type === 'vehicle_location_update' && msg.vehicle) {
             setMyVehicle(prev => prev?.id === msg.vehicle.id ? { ...prev, ...msg.vehicle } : prev)
           }
@@ -178,9 +171,7 @@ export default function DriverView({ user, view, setView, toast }) {
     try {
       await ridesApi.updateStatus(rideId, status)
       setRides(prev => prev.map(r => r.id===rideId ? {...r, status} : r))
-      // Trip over (done or cancelled): free the driver's own vehicle again.
-      // Route-linked rides are idled by the backend; hand-driven ones need it
-      // from here, otherwise the fleet leaks 'active' vehicles forever.
+      // Trip over: free driver's vehicle.
       if ((status === 'completed' || status === 'cancelled') && myVehicle) {
         try {
           await vehiclesApi.update(myVehicle.id, { status: 'idle' })
@@ -191,8 +182,7 @@ export default function DriverView({ user, view, setView, toast }) {
     } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
   }
 
-  // Accept a passenger's normal-mode request: mark the driver's vehicle
-  // active, then take the ride. The backend notifies the passenger instantly.
+// Accept ride: activate vehicle, notify passenger.
   const acceptRide = async (rideId) => {
     if (myVehicle) {
       try {
@@ -215,11 +205,7 @@ export default function DriverView({ user, view, setView, toast }) {
     } catch(e) { toast('error','Could not decline', e?.response?.data?.detail||'') }
   }
 
-  // Interactive Driver Route Drive Simulation.
-  // overrideRide === undefined → drive whatever is previewed (or the full
-  // pooled route). overrideRide === null → force the full pooled route.
-  // Each previewed rider drives its own truncated pathForRide so ride 2/3
-  // don't replay ride 1's animation.
+// Drive simulation for previewed or full route.
   const toggleDriveSimulation = (overrideRide) => {
     if (simActive) {
       if (simTimerRef.current) clearInterval(simTimerRef.current)
@@ -230,8 +216,7 @@ export default function DriverView({ user, view, setView, toast }) {
     }
 
     const resolvedRide = overrideRide !== undefined ? overrideRide : previewRide
-    // Switching context (e.g. finished ride 1, now starting ride 2, or a
-    // paused single run giving way to a full pooled run) must restart.
+    // Restart when switching ride context.
     const switchingContext = (resolvedRide?.id ?? null) !== (runRide?.id ?? (simPathRef.current?.rideId ?? null))
     let p = simProgress >= 1 || (switchingContext && simProgress > 0) ? 0 : simProgress
     let path
@@ -279,7 +264,7 @@ export default function DriverView({ user, view, setView, toast }) {
       if (single) {
         if (p >= boardAt) fireOnce('board', 'success', `Boarded ${resolvedRide.name}`, `${resolvedRide.pickup}.`)
       } else {
-        // Sequential boardings at three distinct pins — not one shared stop.
+        // Sequential boardings at distinct pins.
         if (p >= demoBoardSeg[103] / totalSegments) fireOnce('board-priya', 'success', 'Boarded Priya Iyer', 'Stop C · 100 Feet Rd.')
         if (p >= demoBoardSeg[102] / totalSegments) fireOnce('board-rohan', 'success', 'Boarded Rohan Mehta', 'Stop B · 100 Feet Rd.')
         if (p >= demoBoardSeg[101] / totalSegments) fireOnce('board-ananya', 'success', 'Boarded Ananya Sharma', 'Stop A · 100 Feet Rd.')
@@ -305,8 +290,7 @@ export default function DriverView({ user, view, setView, toast }) {
       setSimBearing(bearing)
       setSimSpeed(Math.round(35 + Math.sin(p * 20) * 5))
 
-      // Push telemetry (functional update — the interval closure holds a stale
-      // myVehicle value, so never gate on it).
+      // Push telemetry via functional update.
       setMyVehicle(prev => (prev ? { ...prev, lat: currLat, lng: currLng } : prev))
     }, 80)
   }
@@ -322,8 +306,7 @@ export default function DriverView({ user, view, setView, toast }) {
     setRunRide(null)
   }
 
-  // Opening a different ride's preview always restarts from the depot so ride
-  // 2 never resumes ride 1's mid-path progress.
+// New preview restarts from depot.
   const openPreview = (ride) => {
     if (simTimerRef.current) clearInterval(simTimerRef.current)
     simPathRef.current = null
@@ -338,8 +321,7 @@ export default function DriverView({ user, view, setView, toast }) {
   }
 
   const openFullNav = () => {
-    // A paused single-rider run can't resume on the full pooled path —
-    // discard it so Start begins a fresh full drive.
+    // Discard paused single run before full drive.
     if (!simActive && runRide && simProgress > 0) resetSim()
     setPreviewRide(null)
     setView('driver-map')
@@ -382,16 +364,12 @@ export default function DriverView({ user, view, setView, toast }) {
     return <RoutesView routes={routes} loading={loading} onBack={()=>setView('driver-home')} onStartNav={startFullNav} />
   }
 
-  // Driver dashboard home
+  // Driver home
   const firstName = user?.name?.split(' ')[0] || 'Driver'
   const incoming = rides.filter((r) => ['pending', 'clustered'].includes(r.status))
   const activeTrips = rides.filter((r) => ['assigned', 'arriving', 'in_progress'].includes(r.status))
   const usingDemoManifest = rides.length === 0
-  // Pooled thresholds for the full 11-segment roadPath: sequential boardings
-  // at three distinct pins (Priya Stop C → Rohan Stop B → Ananya Stop A),
-  // then drops Rohan (stop 2) at seg 9, Priya (stop 3) at seg 10, Ananya
-  // (stop 1) at the end. A single-rider run (runRide set) only moves its own
-  // card, boarding at its own pin.
+  // Pooled thresholds for boardings and drops.
   const demoDropAt = { 1: 1.01, 2: 9 / 11, 3: 10 / 11 }
   const demoBoardAt = { 101: demoBoardSeg[101] / 11, 102: demoBoardSeg[102] / 11, 103: demoBoardSeg[103] / 11 }
   const runBoardAt = runRide ? Math.min(nearestSegIndex(runRide.plng, runRide.plat, pathForRide(runRide)) / (pathForRide(runRide).length - 1), 0.9) : 3 / 11
@@ -433,13 +411,13 @@ export default function DriverView({ user, view, setView, toast }) {
         </Avatar>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-xl font-extrabold tracking-tight md:text-2xl">Driver Dashboard</h1>
+            <h1 className="mob-page-title">Driver Dashboard</h1>
             <Badge variant="secondary" className="gap-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
               </span>
-              Live dispatch
+              <span className="sr-only">Live: </span>Live dispatch
             </Badge>
           </div>
           <p className="mt-0.5 truncate text-sm text-muted-foreground">
@@ -447,19 +425,22 @@ export default function DriverView({ user, view, setView, toast }) {
           </p>
         </div>
         {vehicles.length > 1 ? (
-          <select
-            aria-label="Select vehicle"
-            value={myVehicle?.id ?? ''}
-            onChange={(e) => {
-              const next = vehicles.find((v) => String(v.id) === e.target.value)
+          <Select
+            value={myVehicle ? String(myVehicle.id) : ''}
+            onValueChange={(val) => {
+              const next = vehicles.find((v) => String(v.id) === val)
               if (next) setMyVehicle(next)
             }}
-            className="h-9 rounded-md border border-input bg-background px-2.5 text-sm shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {vehicles.map((v) => (
-              <option key={v.id} value={v.id}>{v.license_plate} · {v.status}</option>
-            ))}
-          </select>
+            <SelectTrigger className="w-[220px] font-mono text-xs" aria-label="Select vehicle">
+              <SelectValue placeholder="Select vehicle" />
+            </SelectTrigger>
+            <SelectContent>
+              {vehicles.map((v) => (
+                <SelectItem key={v.id} value={String(v.id)}>{v.license_plate} · {v.status}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         ) : myVehicle ? (
           <Badge variant="outline" className="gap-1.5 font-mono">
             <CarFront className="h-3.5 w-3.5" /> {myVehicle.license_plate}
@@ -665,12 +646,12 @@ export default function DriverView({ user, view, setView, toast }) {
               <div className="rounded-lg bg-muted/50 p-3">
                 <div className="flex items-center justify-between">
                   <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                    <BatteryCharging className="h-3.5 w-3.5 text-emerald-500" /> Battery / Range
+                    <BatteryCharging className="h-3.5 w-3.5 text-green-600 dark:text-green-400" /> Battery / Range
                   </p>
-                  <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">88%</span>
+                  <span className="text-xs font-bold text-green-700 dark:text-green-400">88%</span>
                 </div>
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
-                  <div className="h-full w-[88%] rounded-full bg-emerald-500" />
+                  <div className="h-full w-[88%] rounded-full bg-green-500" />
                 </div>
                 <p className="mt-1.5 text-xs text-muted-foreground">195 km remaining · healthy</p>
               </div>
@@ -724,23 +705,18 @@ function StatCard({ icon: Icon, label, value, sub }) {
             <Icon className="h-4 w-4 text-primary" />
           </span>
         </div>
-        <p className="mt-2 truncate font-display text-xl font-extrabold tracking-tight" title={value}>{value}</p>
+        <p className="mob-data mt-2 truncate text-xl font-bold tracking-tight" title={value}>{value}</p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>
       </CardContent>
     </Card>
   )
 }
 
-// ─── Live Navigation Map View ──────────────────────────────────────────────────
+// Live navigation map
 function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simProgress, simSpeed, simCoords, simBearing, onToggleSim, previewRide, runRide, onClearPreview, onResetSim }) {
-  // The run's own ride wins once a simulation exists; otherwise the static
-  // preview. Either way the blue route line + animation follow that ride's
-  // truncated pathForRide, never a shared full path.
+  // Active ride wins; route follows its path.
   const contextRide = (simActive || simProgress > 0) && runRide ? runRide : previewRide
-  // Memoized: the sim ticks every 80ms (new simCoords → re-render). Without
-  // this, fresh array references retrigger AppMap's overlay effect each tick,
-  // which removes + re-adds every pin so the drop-in animation replays as a
-  // rapid blink. These only recompute when the selected ride actually changes.
+  // Memoized paths to avoid pin flicker.
   const activePath = useMemo(() => pathForRide(contextRide), [contextRide])
   const vehicle = {
     id: myVehicle?.id || 99,
@@ -769,8 +745,7 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
         ]
   ), [contextRide])
 
-  // When previewing a single rider (and not driving), center on that rider's
-  // leg so each card visibly opens a different map. While driving, follow GPS.
+  // Center on previewed leg; follow GPS when driving.
   const mapCenter = simActive
     ? [simCoords[1], simCoords[0]]
     : contextRide?.plat != null && contextRide?.dlat != null
@@ -859,9 +834,9 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
       </div>
 
       {/* Map */}
-      <div className="relative min-h-[420px] min-w-0 flex-1">
+      <div className="relative min-h-[420px] min-w-0 flex-1 overflow-hidden rounded-2xl border">
         {runRide && (simActive || simProgress > 0) ? (
-          <div className="absolute left-3 top-3 z-[500] flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 shadow backdrop-blur">
+          <div className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 shadow backdrop-blur">
             <Badge className="gap-1">
               <MapPin className="h-3 w-3" />
               Driving {runRide.stopOrder ? `stop ${runRide.stopOrder}` : 'ride'} · {runRide.name} · {Math.round(simProgress * 100)}%
@@ -876,7 +851,7 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
             )}
           </div>
         ) : previewRide && (
-          <div className="absolute left-3 top-3 z-[500] flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 shadow backdrop-blur">
+          <div className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 shadow backdrop-blur">
             <Badge className="gap-1">
               <MapPin className="h-3 w-3" />
               {previewRide.stopOrder ? `Previewing stop ${previewRide.stopOrder}` : 'Previewing ride'} · {previewRide.name}
@@ -901,31 +876,31 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
         />
 
         {/* Floating telemetry HUD */}
-        <Card className="absolute bottom-4 left-4 z-[500] border-white/10 bg-slate-950/85 text-slate-100 shadow-xl backdrop-blur-md dark:bg-slate-950/85">
+        <Card className="absolute bottom-4 left-4 z-10 border-border/80 bg-card/95 text-card-foreground shadow-xl backdrop-blur-md">
           <CardContent className="flex items-center gap-4 p-3.5">
             <div>
-              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              <p className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                 <Gauge className="h-3 w-3" /> Speed
               </p>
-              <p className="font-display text-2xl font-extrabold text-teal-300">
+              <p className="mob-data text-2xl font-bold text-foreground">
                 {simActive ? simSpeed : 0} <span className="text-xs font-semibold">km/h</span>
               </p>
             </div>
-            <div className="h-9 w-px bg-white/15" />
+            <div className="h-9 w-px bg-border" />
             <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Next stop</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Next stop</p>
               <p className="truncate text-xs font-bold">
                 {nextStopLabel}
               </p>
-              <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-400">
+              <p className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
                 <Clock className="h-3 w-3" /> {simActive ? `~${kmLeft} km to ${nextStopShort} · ${simSpeed} km/h` : 'Awaiting start'}
               </p>
             </div>
           </CardContent>
         </Card>
 
-        <Badge variant="secondary" className="absolute right-3 top-3 z-[500] gap-1.5 shadow">
-          <span className={cn('h-2 w-2 rounded-full', simActive ? 'animate-pulse bg-emerald-500' : 'bg-muted-foreground')} />
+        <Badge variant="secondary" className="absolute right-3 top-3 z-10 gap-1.5 shadow">
+          <span className={cn('h-2 w-2 rounded-full', simActive ? 'animate-pulse bg-green-500' : 'bg-muted-foreground')} aria-hidden="true" />
           {vehicle.license_plate} · {simActive ? 'en route' : 'idle'}
         </Badge>
       </div>
@@ -933,7 +908,7 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
   )
 }
 
-// ─── Routes View ──────────────────────────────────────────────────────────────
+// Routes view
 function RoutesView({ routes, loading, onBack, onStartNav }) {
   const [selectedId, setSelectedId] = useState(null)
 
@@ -949,7 +924,7 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
           <div>
-            <h1 className="font-display text-lg font-extrabold tracking-tight md:text-xl">My Assigned Routes</h1>
+            <h1 className="mob-page-title text-lg">My Assigned Routes</h1>
             <p className="text-xs text-muted-foreground">Optimized multi-stop plan for this shift</p>
           </div>
         </div>
@@ -1012,11 +987,11 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="h-[260px] overflow-hidden rounded-lg border">
+            <div className="relative overflow-hidden rounded-lg border">
               <AppMap
                 center={[12.9756, 77.6250]}
                 zoom={13}
-                height="100%"
+                height={260}
                 routeGeometry={DEMO_PRESETS.indiranagar.roadPath}
                 waypoints={activeRoute?.waypoints || [
                   { lat: 12.9784, lng: 77.6408, waypoint_type: 'depot', label: 'Depot' },
@@ -1025,13 +1000,21 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
                   { lat: 12.97190, lng: 77.64124, waypoint_type: 'pickup', label: 'Stop A · Ananya' },
                   { lat: 12.9756, lng: 77.6066, waypoint_type: 'destination', label: 'MG Road' },
                 ]}
+                style={{ borderRadius: 0 }}
               />
             </div>
+            <MapLegend
+              items={[
+                { color: '#525252', label: 'Depot' },
+                { color: '#111111', label: 'Pickup' },
+                { color: '#16a34a', label: 'Drop-off' },
+              ]}
+            />
             <div className="space-y-0">
               {['Depot · Indiranagar Hub', 'Board Priya · Stop C (100 Feet Rd)', 'Board Rohan · Stop B (100 Feet Rd)', 'Board Ananya · Stop A (100 Feet Rd)', 'Drop Rohan · Church Street', 'Drop Priya · Brigade Road', 'Drop Ananya · MG Road Metro'].map((label, i, arr) => (
                 <div key={label} className="flex gap-3">
                   <div className="flex flex-col items-center">
-                    <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', i === 0 ? 'bg-sky-500' : i === arr.length - 1 ? 'bg-rose-500' : 'bg-primary')} />
+                    <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', i === 0 ? 'bg-muted-foreground' : i === arr.length - 1 ? 'bg-green-600' : 'bg-foreground')} />
                     {i < arr.length - 1 && <span className="w-px flex-1 bg-border" />}
                   </div>
                   <p className="pb-3 text-xs font-medium">{label}</p>
@@ -1049,17 +1032,17 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
 }
 
 const STATUS_STYLES = {
-  completed: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  in_progress: 'border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-300',
-  arriving: 'border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-300',
-  assigned: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  active: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  en_route: 'border-sky-500/30 bg-sky-500/10 text-sky-600 dark:text-sky-400',
-  idle: 'border-slate-500/30 bg-slate-500/10 text-slate-500 dark:text-slate-400',
-  pending: 'border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  clustered: 'border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400',
-  cancelled: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
-  offline: 'border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400',
+  completed: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  in_progress: 'border-foreground/30 bg-foreground text-background',
+  arriving: 'border-foreground/30 bg-foreground text-background',
+  assigned: 'border-foreground/30 bg-foreground text-background',
+  active: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  en_route: 'border-foreground/30 bg-foreground text-background',
+  idle: 'border-border bg-muted text-muted-foreground',
+  pending: 'border-border bg-muted text-foreground',
+  clustered: 'border-border bg-muted text-foreground',
+  cancelled: 'border-destructive/30 bg-destructive/10 text-destructive',
+  offline: 'border-destructive/30 bg-destructive/10 text-destructive',
 }
 
 function StatusBadge({ status }) {
@@ -1071,8 +1054,7 @@ function StatusBadge({ status }) {
   )
 }
 
-// Stage buttons for a live trip: each tap moves the ride one step and the
-// backend notifies the passenger, whose stepper + map follow along.
+// Stage buttons advance trip, notify passenger.
 const DRIVER_NEXT = {
   assigned: [
     { status: 'arriving', label: 'Arrived at pickup', variant: 'secondary', Icon: MapPin },

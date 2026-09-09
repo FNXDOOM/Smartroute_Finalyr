@@ -11,7 +11,7 @@ from database import Base
 from models.user import User
 from utils.auth_utils import get_or_create_user_from_payload, require_roles
 
-# Use in-memory SQLite for deterministic, fast, offline testing
+# In-memory SQLite for fast offline tests
 test_engine = create_engine("sqlite:///:memory:")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 User.__table__.create(bind=test_engine)
@@ -62,13 +62,13 @@ def test_require_roles_dependency_guard():
         driver_status="active",
     )
 
-    # Passenger blocked from driver-only endpoints
+    # Passenger blocked from driver routes
     with pytest.raises(HTTPException) as exc_info:
         driver_only_guard(passenger_user)
     assert exc_info.value.status_code == 403
     assert "Access denied" in exc_info.value.detail
 
-    # Pending driver blocked from active driver operations
+    # Pending driver blocked from active ops
     pending_driver = User(
         id=102,
         name="Driver Bob",
