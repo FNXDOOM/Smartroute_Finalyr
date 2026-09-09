@@ -13,15 +13,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
-  // MapLibre ships a dedicated worker module that should be loaded by Vite
-  // as-is instead of being pre-bundled by the dependency optimizer.
+  // Load MapLibre worker without pre-bundling.
   optimizeDeps: {
     exclude: ['maplibre-gl'],
   },
   server: {
-    // Pin HMR to a stable ws://localhost address so that Clerk's development
-    // handshake redirect (which appends ?token=… to the URL) does not corrupt
-    // Vite's WebSocket connection string.
+    // Pin HMR to stable localhost address.
     hmr: {
       protocol: 'ws',
       host: 'localhost',

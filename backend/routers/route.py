@@ -37,6 +37,7 @@ def optimize_routes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Build and persist optimized routes for eligible clusters."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -164,8 +165,7 @@ def optimize_routes(
                     for waypoint in waypoint_payloads
                 ]))
             except RuntimeError:
-                # Dispatch remains usable with the local road matrix even if
-                # the optional hosted route geometry is unavailable.
+                # Fallback to local matrix if hosted geometry fails.
                 road_route = {}
         route_distance = road_route.get("distanceMeters") or float(route_data["distance_m"])
         estimated_duration = road_route.get("durationSeconds") or (
@@ -275,6 +275,7 @@ def list_routes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return route plans visible to the current user."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -297,6 +298,7 @@ def get_route_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    """Return recently generated route plans."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -23,15 +23,12 @@ class RideRequest(Base):
     virtual_stop_id = Column(Integer, ForeignKey("virtual_stops.id"), nullable=True)
     pickup_location = Column(PortableGeometry, nullable=True)
     destination_location = Column(PortableGeometry, nullable=True)
-    # Python-side default (microsecond resolution) rather than server_default=func.now():
-    # SQLite's CURRENT_TIMESTAMP only has 1-second resolution, so rides created in the
-    # same request/transaction (e.g. the demo-batch endpoint) were all getting the exact
-    # same request_time. default= is evaluated per-row at flush time in Python instead.
+    # Python-side default: per-row timestamps.
     request_time = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now())
-    # Human-readable labels supplied by the mobile client
+    # Labels from mobile client
     pickup_label = Column(String, nullable=True)
     destination_label = Column(String, nullable=True)
-    # Ride-option metadata (stored for history display; clustering ignores these)
+    # Ride-option display metadata
     ride_option_id = Column(String, nullable=True)
     ride_option_name = Column(String, nullable=True)
     ride_option_price = Column(String, nullable=True)

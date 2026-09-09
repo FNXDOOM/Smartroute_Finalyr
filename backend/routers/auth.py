@@ -1,5 +1,6 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -8,18 +9,75 @@ from models.vehicle import Vehicle
 from schemas.user import (
     DriverApplyRequest,
     DriverVerifyRequest,
+    TokenResponse,
+    UserLogin,
+    UserRegister,
     UserResponse,
     UserUpdate,
 )
 from services.clerk_service import sync_clerk_user_metadata
-from utils.auth_utils import get_current_admin_user, get_current_user
+from utils.auth_utils import (
+    create_local_token,
+    get_current_admin_user,
+    get_current_user,
+    hash_password,
+    verify_password,
+)
 
 router = APIRouter()
 
 
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def register_local_user(register_in: UserRegister, db: Session = Depends(get_db)):
+    """Mobile signup; always passenger."""
+    email = register_in.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email must not be empty.")
+    existing = db.query(User).filter(func.lower(User.email) == email).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    name = register_in.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name must not be empty.")
+    user = User(
+        name=name,
+        email=register_in.email.strip(),
+        phone=(register_in.phone or "").strip(),
+        password_hash=hash_password(register_in.password),
+        role="passenger",
+        driver_status="active",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return TokenResponse(
+        access_token=create_local_token(user.id),
+        token_type="bearer",
+        user=UserResponse.model_validate(user),
+    )
+
+
+@router.post("/login", response_model=TokenResponse)
+def login_local_user(login_in: UserLogin, db: Session = Depends(get_db)):
+    """Mobile login."""
+    email = login_in.email.strip().lower()
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if not user or not verify_password(login_in.password, user.password_hash or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    return TokenResponse(
+        access_token=create_local_token(user.id),
+        token_type="bearer",
+        user=UserResponse.model_validate(user),
+    )
+
+
 @router.get("/me", response_model=UserResponse)
 def read_current_user(current_user: User = Depends(get_current_user)):
-    """Return the application profile for the authenticated Clerk user."""
+    """Current user profile."""
     return current_user
 
 
@@ -29,7 +87,7 @@ def update_current_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update editable application profile fields."""
+    """Update profile fields."""
     if user_update.email is not None and user_update.email != current_user.email:
         existing_user = db.query(User).filter(User.email == user_update.email).first()
         if existing_user:
@@ -52,10 +110,7 @@ def apply_for_driver(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Submit application to become a driver.
-    Role changes to 'driver' with 'pending_verification' status until verified by an admin.
-    """
+    """Apply for driver role."""
     plate = apply_in.license_plate.strip().upper()
     if not plate:
         raise HTTPException(status_code=400, detail="Vehicle license plate must not be empty.")
@@ -65,11 +120,7 @@ def apply_for_driver(
     )
     current_user.role = "driver"
     if not was_active_driver:
-        # First-time and returning (rejected/suspended) applicants go through
-        # admin review. An already-active driver re-applying (e.g. plate
-        # change) must NOT be demoted and locked out of dispatch.
-        # NOTE: fresh passengers default to driver_status "active", so the
-        # role check is required — status alone cannot tell them apart.
+        # New applicants need review; active drivers keep status.
         current_user.driver_status = "pending_verification"
 
     existing_vehicle = db.query(Vehicle).filter(Vehicle.driver_user_id == current_user.id).first()
@@ -106,9 +157,7 @@ def apply_for_driver(
     db.refresh(current_user)
 
     if current_user.clerk_user_id:
-        # Dashboard-facing state: applicants read as "pending" until an admin
-        # approves them. ("pending" is not a real app role, so the token-claim
-        # sync ignores it; the DB below stays driver/pending_verification.)
+        # Applicants read as pending until approval.
         sync_clerk_user_metadata(
             current_user.clerk_user_id,
             {
@@ -126,7 +175,7 @@ def list_pending_drivers(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """List all drivers currently pending admin verification."""
+    """List pending drivers."""
     return (
         db.query(User)
         .filter(User.role == "driver", User.driver_status == "pending_verification")
@@ -142,7 +191,7 @@ def verify_driver(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Verify and approve or reject a driver's pending application. Admin only."""
+    """Approve/reject driver. Admin only."""
     target = db.query(User).filter(User.id == user_id).first()
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
@@ -153,8 +202,7 @@ def verify_driver(
     db.refresh(target)
 
     if target.clerk_user_id:
-        # Approval flips the dashboard state from "pending" to confirmed
-        # driver; rejections/suspensions mirror the stored status truthfully.
+        # Sync confirmed driver state.
         vehicle = db.query(Vehicle).filter(Vehicle.driver_user_id == target.id).first()
         confirmed_metadata = {"role": "driver", "driver_status": target.driver_status}
         if vehicle:
@@ -171,7 +219,7 @@ def update_user_role(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Promote or demote a user's application role. Admin only."""
+    """Change user role. Admin only."""
     if current_user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can change user roles.")
 

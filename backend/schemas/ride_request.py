@@ -8,7 +8,7 @@ class RideRequestBase(BaseModel):
     pickup_lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False, description="Pickup longitude")
     dest_lat: float = Field(..., ge=-90, le=90, allow_inf_nan=False, description="Destination latitude")
     dest_lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False, description="Destination longitude")
-    # Optional human-readable labels from the mobile client
+    # Labels from mobile client
     pickup_label: Optional[str] = Field(None, max_length=200)
     destination_label: Optional[str] = Field(None, max_length=200)
     ride_option_id: Optional[str] = Field(None, max_length=40)

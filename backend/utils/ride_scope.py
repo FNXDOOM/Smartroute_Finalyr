@@ -9,6 +9,7 @@ VALID_RIDE_MODES = {LIVE_MODE, PRESENTATION_DEMO_MODE}
 
 
 def validate_ride_mode(mode: str) -> str:
+    """Validate and normalize a ride mode."""
     normalized = (mode or LIVE_MODE).strip().lower()
     if normalized not in VALID_RIDE_MODES:
         raise ValueError(f"Invalid ride mode: {mode}")
@@ -16,7 +17,7 @@ def validate_ride_mode(mode: str) -> str:
 
 
 def apply_ride_scope(query: Query, mode: str = LIVE_MODE, demo_run_id: Optional[str] = None) -> Query:
-    """Scope a ride query so live and presentation data cannot mix."""
+    """Scope query to separate live and demo data."""
     normalized = validate_ride_mode(mode)
     query = query.filter_by(mode=normalized)
     if normalized == PRESENTATION_DEMO_MODE:

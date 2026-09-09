@@ -1,5 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap');
+@import "@fontsource-variable/geist";
+/* Tailwind v3 toolchain (see tailwind.config.js + tailwindcss-animate).
+   v4-only imports (tw-animate-css, shadcn/tailwind.css with @theme/@utility/
+   @custom-variant) are intentionally omitted: Tailwind 3.4.1 cannot compile
+   them and Vite warns "Unknown at rule". Orientation variants use the v3-
+   compatible data-[orientation=...] syntax instead of data-horizontal/vertical. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -7,61 +11,104 @@
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --foreground: 0 0% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 0 0% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 172 100% 32%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 0 0% 9%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 172 100% 32%;
-    --radius: 0.625rem;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 0 0% 9%;
+    --radius: 1rem;
+    --chart-1: 0 0% 9%;
+    --chart-2: 142 70% 35%;
+    --chart-3: 0 0% 45%;
+    --chart-4: 142 60% 45%;
+    --chart-5: 30 80% 55%;
+    --sidebar: 0 0% 98%;
+    --sidebar-foreground: 0 0% 9%;
+    --sidebar-primary: 0 0% 9%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 96.1%;
+    --sidebar-accent-foreground: 0 0% 9%;
+    --sidebar-border: 0 0% 89.8%;
+    --sidebar-ring: 0 0% 9%;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 6.5%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 172 80% 42%;
-    --primary-foreground: 222.2 84% 4.9%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --background: 0 0% 4%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 8%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 8%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 64%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 50.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 172 80% 42%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 16%;
+    --input: 0 0% 16%;
+    --ring: 0 0% 98%;
+    --chart-1: 0 0% 98%;
+    --chart-2: 142 70% 45%;
+    --chart-3: 0 0% 55%;
+    --chart-4: 142 60% 40%;
+    --chart-5: 30 80% 55%;
+    --sidebar: 0 0% 8%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-primary: 0 0% 98%;
+    --sidebar-primary-foreground: 0 0% 9%;
+    --sidebar-accent: 0 0% 15%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 0 0% 16%;
+    --sidebar-ring: 0 0% 98%;
+  }
+  .theme {
+    --font-heading: var(--font-sans);
+    --font-sans: 'Geist Variable', sans-serif;
+  }
+  *,
+  ::before,
+  ::after {
+    border-color: hsl(var(--border));
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
   }
 }
 
 @layer base {
   * {
-    @apply border-border;
+    @apply outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Geist Variable', 'Inter', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   h1, h2, h3, h4, .display {
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Geist Variable', 'Inter', system-ui, sans-serif;
+    letter-spacing: -0.01em;
   }
   button {
     font-family: inherit;
@@ -71,9 +118,28 @@
   }
 }
 
+/* Mobility type scale for .mob-* utilities. */
+.mob-page-title {
+  font-size: 1.375rem;
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+}
+@media (min-width: 768px) {
+  .mob-page-title { font-size: 1.625rem; }
+}
+.mob-section-label {
+  font-size: 0.6875rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: hsl(var(--muted-foreground));
+}
+.mob-data { font-variant-numeric: tabular-nums; }
+
 /* MapLibre overrides (theme aware) */
 .maplibregl-map {
-  font-family: 'Inter', sans-serif !important;
+  font-family: 'Geist Variable', 'Inter', sans-serif !important;
 }
 .maplibregl-ctrl-group {
   border: 1px solid hsl(var(--border)) !important;
@@ -89,9 +155,17 @@
   background-color: hsl(var(--accent)) !important;
 }
 .maplibregl-ctrl-attrib {
-  background: rgba(0, 0, 0, 0.5) !important;
-  font-size: 10px !important;
+  background: hsl(var(--card) / 0.9) !important;
+  color: hsl(var(--foreground)) !important;
+  font-size: 11px !important;
 }
 .maplibregl-ctrl-attrib a {
-  color: hsl(var(--primary)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+/* Pill ride CTAs, full-width on mobile. */
+.uber-cta {
+  border-radius: 9999px !important;
+  min-height: 3rem;
+  font-size: 1rem;
+  font-weight: 600;
 }

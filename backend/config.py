@@ -3,9 +3,7 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Backend configuration belongs beside the backend entry point. Environment
-# variables supplied by the process/container still take precedence because
-# python-dotenv does not override existing values by default.
+# Load backend/.env; process env takes precedence.
 backend_env = Path(__file__).resolve().parent / ".env"
 
 if backend_env.exists():
@@ -27,17 +25,23 @@ ALLOWED_ORIGINS = [
 AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "clerk").lower()
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.getenv("CLERK_ISSUER", "")
+# Local JWT for Flutter; Clerk for web.
+# Required: no predictable fallback. Startup fails when missing/placeholder.
+LOCAL_JWT_SECRET = os.getenv("LOCAL_JWT_SECRET", "").strip()
+_LOCAL_JWT_PLACEHOLDER = "dev-only-change-me-in-production"
+if not LOCAL_JWT_SECRET or LOCAL_JWT_SECRET == _LOCAL_JWT_PLACEHOLDER:
+    raise RuntimeError(
+        "LOCAL_JWT_SECRET is required. Set a strong random value in "
+        "backend/.env (see backend/.env.example)."
+    )
+LOCAL_JWT_EXPIRES_MINUTES = int(os.getenv("LOCAL_JWT_EXPIRES_MINUTES", "10080"))  # 7 days
 CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "")
 CLERK_ALLOW_NATIVE_CLIENTS = os.getenv("CLERK_ALLOW_NATIVE_CLIENTS", "false").lower() == "true"
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
 APP_ENV = os.getenv("APP_ENV", "development").lower()
 PROCESS_ROLE = os.getenv("PROCESS_ROLE", "api").lower()
 ENABLE_TRACKING_BROADCAST = os.getenv("ENABLE_TRACKING_BROADCAST", "true").lower() == "true"
-# Opt-in convenience for local/single-process dev: also run the periodic
-# dispatch job (assigned -> arriving -> in_progress -> completed, etc.)
-# inside the API process itself, instead of requiring a separate
-# `python worker.py` process. Defaults to off so docker-compose's dedicated
-# worker service (see docker-compose.yml) doesn't double-run these jobs.
+# Opt-in: run dispatch jobs in API for local dev.
 ENABLE_BACKGROUND_JOBS_IN_API = os.getenv("ENABLE_BACKGROUND_JOBS_IN_API", "false").lower() == "true"
 STADIA_API_KEY = os.getenv("STADIA_API_KEY", "").strip()
 STADIA_GEOCODER_URL = os.getenv(

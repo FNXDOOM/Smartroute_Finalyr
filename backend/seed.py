@@ -1,15 +1,7 @@
-"""
-seed.py — populate all tables with realistic Bengaluru demo data.
-
-Usage (from backend/ directory):
-    python seed.py              # seed everything
-    python seed.py --reset      # drop existing data first, then seed
-
-The script is idempotent for vehicles, users and ride-option labels:
-re-running without --reset will not duplicate those rows.
-"""
+"""Seed demo Bengaluru data. Usage: python seed.py [--reset]."""
 
 import argparse
+import os
 import random
 import secrets
 import sys
@@ -18,9 +10,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-# ── bootstrap path ──────────────────────────────────────────────────────────
+# Bootstrap
 sys.path.insert(0, ".")
 from database import SessionLocal, create_db_tables, engine
+from utils.auth_utils import hash_password
 from models.user import User
 from models.vehicle import Vehicle
 from models.ride_request import RideRequest
@@ -32,10 +25,10 @@ from models.job_run import JobRun
 from models.demand_snapshot import DemandSnapshot
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 
-# ── constants ───────────────────────────────────────────────────────────────
+# Constants
 random.seed(42)
 
-# Key Bengaluru landmarks (lat, lng, label)
+# Bengaluru landmarks
 BENGALURU_LOCATIONS = [
     (12.9784, 77.6408, "Indiranagar Metro Station"),
     (12.9352, 77.6245, "Embassy TechVillage, ORR"),
@@ -77,22 +70,25 @@ STATUSES = ["pending", "clustered", "assigned", "in_progress", "completed", "can
 STATUS_WEIGHTS = [0.15, 0.10, 0.10, 0.10, 0.45, 0.10]
 
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# Helpers
 def jitter(lat: float, lng: float, radius: float = 0.02):
+    """Offset a coordinate by a small random amount."""
     return lat + random.uniform(-radius, radius), lng + random.uniform(-radius, radius)
 
 
 def past(days: int = 0, hours: int = 0, minutes: int = 0) -> datetime:
+    """Return a UTC timestamp a given number of minutes in the past."""
     return datetime.now(timezone.utc) - timedelta(days=days, hours=hours, minutes=minutes)
 
 
 def fake_h3(lat: float, lng: float) -> str:
-    """Deterministic fake H3 index based on truncated coords (good enough for demo)."""
+    """Fake H3 index for demo."""
     return f"8928308{abs(int(lat*100)):04d}{abs(int(lng*100)):04d}ff"
 
 
-# ── seed functions ────────────────────────────────────────────────────────────
+# Seed funcs
 def seed_users(db: Session) -> list[User]:
+    """Seed users."""
     demo = [
         ("Arjun Sharma",   "arjun.sharma@demo.com",   "+91-98765-43210", "passenger"),
         ("Priya Nair",     "priya.nair@demo.com",     "+91-87654-32109", "passenger"),
@@ -104,14 +100,31 @@ def seed_users(db: Session) -> list[User]:
         ("Admin User",     "admin@smartroute.ai",     "+91-77665-54433", "admin"),
     ]
     users = []
+    admin_password = os.getenv("SEED_ADMIN_PASSWORD", "").strip()
+    app_env = os.getenv("APP_ENV", "development").lower()
     for name, email, phone, role in demo:
         existing = db.query(User).filter(User.email == email).first()
         if existing:
             users.append(existing)
             continue
+        if role == "admin":
+            if admin_password:
+                password = admin_password
+            elif app_env in ("production", "staging"):
+                raise RuntimeError(
+                    "Refusing to seed admin with default password in "
+                    f"{app_env}. Set SEED_ADMIN_PASSWORD."
+                )
+            else:
+                # Development-only default demo credential.
+                print("  ! using default dev admin password (set SEED_ADMIN_PASSWORD to override)")
+                password = "password123"
+        else:
+            # Demo password: password123.
+            password = "password123"
         u = User(
             name=name, email=email, phone=phone, role=role,
-            password_hash=secrets.token_urlsafe(32),
+            password_hash=hash_password(password),
         )
         db.add(u)
         users.append(u)
@@ -121,6 +134,7 @@ def seed_users(db: Session) -> list[User]:
 
 
 def seed_vehicles(db: Session) -> list[Vehicle]:
+    """Seed vehicles."""
     vehicles = []
     statuses = ["idle", "idle", "idle", "active", "active", "idle", "en_route", "idle", "idle", "idle"]
     for i, (plate, cap) in enumerate(VEHICLE_PLATES):
@@ -142,6 +156,7 @@ def seed_vehicles(db: Session) -> list[Vehicle]:
 
 
 def seed_rides(db: Session, users: list[User], n: int = 60) -> list[RideRequest]:
+    """Seed rides."""
     passengers = [u for u in users if u.role == "passenger"]
     rides = []
     for i in range(n):
@@ -205,6 +220,7 @@ def seed_virtual_stops(db: Session, rides: list[RideRequest]) -> list[VirtualSto
 
 
 def seed_cluster_runs(db: Session, admin: User, rides: list[RideRequest]) -> list[ClusterRun]:
+    """Seed cluster runs."""
     runs = []
     for i in range(5):
         n_rides = random.randint(8, 20)
@@ -241,6 +257,7 @@ def seed_cluster_runs(db: Session, admin: User, rides: list[RideRequest]) -> lis
 
 
 def seed_tracking_events(db: Session, vehicles: list[Vehicle]) -> None:
+    """Seed tracking events."""
     events = []
     for v in vehicles:
         if not v.lat:
@@ -261,6 +278,7 @@ def seed_tracking_events(db: Session, vehicles: list[Vehicle]) -> None:
 
 
 def seed_notifications(db: Session, users: list[User], rides: list[RideRequest]) -> None:
+    """Seed notifications."""
     types = [
         ("ride_requested",      "Ride request received",     "Your ride request has been received and is pending dispatch."),
         ("ride_status_updated", "Ride status updated",       "Your ride has been assigned to a vehicle."),
@@ -284,6 +302,7 @@ def seed_notifications(db: Session, users: list[User], rides: list[RideRequest])
 
 
 def seed_job_runs(db: Session, admin: User) -> list[JobRun]:
+    """Seed job runs."""
     jobs = []
     job_types = [
         ("cluster_job",  "clustering"),
@@ -311,6 +330,7 @@ def seed_job_runs(db: Session, admin: User) -> list[JobRun]:
 
 
 def seed_demand_snapshots(db: Session, job_runs: list[JobRun]) -> None:
+    """Seed demand snapshots."""
     count = 0
     for job in job_runs[:5]:
         for loc in random.sample(BENGALURU_LOCATIONS, random.randint(4, 8)):
@@ -331,6 +351,7 @@ def seed_demand_snapshots(db: Session, job_runs: list[JobRun]) -> None:
 
 
 def seed_rebalance_suggestions(db: Session, vehicles: list[Vehicle], job_runs: list[JobRun]) -> None:
+    """Seed rebalance suggestions."""
     reasons = [
         "High demand predicted in this zone",
         "No vehicles within 2 km of cluster centroid",
@@ -355,8 +376,9 @@ def seed_rebalance_suggestions(db: Session, vehicles: list[Vehicle], job_runs: l
     print(f"  ✓ {count} rebalance suggestions")
 
 
-# ── main ─────────────────────────────────────────────────────────────────────
+# Main
 def main():
+    """Run the command-line entry point."""
     parser = argparse.ArgumentParser(description="Seed the SmartRoute AI database")
     parser.add_argument("--reset", action="store_true", help="Delete all existing data before seeding")
     args = parser.parse_args()

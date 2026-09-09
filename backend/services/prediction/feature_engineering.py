@@ -15,7 +15,7 @@ class DemandFeatures:
 
 
 def encode_h3_index(h3_index: str) -> int:
-    """Stable compact encoding for a string H3 cell id."""
+    """Compact encoding for H3 cell id."""
     return abs(hash(h3_index)) % 10_000
 
 
@@ -25,6 +25,7 @@ def build_demand_features(
     reference_time: datetime,
     historical_count: int,
 ) -> DemandFeatures:
+    """Build model-ready demand features from time and location data."""
     hour = int(reference_time.hour)
     day_of_week = int(reference_time.weekday())
     is_weekend = 1 if day_of_week >= 5 else 0
@@ -38,6 +39,7 @@ def build_demand_features(
 
 
 def features_to_dict(features: DemandFeatures) -> Dict[str, int]:
+    """Convert a feature row into a serializable mapping."""
     return {
         "hour": features.hour,
         "day_of_week": features.day_of_week,
@@ -48,10 +50,12 @@ def features_to_dict(features: DemandFeatures) -> Dict[str, int]:
 
 
 def ensure_h3_index(latitude: float, longitude: float, resolution: int) -> str:
+    """Return an H3 index for a coordinate or validate a supplied index."""
     return get_h3_index(latitude, longitude, resolution=resolution)
 
 
 def get_h3_center(h3_index: str) -> Tuple[float, float]:
+    """Return the center coordinate of an H3 cell."""
     try:
         import h3
         if hasattr(h3, "cell_to_latlng"):

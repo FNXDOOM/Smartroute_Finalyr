@@ -28,8 +28,7 @@ const client = axios.create({
 });
 
 client.interceptors.request.use(async (config) => {
-  // Per-request explicit tokens win: the global getter is only registered
-  // after sign-in completes, so auth-screen flows attach their own token.
+  // Explicit per-request tokens take precedence.
   if (!config.headers.Authorization) {
     const token = authTokenGetter ? await authTokenGetter() : null;
     if (token) config.headers.Authorization = `Bearer ${token}`;
@@ -46,7 +45,7 @@ export const authApi = {
   updateUserRole: async (userId, role) => (await client.patch(`/auth/users/${userId}/role?role=${encodeURIComponent(role)}`)).data,
 };
 
-// ─── Rides ────────────────────────────────────────────────────────────────────
+// Rides
 export const ridesApi = {
   create: async (payload) => (await client.post('/rides/request', payload)).data,
   createBatch: async (requests) => (await client.post('/rides/batch', { requests })).data,
@@ -74,7 +73,7 @@ export const ridesApi = {
   cancel: async (id) => (await client.delete(`/rides/${id}`)).data,
 };
 
-// ─── Geocoding ───────────────────────────────────────────────────────────────
+// Geocoding
 export const geocodeApi = {
   suggest: async (query, bias) => {
     const corrected = normaliseLocationQuery(query);
@@ -94,7 +93,7 @@ export const geocodeApi = {
   },
 };
 
-// ─── Routing / route validation ─────────────────────────────────────────────
+// Routing and validation
 export const routingApi = {
   route: async (from, to, { traffic = false } = {}) => {
     return (await client.get('/routing/route', { params: {
@@ -108,7 +107,7 @@ export const routingApi = {
     (await client.post('/routing/map-match', locations)).data,
 };
 
-// ─── Vehicles ─────────────────────────────────────────────────────────────────
+// Vehicles
 export const vehiclesApi = {
   list: async () => (await client.get('/vehicle/')).data,
   idle: async () => (await client.get('/vehicle/idle')).data,
@@ -117,7 +116,7 @@ export const vehiclesApi = {
   assign: async (payload) => (await client.post('/vehicle/assign', payload)).data,
 };
 
-// ─── Notifications ────────────────────────────────────────────────────────────
+// Notifications
 export const notificationsApi = {
   list: async (params = {}) => (await client.get('/notifications/', { params })).data,
   unreadCount: async () => (await client.get('/notifications/unread-count')).data,
@@ -125,7 +124,7 @@ export const notificationsApi = {
   markAllRead: async () => (await client.patch('/notifications/read-all')).data,
 };
 
-// ─── Tracking ─────────────────────────────────────────────────────────────────
+// Tracking
 export const trackingApi = {
   getFeed: async () => (await client.get('/tracking/feed')).data,
   getEvents: async () => (await client.get('/tracking/events')).data,
@@ -133,7 +132,7 @@ export const trackingApi = {
     (await client.post(`/tracking/vehicles/${vehicleId}/location`, payload)).data,
 };
 
-// ─── Cluster ──────────────────────────────────────────────────────────────────
+// Cluster
 export const clusterApi = {
   run: async (payload = { resolution: 9, min_cluster_size: 2 }) =>
     (await client.post('/cluster/run', payload)).data,
@@ -141,20 +140,20 @@ export const clusterApi = {
   getById: async (id) => (await client.get(`/cluster/history/${id}`)).data,
 };
 
-// ─── Route ────────────────────────────────────────────────────────────────────
+// Route
 export const routeApi = {
   optimize: async (payload) => (await client.post('/route/optimize', payload)).data,
   history: async (limit = 20) => (await client.get('/route/history', { params: { limit } })).data,
   getById: async (id) => (await client.get(`/route/history/${id}`)).data,
 };
 
-// ─── Analytics ────────────────────────────────────────────────────────────────
+// Analytics
 export const analyticsApi = {
   overview: async () => (await client.get('/analytics/overview')).data,
   daily: async (days = 14) => (await client.get('/analytics/daily', { params: { days } })).data,
 };
 
-// ─── Predict ──────────────────────────────────────────────────────────────────
+// Predict
 export const predictApi = {
   heatmap: async (params) => {
     const p = params || { min_lat: 12.8, max_lat: 13.1, min_lng: 77.4, max_lng: 77.8 };
@@ -164,7 +163,7 @@ export const predictApi = {
     (await client.get('/predict/demand', { params: { latitude: lat, longitude: lng } })).data,
 };
 
-// ─── Jobs ─────────────────────────────────────────────────────────────────────
+// Jobs
 export const jobsApi = {
   status: async () => (await client.get('/jobs/status')).data,
   runs: async () => (await client.get('/jobs/runs')).data,
@@ -176,7 +175,7 @@ export const jobsApi = {
   demandSnapshots: async () => (await client.get('/jobs/demand-snapshots')).data,
 };
 
-// ─── Bootstrap ────────────────────────────────────────────────────────────────
+// Bootstrap
 export const loadAppBootstrap = (clerkUserId) => {
   const existing = appBootstrapRequests.get(clerkUserId);
   if (existing) return existing;
@@ -194,7 +193,7 @@ export const loadAppBootstrap = (clerkUserId) => {
 };
 export const clearAppBootstrap = (clerkUserId) => appBootstrapRequests.delete(clerkUserId);
 
-// ─── WebSocket factory ────────────────────────────────────────────────────────
+// WebSocket factory
 export const createTrackingWS = (token, onMessage, onClose) => {
   const ws = new WebSocket(`${WS_BASE_URL}/tracking/ws`, ['bearer', token]);
   ws.onmessage = (e) => { try { onMessage(JSON.parse(e.data)); } catch (error) { void error; } };
