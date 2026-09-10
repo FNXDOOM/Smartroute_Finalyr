@@ -167,13 +167,8 @@ input, textarea, select { font-family: inherit; }
 /* Heat legend — keep functional but muted */
 .heat-legend-gradient { background: linear-gradient(90deg, #276EF1 0%, #F5A623 55%, #D93025 100%); }
 
-.nav-item:focus-visible, .ride-tier:focus-visible, button:focus-visible, a:focus-visible, input:focus-visible {
-  outline: 2px solid #000;
-  outline-offset: 2px;
-}
-.dark .nav-item:focus-visible, .dark .ride-tier:focus-visible, .dark button:focus-visible, .dark a:focus-visible, .dark input:focus-visible {
-  outline-color: #fff;
-}
+/* Focus is handled by the @layer base baseline in index.css;
+   component utilities take precedence via the cascade. */
 
 @media (max-width: 1023px) {
   .booking-layout { overflow-y: auto; }

@@ -539,7 +539,7 @@ export default function PassengerView({ view, setView, toast }) {
           )}
 
           <div className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E2E2] px-4 py-3 dark:border-[#333333]">
-            <Label htmlFor="traffic-switch" className="cursor-pointer text-[13px] font-medium">Use live traffic for route and ETA</Label>
+            <Label htmlFor="traffic-switch" className="cursor-pointer text-[13px] font-medium normal-case tracking-normal">Use live traffic for route and ETA</Label>
             <Switch id="traffic-switch" checked={trafficRouting} onCheckedChange={setTrafficRouting} aria-label="Use live traffic" />
           </div>
 

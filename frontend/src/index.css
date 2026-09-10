@@ -150,6 +150,16 @@
     background: #fff;
     color: #000;
   }
+
+  /* Accessible baseline. Lives in @layer base so component-level
+     focus utilities (outline-none, custom rings) win the cascade. */
+  :focus-visible {
+    outline: 2px solid #000;
+    outline-offset: 2px;
+  }
+  .dark :focus-visible {
+    outline-color: #fff;
+  }
 }
 
 /* ── Typography scale (Uber-inspired hierarchy) ── */
@@ -391,15 +401,6 @@
 }
 @media (max-width: 767px) {
   .uber-cta { width: 100%; }
-}
-
-/* Focus visibility — accessible, always visible */
-:focus-visible {
-  outline: 2px solid #000;
-  outline-offset: 2px;
-}
-.dark :focus-visible {
-  outline-color: #fff;
 }
 
 /* Reduced motion */
