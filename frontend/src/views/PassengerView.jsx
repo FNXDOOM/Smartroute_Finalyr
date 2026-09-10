@@ -390,30 +390,31 @@ export default function PassengerView({ view, setView, toast }) {
   return (
     <div className="booking-layout relative flex min-h-0 flex-1 flex-col overflow-hidden lg:block">
       {/* ── Floating booking panel: bottom sheet on mobile, floating card on desktop ── */}
-      <div className="relative z-10 order-2 flex min-h-0 flex-1 flex-col lg:pointer-events-none lg:absolute lg:bottom-4 lg:left-4 lg:top-4 lg:order-none lg:w-[372px] lg:flex-none">
-      <ScrollArea className="booking-panel rounded-t-2xl border-t pointer-events-auto w-full min-h-0 flex-1 border-border/60 bg-card shadow-[0_-8px_30px_rgba(0,0,0,0.12)] lg:h-full lg:rounded-2xl lg:border lg:border-border/80 lg:bg-card/95 lg:shadow-xl lg:backdrop-blur">
-        <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border lg:hidden" aria-hidden="true" />
-        <div className="flex flex-col gap-4 p-4 md:p-5">
+      <div className="relative z-10 order-2 flex min-h-0 flex-1 flex-col lg:pointer-events-none lg:absolute lg:bottom-6 lg:left-6 lg:top-6 lg:order-none lg:w-[400px] lg:flex-none">
+      <ScrollArea className="booking-panel pointer-events-auto max-h-[62dvh] w-full min-h-0 flex-1 overflow-y-auto rounded-t-[16px] border-t border-[#E2E2E2] bg-white shadow-[0_-8px_30px_rgba(0,0,0,0.12)] lg:max-h-none lg:h-full lg:rounded-2xl lg:border lg:bg-white lg:shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:border-[#333333] dark:bg-[#1F1F1F]">
+        <div className="mx-auto mt-2.5 h-1 w-10 shrink-0 rounded-full bg-[#D6D6D6] lg:hidden" aria-hidden="true" />
+        <div className="flex flex-col gap-5 p-5 md:p-7">
           <div>
-            <h2 className="text-lg font-semibold tracking-tight">Book a ride</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">Smart shared dispatch · flat fares</p>
+            <p className="uber-eyebrow mb-1.5">Request a ride</p>
+            <h2 className="text-[28px] font-bold leading-tight tracking-[-0.02em]">Where to?</h2>
+            <p className="mt-1 text-[14px] text-[#6B6B6B] dark:text-[#AFAFAF]">Flat fares · No surge · Shared options</p>
           </div>
 
           {/* Active booking — 6-stage stepper */}
           {activeRide && (
-            <Card className="border-primary/25 shadow-sm">
-              <CardContent className="space-y-3 p-4">
+            <Card className="border-black shadow-none dark:border-white">
+              <CardContent className="space-y-3 p-5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Active booking</p>
-                    <p className="mt-0.5 truncate text-[13px] font-extrabold">Ride #{activeRide.id} · {activeRide.ride_option_name || 'SwiftX'}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#8A8A8A]">Active booking</p>
+                    <p className="mt-1 truncate text-[15px] font-bold tracking-[-0.01em]">Ride #{activeRide.id} · {activeRide.ride_option_name || 'SwiftX'}</p>
                   </div>
                   <StatusBadge status={activeRide.status} />
                 </div>
 
                 <div>
-                  <Progress value={activeProgress} aria-label={`Ride stage ${activeStageIndex + 1} of ${RIDE_STAGES.length}`} />
-                  <ol className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-6" aria-label="Ride progress">
+                  <Progress value={activeProgress} className="h-1.5 bg-[#EEEEEE] dark:bg-[#333333]" aria-label={`Ride stage ${activeStageIndex + 1} of ${RIDE_STAGES.length}`} />
+                  <ol className="mt-2.5 grid grid-cols-3 gap-1 sm:grid-cols-6" aria-label="Ride progress">
                     {RIDE_STAGES.map((key, idx) => {
                       const passed = activeStageIndex >= idx
                       const current = activeRide.status === key
@@ -421,19 +422,19 @@ export default function PassengerView({ view, setView, toast }) {
                         <li key={key} className="flex min-w-0 flex-col items-center gap-1 text-center">
                           <span
                             className={cn(
-                              'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold',
-                              current ? 'bg-foreground text-background ring-2 ring-foreground/30'
-                                : passed ? 'bg-foreground text-background'
-                                  : 'bg-muted text-muted-foreground',
+                              'flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-bold',
+                              current ? 'bg-black text-white ring-2 ring-black/20 dark:bg-white dark:text-black dark:ring-white/30'
+                                : passed ? 'bg-black text-white dark:bg-white dark:text-black'
+                                  : 'bg-[#EEEEEE] text-[#8A8A8A] dark:bg-[#333333] dark:text-[#8A8A8A]',
                             )}
                             aria-current={current ? 'step' : undefined}
                           >
                             {passed && !current ? <CheckCircle2 className="h-3 w-3" /> : idx + 1}
                           </span>
-                          <span className={cn('hidden truncate text-[9px] font-semibold leading-tight sm:block', current ? 'text-foreground' : passed ? 'text-foreground/80' : 'text-muted-foreground')}>
+                          <span className={cn('hidden truncate text-[10px] font-medium leading-tight sm:block', current ? 'text-black dark:text-white' : passed ? 'text-[#333333] dark:text-[#E2E2E2]' : 'text-[#8A8A8A]')}>
                             {RIDE_STAGE_LABELS[key]}
                           </span>
-                          <span className={cn('truncate text-[9px] font-semibold leading-tight sm:hidden', current ? 'text-foreground' : 'text-muted-foreground')}>
+                          <span className={cn('truncate text-[10px] font-medium leading-tight sm:hidden', current ? 'text-black dark:text-white' : 'text-[#8A8A8A]')}>
                             {current ? RIDE_STAGE_LABELS[key] : idx + 1}
                           </span>
                         </li>
@@ -443,19 +444,19 @@ export default function PassengerView({ view, setView, toast }) {
                 </div>
 
                 {displayVehicle && (
-                  <div className="flex items-center gap-2.5 rounded-lg border bg-muted/40 p-2.5">
-                    <Avatar className="h-9 w-9 shrink-0">
-                      <AvatarFallback className="bg-primary text-xs font-extrabold text-primary-foreground">{mapVehicle ? 'RK' : 'D'}</AvatarFallback>
+                  <div className="flex items-center gap-3 rounded-xl border border-[#E2E2E2] bg-[#F6F6F6] p-3 dark:border-[#333333] dark:bg-[#2A2A2A]">
+                    <Avatar className="h-10 w-10 shrink-0 rounded-lg">
+                      <AvatarFallback className="rounded-lg bg-black text-[13px] font-bold text-white dark:bg-white dark:text-black">{mapVehicle ? 'RK' : 'D'}</AvatarFallback>
                     </Avatar>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-xs font-bold">
+                        <p className="truncate text-[13px] font-semibold">
                           {mapVehicle ? 'Rajesh Kumar' : 'Your driver'}
-                          {mapVehicle && <span className="ml-1 text-[11px] font-semibold text-amber-500">★ 4.9</span>}
+                          {mapVehicle && <span className="ml-1.5 text-[12px] font-semibold text-black dark:text-white">★ 4.9</span>}
                         </p>
-                        <Badge variant="secondary" className="shrink-0 font-mono text-[10px]">{displayVehicle.license_plate}</Badge>
+                        <Badge variant="secondary" className="shrink-0 font-mono text-[11px]">{displayVehicle.license_plate}</Badge>
                       </div>
-                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{mapVehicle ? 'Tata Tigor EV · White · 3 seats shared' : simDriver?.label || 'On the way'}</p>
+                      <p className="mt-0.5 truncate text-[12px] text-[#6B6B6B] dark:text-[#AFAFAF]">{mapVehicle ? 'Tata Tigor EV · White · 3 seats shared' : simDriver?.label || 'On the way'}</p>
                     </div>
                   </div>
                 )}
@@ -480,11 +481,11 @@ export default function PassengerView({ view, setView, toast }) {
           )}
 
           {/* Pickup / destination */}
-          <div className="space-y-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="pickup-input">Pickup</Label>
-              <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
-                <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="pickup-input" className="text-[13px] font-semibold">Pickup</Label>
+              <div className="flex min-h-[52px] items-center gap-2.5 rounded-lg border border-[#D6D6D6] bg-white px-4 transition-[border-color,box-shadow] duration-150 focus-within:border-black focus-within:ring-[3px] focus-within:ring-black/10 dark:border-[#333333] dark:bg-[#1F1F1F] dark:focus-within:border-white dark:focus-within:ring-white/15">
+                <MapPin className="h-[18px] w-[18px] shrink-0 text-[#6B6B6B]" aria-hidden="true" />
                 <Input
                   id="pickup-input"
                   value={pickup}
@@ -492,27 +493,27 @@ export default function PassengerView({ view, setView, toast }) {
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void searchLocation('pickup') } }}
                   onChange={e => { setPickup(e.target.value); setSuggestions([]); setPickupConfirmed(false); setGpsActive(false); setMapPickupMode(false) }}
                   placeholder="Pickup location"
-                  className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                  className="h-[50px] border-0 bg-transparent px-0 shadow-none hover:border-transparent focus-visible:border-transparent focus-visible:ring-0"
                   autoComplete="off"
                 />
               </div>
               <div className="flex items-center justify-end gap-1">
-                <Button variant="ghost" size="sm" className="h-7 text-[11px]" onClick={() => { setMapPickupMode(v => !v); setSuggestionField(null) }} disabled={mapPickupLoading}>
+                <Button variant="ghost" size="sm" className="h-8 text-[12px] font-medium" onClick={() => { setMapPickupMode(v => !v); setSuggestionField(null) }} disabled={mapPickupLoading}>
                   {mapPickupLoading ? <><Loader2 className="h-3 w-3 animate-spin" /> Selecting…</> : mapPickupMode ? 'Cancel map pick' : 'Choose on map'}
                 </Button>
-                <Button variant="ghost" size="sm" className="h-7 gap-1 text-[11px]" onClick={useCurrentLocation} disabled={gpsLoading || mapPickupLoading}>
-                  <LocateFixed className="h-3 w-3" />{gpsLoading ? 'Locating…' : gpsActive ? 'GPS on' : 'Use GPS'}
+                <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-[12px] font-medium" onClick={useCurrentLocation} disabled={gpsLoading || mapPickupLoading}>
+                  <LocateFixed className="h-3.5 w-3.5" />{gpsLoading ? 'Locating…' : gpsActive ? 'GPS on' : 'Use GPS'}
                 </Button>
               </div>
             </div>
             {suggestionField === 'pickup' && suggestions.length > 0 && (
               <SuggestionList items={suggestions} onChoose={point => chooseSuggestion('pickup', point)} />
             )}
-            {locationError && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">{locationError}</p>}
-            <div className="space-y-1.5">
-              <Label htmlFor="dest-input">Destination</Label>
-              <div className="flex items-center gap-2 rounded-lg border border-input bg-background px-2.5 shadow-sm transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
-                <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            {locationError && <p role="alert" className="rounded-lg border border-[#D93025]/25 bg-[#D93025]/10 px-3 py-2 text-[13px] text-[#D93025]">{locationError}</p>}
+            <div className="space-y-2">
+              <Label htmlFor="dest-input" className="text-[13px] font-semibold">Destination</Label>
+              <div className="flex min-h-[52px] items-center gap-2.5 rounded-lg border border-[#D6D6D6] bg-white px-4 transition-[border-color,box-shadow] duration-150 focus-within:border-black focus-within:ring-[3px] focus-within:ring-black/10 dark:border-[#333333] dark:bg-[#1F1F1F] dark:focus-within:border-white dark:focus-within:ring-white/15">
+                <Search className="h-[18px] w-[18px] shrink-0 text-[#6B6B6B]" aria-hidden="true" />
                 <Input
                   id="dest-input"
                   value={dest}
@@ -520,7 +521,7 @@ export default function PassengerView({ view, setView, toast }) {
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void searchLocation('destination') } }}
                   onChange={e => { setDest(e.target.value); setSuggestions([]); setDestinationConfirmed(false); setDestinationPoint(null); setRouteGeometry([]); setRouteEstimate(null) }}
                   placeholder="Where to?"
-                  className="border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+                  className="h-[50px] border-0 bg-transparent px-0 shadow-none hover:border-transparent focus-visible:border-transparent focus-visible:ring-0"
                   autoComplete="off"
                 />
               </div>
@@ -531,21 +532,21 @@ export default function PassengerView({ view, setView, toast }) {
           </div>
 
           {routeEstimate && (
-            <div className="flex items-center justify-between rounded-lg border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" /> Route estimate</span>
-              <strong className="text-foreground">{(routeEstimate.distanceMeters / 1000).toFixed(1)} km · {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</strong>
+            <div className="flex items-center justify-between rounded-xl border border-[#E2E2E2] bg-[#F6F6F6] px-4 py-3 text-[13px] dark:border-[#333333] dark:bg-[#2A2A2A]">
+              <span className="flex items-center gap-2 text-[#545454] dark:text-[#AFAFAF]"><Clock className="h-4 w-4" /> Route estimate</span>
+              <strong className="tabular-nums text-black dark:text-white">{(routeEstimate.distanceMeters / 1000).toFixed(1)} km · {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</strong>
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-            <Label htmlFor="traffic-switch" className="cursor-pointer text-xs font-medium">Use live traffic for route and ETA</Label>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E2E2] px-4 py-3 dark:border-[#333333]">
+            <Label htmlFor="traffic-switch" className="cursor-pointer text-[13px] font-medium">Use live traffic for route and ETA</Label>
             <Switch id="traffic-switch" checked={trafficRouting} onCheckedChange={setTrafficRouting} aria-label="Use live traffic" />
           </div>
 
-          {/* Ride tiers */}
+          {/* Ride tiers — price/status first, details second */}
           <div>
-            <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Choose a ride</p>
-            <div className="flex flex-col gap-1.5" role="radiogroup" aria-label="Ride options">
+            <p className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8A8A8A]">Choose a ride</p>
+            <div className="flex flex-col gap-2" role="radiogroup" aria-label="Ride options">
               {RIDE_TIERS.map(tier => {
                 const active = selected === tier.id
                 const TierIcon = tier.Icon
@@ -556,44 +557,44 @@ export default function PassengerView({ view, setView, toast }) {
                     aria-checked={active}
                     onClick={() => setSelected(tier.id)}
                     className={cn(
-                      'ride-tier flex items-center justify-between gap-3 rounded-2xl border p-2.5 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      active ? 'border-foreground/60 bg-foreground/[0.04] shadow-sm' : 'hover:border-foreground/30 hover:bg-muted/40',
+                      'ride-tier flex items-center justify-between gap-3 rounded-xl border p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black dark:focus-visible:outline-white',
+                      active ? 'border-black bg-[#F6F6F6] shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:border-white dark:bg-[#2A2A2A]' : 'border-[#E2E2E2] bg-white hover:border-[#AFAFAF] dark:border-[#333333] dark:bg-transparent',
                     )}
                   >
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', active ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground')}>
-                        <TierIcon className="h-4 w-4" aria-hidden="true" />
+                    <span className="flex min-w-0 items-center gap-3">
+                      <span className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg', active ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-[#F6F6F6] text-[#545454] dark:bg-[#2A2A2A] dark:text-[#AFAFAF]')}>
+                        <TierIcon className="h-[18px] w-[18px]" aria-hidden="true" />
                       </span>
                       <span className="min-w-0">
-                        <span className="block truncate text-[13px] font-bold leading-tight">{tier.name}</span>
-                        <span className="block truncate text-[11px] text-muted-foreground">{tier.desc} · {tier.eta} · {tier.seats} seats</span>
+                        <span className="block truncate text-[15px] font-semibold leading-tight tracking-[-0.01em]">{tier.name}</span>
+                        <span className="mt-0.5 block truncate text-[12px] text-[#6B6B6B] dark:text-[#AFAFAF]">{tier.desc} · {tier.eta} · {tier.seats} seats</span>
                       </span>
                     </span>
-                    <span className="shrink-0 text-[13px] font-extrabold text-foreground">{tier.price}</span>
+                    <span className="shrink-0 text-[15px] font-bold tabular-nums">{tier.price}</span>
                   </button>
                 )
               })}
             </div>
           </div>
 
-          <Button className="primary-action uber-cta w-full" onClick={handleBook} disabled={booking || isRideActive} size="lg">
+          <Button className="primary-action uber-cta h-[52px] w-full text-[16px]" onClick={handleBook} disabled={booking || isRideActive} size="lg">
             {geocoding ? <><Loader2 className="h-4 w-4 animate-spin" /> Finding locations…</>
               : booking ? <><Loader2 className="h-4 w-4 animate-spin" /> Booking…</>
                 : isRideActive ? 'Ride in progress'
-                  : <><Zap className="h-4 w-4" /> Request ride</>}
+                  : <>Request ride</>}
           </Button>
 
           {/* Recent */}
           <div>
-            <div className="mb-2 flex items-center justify-between">
-              <p className="text-[13px] font-bold">Recent rides</p>
-              <Button variant="ghost" size="sm" className="h-7 gap-1 text-[11px]" onClick={() => setView('trips')}>
-                View all <ChevronRight className="h-3.5 w-3.5" />
+            <div className="mb-2.5 flex items-center justify-between">
+              <p className="text-[15px] font-semibold tracking-[-0.01em]">Recent rides</p>
+              <Button variant="ghost" size="sm" className="h-8 gap-1 text-[13px] font-medium" onClick={() => setView('trips')}>
+                View all <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
             {loading ? <LoadingRows count={3} height="h-[56px]" />
               : trips.length === 0 ? <DashboardEmptyState icon={CircleDot} title="No rides yet" hint="Your recent bookings will appear here once you request your first ride." />
-                : <div className="flex flex-col gap-1.5">{trips.slice(0, 3).map(t => <TripCard key={t.id} trip={t} onClick={() => openTrip(t)} />)}</div>
+                : <div className="flex flex-col gap-2">{trips.slice(0, 3).map(t => <TripCard key={t.id} trip={t} onClick={() => openTrip(t)} />)}</div>
             }
           </div>
         </div>
@@ -601,7 +602,7 @@ export default function PassengerView({ view, setView, toast }) {
       </div>
 
       {/* ── Live map: centerpiece, full-bleed ── */}
-      <div className="map-surface order-1 relative h-[30dvh] min-h-[240px] w-full shrink-0 overflow-hidden rounded-b-2xl lg:absolute lg:inset-0 lg:order-none lg:h-full lg:rounded-none">
+      <div className="map-surface order-1 relative h-[38dvh] min-h-[280px] w-full shrink-0 overflow-hidden lg:absolute lg:inset-0 lg:order-none lg:h-full lg:rounded-none">
         <div className="absolute inset-0">
           <AppMap
             center={mapCenter}
@@ -618,35 +619,35 @@ export default function PassengerView({ view, setView, toast }) {
           />
         </div>
         {mapPickupMode && (
-          <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2">
-            <Badge className="shadow-md">Tap the map to choose pickup</Badge>
+          <div className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2">
+            <Badge className="border-[#E2E2E2] bg-white px-3 py-1.5 text-[13px] font-semibold text-black shadow-[0_8px_24px_rgba(0,0,0,0.12)]">Tap the map to choose pickup</Badge>
           </div>
         )}
         {isRideActive && activeRide && (
           <button
             onClick={() => setView('tracking')}
-            className="absolute left-1/2 top-3 z-10 hidden -translate-x-1/2 items-center gap-2 rounded-full border border-border/80 bg-card/95 py-1.5 pl-3 pr-2 text-xs font-semibold shadow-lg backdrop-blur transition-colors hover:border-foreground/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:left-[calc(404px+((100%-404px)/2))] lg:flex"
+            className="absolute left-1/2 top-4 z-10 hidden -translate-x-1/2 items-center gap-2.5 rounded-lg border border-[#E2E2E2] bg-white py-2 pl-4 pr-2 text-[13px] font-semibold text-black shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-colors duration-150 hover:border-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black lg:left-[calc(448px+((100%-448px)/2))] lg:flex"
           >
-            <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" aria-hidden="true" />
+            <span className="h-2 w-2 animate-pulse rounded-full bg-black" aria-hidden="true" />
             Ride #{activeRide.id} · {RIDE_STAGE_LABELS[activeRide.status] || activeRide.status.replace(/_/g, ' ')}
-            <span className="rounded-full bg-foreground px-2 py-0.5 text-[11px] font-bold text-background">Track</span>
+            <span className="rounded-md bg-black px-2.5 py-1 text-[12px] font-semibold text-white">Track</span>
           </button>
         )}
-        <div className="absolute bottom-3 left-3 z-10 hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
+        <div className="absolute bottom-4 left-4 z-10 hidden rounded-xl border border-[#E2E2E2] bg-white px-3 py-2.5 shadow-[0_2px_8px_rgba(0,0,0,0.08)] lg:block">
           <MapLegend
             items={[
-              { color: '#111111', label: 'Pickup' },
-              { color: '#16a34a', label: 'Drop-off' },
-              { color: '#525252', label: 'Vehicle' },
+              { color: '#000000', label: 'Pickup' },
+              { color: '#545454', label: 'Drop-off' },
+              { color: '#000000', label: 'Vehicle' },
             ]}
           />
         </div>
         {routeEstimate && (
-          <Card className="absolute bottom-3 right-3 z-10 border-border/80 bg-card/95 shadow-md backdrop-blur">
-            <CardContent className="mob-data flex items-center gap-2 px-3 py-2 text-xs">
-              <Navigation className="h-3.5 w-3.5 text-primary" />
-              <strong>{(routeEstimate.distanceMeters / 1000).toFixed(1)} km</strong>
-              <span className="text-muted-foreground">· {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</span>
+          <Card className="absolute bottom-4 right-4 z-10 border-[#E2E2E2] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+            <CardContent className="mob-data flex items-center gap-2 px-3.5 py-2.5 text-[13px]">
+              <Navigation className="h-4 w-4 text-black" />
+              <strong className="tabular-nums">{(routeEstimate.distanceMeters / 1000).toFixed(1)} km</strong>
+              <span className="text-[#6B6B6B]">· {Math.max(1, Math.round(routeEstimate.durationSeconds / 60))} min</span>
             </CardContent>
           </Card>
         )}
@@ -662,12 +663,12 @@ function TripCard({ trip, onClick }) {
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.() } }}
       tabIndex={0}
       role="button"
-      className="cursor-pointer shadow-sm transition-colors hover:border-primary/40 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="cursor-pointer shadow-none transition-[border-color,background-color] duration-150 hover:border-[#AFAFAF] hover:bg-[#F6F6F6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
     >
-      <CardContent className="flex items-center justify-between gap-2 p-2.5">
+      <CardContent className="flex items-center justify-between gap-3 p-3.5">
         <div className="min-w-0">
-          <p className="truncate text-xs font-bold">→ {trip.destination_label || `${trip.dest_lat?.toFixed(3)}, ${trip.dest_lng?.toFixed(3)}`}</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">{trip.request_time ? new Date(trip.request_time).toLocaleTimeString() : ''}</p>
+          <p className="truncate text-[14px] font-semibold">→ {trip.destination_label || `${trip.dest_lat?.toFixed(3)}, ${trip.dest_lng?.toFixed(3)}`}</p>
+          <p className="mt-0.5 text-[12px] text-[#6B6B6B]">{trip.request_time ? new Date(trip.request_time).toLocaleTimeString() : ''}</p>
         </div>
         <StatusBadge status={trip.status} />
       </CardContent>
@@ -677,7 +678,7 @@ function TripCard({ trip, onClick }) {
 
 function TripsView({ trips, loading, setView, onOpenTrip, title = 'My Trips' }) {
   return (
-    <div className="mx-auto w-full max-w-[720px] space-y-4 p-4 md:p-7">
+    <div className="mx-auto w-full max-w-[720px] space-y-5 p-4 md:p-8">
       <PageHeader
         title={title}
         description={trips.length ? `${trips.length} booking${trips.length === 1 ? '' : 's'}` : 'Your ride history'}
@@ -701,21 +702,21 @@ function TripsView({ trips, loading, setView, onOpenTrip, title = 'My Trips' }) 
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenTrip(t) } }}
             tabIndex={0}
             role="button"
-            className="cursor-pointer shadow-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="cursor-pointer shadow-none transition-[border-color,background-color] duration-150 hover:border-[#AFAFAF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black"
           >
-            <CardContent className="flex items-center justify-between gap-3 p-3.5">
+            <CardContent className="flex items-center justify-between gap-3 p-4">
               <div className="min-w-0">
-                <div className="mb-1 flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[11px] text-muted-foreground">#{t.id}</span>
+                <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-[12px] text-[#8A8A8A]">#{t.id}</span>
                   <StatusBadge status={t.status} />
                 </div>
-                <p className="truncate text-[13px] font-semibold">
-                  {t.pickup_label || 'Pickup'} <ArrowRight className="mx-1 inline h-3.5 w-3.5 text-muted-foreground" />
+                <p className="truncate text-[14px] font-semibold tracking-[-0.01em]">
+                  {t.pickup_label || 'Pickup'} <ArrowRight className="mx-1 inline h-4 w-4 text-[#8A8A8A]" />
                   {t.destination_label || 'Destination'}
                 </p>
-                <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{t.ride_option_name || 'Standard'} · {t.request_time ? new Date(t.request_time).toLocaleString() : ''}</p>
+                <p className="mt-1 truncate text-[12px] text-[#6B6B6B]">{t.ride_option_name || 'Standard'} · {t.request_time ? new Date(t.request_time).toLocaleString() : ''}</p>
               </div>
-              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <ChevronRight className="h-[18px] w-[18px] shrink-0 text-[#8A8A8A]" aria-hidden="true" />
             </CardContent>
           </Card>
         ))}
@@ -727,10 +728,10 @@ function TripsView({ trips, loading, setView, onOpenTrip, title = 'My Trips' }) 
 function TripDetail({ ride, vehicle, onCancel, onBack }) {
   const canCancel = ['pending', 'clustered'].includes(ride.status)
   return (
-    <div className="mx-auto w-full max-w-[580px] space-y-4 p-4 md:p-7">
+    <div className="mx-auto w-full max-w-[580px] space-y-5 p-4 md:p-8">
       <PageHeader title={`Ride #${ride.id}`} description={ride.request_time ? new Date(ride.request_time).toLocaleString() : undefined} onBack={onBack} backLabel="Back" actions={<StatusBadge status={ride.status} />} />
-      <Card className="shadow-sm">
-        <CardContent className="flex flex-col gap-2 p-4">
+      <Card className="shadow-none">
+        <CardContent className="flex flex-col gap-2 p-5">
           <InfoCard label="From" value={ride.pickup_label || `${ride.pickup_lat}, ${ride.pickup_lng}`} />
           <InfoCard label="To" value={ride.destination_label || `${ride.dest_lat}, ${ride.dest_lng}`} />
           <InfoCard label="Ride tier" value={ride.ride_option_name || 'Standard'} />
@@ -741,19 +742,19 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
       </Card>
 
       {vehicle && (
-        <Card className="border-primary/25 bg-primary/[0.03] shadow-sm">
+        <Card className="border-black shadow-none dark:border-white">
           <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-1.5 text-[13px]"><CarFront className="h-4 w-4 text-primary" /> Assigned vehicle</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-[15px]"><CarFront className="h-[18px] w-[18px]" /> Assigned vehicle</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-wrap gap-x-6 gap-y-2 pb-4">
-            <div><p className="text-[11px] text-muted-foreground">Plate</p><p className="font-mono text-[13px] font-bold">{vehicle.license_plate}</p></div>
-            <div><p className="text-[11px] text-muted-foreground">Status</p><p className="text-[13px] font-bold capitalize">{vehicle.status}</p></div>
-            {vehicle.lat && <div><p className="text-[11px] text-muted-foreground">Location</p><p className="font-mono text-[13px] font-bold">{vehicle.lat.toFixed(4)}, {vehicle.lng.toFixed(4)}</p></div>}
+          <CardContent className="flex flex-wrap gap-x-8 gap-y-3 pb-5">
+            <div><p className="text-[12px] text-[#6B6B6B]">Plate</p><p className="font-mono text-[14px] font-semibold">{vehicle.license_plate}</p></div>
+            <div><p className="text-[12px] text-[#6B6B6B]">Status</p><p className="text-[14px] font-semibold capitalize">{vehicle.status}</p></div>
+            {vehicle.lat && <div><p className="text-[12px] text-[#6B6B6B]">Location</p><p className="font-mono text-[14px] font-semibold">{vehicle.lat.toFixed(4)}, {vehicle.lng.toFixed(4)}</p></div>}
           </CardContent>
         </Card>
       )}
       {canCancel && (
-        <Button variant="outline" onClick={onCancel} className="w-full text-destructive hover:text-destructive">
+        <Button variant="outline" onClick={onCancel} className="h-12 w-full text-[#D93025] hover:text-[#D93025]">
           <X className="h-4 w-4" /> Cancel ride
         </Button>
       )}
@@ -810,22 +811,22 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-card px-3 py-2.5 md:px-5">
+      <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b border-[#E2E2E2] bg-white px-4 py-3 md:px-8 dark:border-[#333333] dark:bg-black">
         <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5">
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
-        <Separator orientation="vertical" className="h-5" />
-        <p className="text-sm font-bold">Live ride tracking</p>
+        <Separator orientation="vertical" className="h-5 bg-[#E2E2E2] dark:bg-[#333333]" />
+        <p className="text-[15px] font-semibold tracking-[-0.01em]">Live ride tracking</p>
         {ride && <StatusBadge status={ride.status} />}
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="ml-auto text-[13px] text-[#6B6B6B]">
           {displayVehicle
-            ? <Badge variant="secondary" className="gap-1.5 font-mono"><CarFront className="h-3 w-3" /> {displayVehicle.license_plate}</Badge>
+            ? <Badge variant="secondary" className="gap-1.5 font-mono text-[12px]"><CarFront className="h-3.5 w-3.5" /> {displayVehicle.license_plate}</Badge>
             : ride && 'Awaiting vehicle assignment…'}
         </span>
       </div>
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 bg-[#EEEEEE] dark:bg-[#111111]">
         {!ride
-          ? <div className="mx-auto w-full max-w-[560px] p-4 md:p-7"><DashboardEmptyState icon={Navigation} title="No active ride" hint="Start a booking from Home to track it live here." action={<Button size="sm" onClick={onBack}>Back home</Button>} /></div>
+          ? <div className="mx-auto w-full max-w-[560px] p-4 md:p-8"><DashboardEmptyState icon={Navigation} title="No active ride" hint="Start a booking from Home to track it live here." action={<Button size="sm" onClick={onBack}>Back home</Button>} /></div>
           : <AppMap center={center} zoom={14} height="100%" vehicles={vList} pickup={pickupCoords} destination={destCoords} routeGeometry={routeGeometry} vehicleAnimation={vehicleAnimation} pickupPulse={trackingPickupPulse} followCamera={ride.status === 'in_progress'} />
         }
       </div>
@@ -835,16 +836,16 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
 
 function InfoCard({ label, value, mono = false }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2">
-      <p className="shrink-0 text-xs text-muted-foreground">{label}</p>
-      <p className={cn('min-w-0 truncate text-right text-[13px] font-semibold', mono && 'font-mono')}>{value}</p>
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-[#E2E2E2] bg-[#F6F6F6] px-3.5 py-2.5 dark:border-[#333333] dark:bg-[#2A2A2A]">
+      <p className="shrink-0 text-[13px] text-[#6B6B6B] dark:text-[#AFAFAF]">{label}</p>
+      <p className={cn('min-w-0 truncate text-right text-[14px] font-semibold', mono && 'font-mono tabular-nums')}>{value}</p>
     </div>
   )
 }
 
 function SuggestionList({ items, onChoose }) {
   return (
-    <Card className="relative z-20 max-h-56 overflow-y-auto shadow-md" role="listbox" aria-label="Location suggestions">
+    <Card className="relative z-20 max-h-56 overflow-y-auto rounded-xl border-[#E2E2E2] shadow-[0_8px_24px_rgba(0,0,0,0.12)]" role="listbox" aria-label="Location suggestions">
       {items.map((item, index) => (
         <button
           key={`${item.lat}-${item.lng}-${index}`}
@@ -852,10 +853,10 @@ function SuggestionList({ items, onChoose }) {
           aria-selected="false"
           onMouseDown={event => event.preventDefault()}
           onClick={() => onChoose(item)}
-          className="block w-full border-b px-3 py-2 text-left transition-colors last:border-0 hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none"
+          className="block w-full border-b border-[#EEEEEE] px-4 py-2.5 text-left transition-colors duration-150 last:border-0 hover:bg-[#F6F6F6] focus-visible:bg-[#F6F6F6] focus-visible:outline-none dark:border-[#333333] dark:hover:bg-[#2A2A2A]"
         >
-          <span className="block truncate text-xs font-bold">{item.label.split(',')[0]}</span>
-          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{item.label}</span>
+          <span className="block truncate text-[13px] font-semibold">{item.label.split(',')[0]}</span>
+          <span className="mt-0.5 block truncate text-[12px] text-[#6B6B6B]">{item.label}</span>
         </button>
       ))}
     </Card>

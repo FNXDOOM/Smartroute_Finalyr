@@ -414,8 +414,8 @@ export default function DriverView({ user, view, setView, toast }) {
             <h1 className="mob-page-title">Driver Dashboard</h1>
             <Badge variant="secondary" className="gap-1.5">
               <span className="relative flex h-2 w-2" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-60" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-black opacity-20" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-black dark:bg-white" />
               </span>
               <span className="sr-only">Live: </span>Live dispatch
             </Badge>
@@ -646,12 +646,12 @@ export default function DriverView({ user, view, setView, toast }) {
               <div className="rounded-lg bg-muted/50 p-3">
                 <div className="flex items-center justify-between">
                   <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                    <BatteryCharging className="h-3.5 w-3.5 text-green-600 dark:text-green-400" /> Battery / Range
+                    <BatteryCharging className="h-3.5 w-3.5 text-black dark:text-white" /> Battery / Range
                   </p>
                   <span className="text-xs font-bold text-green-700 dark:text-green-400">88%</span>
                 </div>
                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
-                  <div className="h-full w-[88%] rounded-full bg-green-500" />
+                  <div className="h-full w-[88%] rounded-full bg-black dark:bg-white" />
                 </div>
                 <p className="mt-1.5 text-xs text-muted-foreground">195 km remaining · healthy</p>
               </div>
@@ -900,7 +900,7 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
         </Card>
 
         <Badge variant="secondary" className="absolute right-3 top-3 z-10 gap-1.5 shadow">
-          <span className={cn('h-2 w-2 rounded-full', simActive ? 'animate-pulse bg-green-500' : 'bg-muted-foreground')} aria-hidden="true" />
+          <span className={cn('h-2 w-2 rounded-full', simActive ? 'animate-pulse bg-black dark:bg-white' : 'bg-muted-foreground')} aria-hidden="true" />
           {vehicle.license_plate} · {simActive ? 'en route' : 'idle'}
         </Badge>
       </div>
@@ -1007,14 +1007,14 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
               items={[
                 { color: '#525252', label: 'Depot' },
                 { color: '#111111', label: 'Pickup' },
-                { color: '#16a34a', label: 'Drop-off' },
+                { color: '#545454', label: 'Drop-off' },
               ]}
             />
             <div className="space-y-0">
               {['Depot · Indiranagar Hub', 'Board Priya · Stop C (100 Feet Rd)', 'Board Rohan · Stop B (100 Feet Rd)', 'Board Ananya · Stop A (100 Feet Rd)', 'Drop Rohan · Church Street', 'Drop Priya · Brigade Road', 'Drop Ananya · MG Road Metro'].map((label, i, arr) => (
                 <div key={label} className="flex gap-3">
                   <div className="flex flex-col items-center">
-                    <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', i === 0 ? 'bg-muted-foreground' : i === arr.length - 1 ? 'bg-green-600' : 'bg-foreground')} />
+                    <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', i === 0 ? 'bg-muted-foreground' : i === arr.length - 1 ? 'bg-black dark:bg-white' : 'bg-foreground')} />
                     {i < arr.length - 1 && <span className="w-px flex-1 bg-border" />}
                   </div>
                   <p className="pb-3 text-xs font-medium">{label}</p>
@@ -1032,11 +1032,11 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
 }
 
 const STATUS_STYLES = {
-  completed: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  completed: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
   in_progress: 'border-foreground/30 bg-foreground text-background',
   arriving: 'border-foreground/30 bg-foreground text-background',
   assigned: 'border-foreground/30 bg-foreground text-background',
-  active: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  active: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
   en_route: 'border-foreground/30 bg-foreground text-background',
   idle: 'border-border bg-muted text-muted-foreground',
   pending: 'border-border bg-muted text-foreground',

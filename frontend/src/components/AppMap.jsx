@@ -14,14 +14,14 @@ function applyDarkMapTheme(map) {
     const layerId = layer.id.toLowerCase()
     try {
       if (layer.type === 'background') {
-        map.setPaintProperty(layer.id, 'background-color', '#252a28')
+        map.setPaintProperty(layer.id, 'background-color', '#000000')
       } else if (layer.type === 'fill' && sourceLayer.includes('water')) {
-        map.setPaintProperty(layer.id, 'fill-color', '#182c2b')
+        map.setPaintProperty(layer.id, 'fill-color', '#111111')
       } else if (layer.type === 'fill' && (sourceLayer.includes('building') || layerId.includes('building'))) {
-        map.setPaintProperty(layer.id, 'fill-color', '#2b322f')
-        map.setPaintProperty(layer.id, 'fill-outline-color', '#37403b')
+        map.setPaintProperty(layer.id, 'fill-color', '#1F1F1F')
+        map.setPaintProperty(layer.id, 'fill-outline-color', '#333333')
       } else if (layer.type === 'fill') {
-        map.setPaintProperty(layer.id, 'fill-color', '#202624')
+        map.setPaintProperty(layer.id, 'fill-color', '#111111')
       } else if (layer.type === 'line' && (
         sourceLayer.includes('road') ||
         sourceLayer.includes('transport') ||
@@ -29,12 +29,12 @@ function applyDarkMapTheme(map) {
         layerId.includes('road') ||
         layerId.includes('transport')
       )) {
-        map.setPaintProperty(layer.id, 'line-color', '#56615b')
-        map.setPaintProperty(layer.id, 'line-opacity', .72)
+        map.setPaintProperty(layer.id, 'line-color', '#545454')
+        map.setPaintProperty(layer.id, 'line-opacity', .85)
       } else if (layer.type === 'symbol') {
-        map.setPaintProperty(layer.id, 'text-color', '#d7d4c8')
-        map.setPaintProperty(layer.id, 'text-halo-color', '#141918')
-        map.setPaintProperty(layer.id, 'text-opacity', .78)
+        map.setPaintProperty(layer.id, 'text-color', '#E2E2E2')
+        map.setPaintProperty(layer.id, 'text-halo-color', '#000000')
+        map.setPaintProperty(layer.id, 'text-opacity', .9)
       }
     } catch {
       // Skip layout-only vendor layers.
@@ -53,40 +53,39 @@ function backendMapUrl(url) {
 }
 
 const colours = {
-  pickup: '#111111',
-  destination: '#16a34a',
-  depot: '#525252',
-  waypoint: '#737373',
-  route: '#16a34a',
+  pickup: '#000000',
+  destination: '#000000',
+  depot: '#545454',
+  waypoint: '#6B6B6B',
+  route: '#000000',
 }
 
 function markerElement(label, type = 'pickup') {
   const el = document.createElement('div')
   const inner = document.createElement('div')
   inner.className = 'sr-pin sr-drop'
-  
-  const isDepot = type === 'depot'
-  const isDest = type === 'destination'
-  const isHome = type === 'rider_home'
-  const isVirtual = type === 'virtual_stop' || type === 'waypoint'
 
-  const bg = isDest ? '#16a34a' : isDepot ? '#525252' : isHome ? '#111111' : isVirtual ? '#737373' : '#111111'
-  const borderRadius = isDest || isDepot || isHome ? '50%' : '50% 50% 50% 0'
+  const isDest = type === 'destination'
+
+  // Premium high-contrast: solid black pins, white glyph, white ring.
+  // Pickup = ▲ square-pin, destination = ★ circle — shape carries meaning.
+  const bg = '#000000'
+  const borderRadius = isDest ? '50%' : '50% 50% 50% 0'
 
   inner.style.cssText = `
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     border-radius: ${borderRadius};
     background: ${bg};
-    border: 2.5px solid #ffffff;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    border: 2px solid #ffffff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.28);
     display: flex;
     align-items: center;
     justify-content: center;
     color: #ffffff;
-    font-size: 11px;
-    font-weight: 800;
-    font-family: sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    font-family: Inter, Arial, sans-serif;
   `
   const span = document.createElement('span')
   span.textContent = label
@@ -102,69 +101,37 @@ function vehicleMarkerElement() {
   el.className = 'sr-vehicle-root'
   el.style.cssText = `position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;`
 
-  // Headlight beam projecting in travel direction (top)
-  const beam = document.createElement('div')
-  beam.className = 'sr-vehicle-headlight'
-  beam.style.cssText = `
-    position: absolute;
-    top: -20px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 28px;
-    height: 24px;
-    background: radial-gradient(ellipse at bottom, rgba(255,240,150,0.6) 0%, rgba(255,240,150,0) 80%);
-    clip-path: polygon(25% 100%, 75% 100%, 100% 0%, 0% 0%);
-    pointer-events: none;
-  `
-
-  // Glowing pulse aura for active status
+  // Subtle neutral aura — no color glow.
   const aura = document.createElement('div')
   aura.className = 'sr-vehicle-aura'
   aura.style.cssText = `
     position: absolute;
     inset: 4px;
     border-radius: 50%;
-    background: var(--pin-color, #111111);
-    opacity: 0.35;
-    animation: sr-pulse 2s cubic-bezier(0, .4, .3, 1) infinite;
+    background: #000000;
+    opacity: 0.12;
     pointer-events: none;
   `
 
-  // Vehicle circular body with directional heading arrow
+  // Premium vehicle badge: solid black, white ring, crisp glyph.
   const inner = document.createElement('div')
   inner.className = 'sr-vehicle-body sr-drop'
   inner.style.cssText = `
     position: relative;
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     border-radius: 50%;
-    background: #0f172a;
-    border: 2px solid var(--pin-color, #111111);
-    box-shadow: 0 4px 14px rgba(0,0,0,0.5), 0 0 8px var(--pin-color, #111111);
+    background: #000000;
+    border: 2px solid #ffffff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.32);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 15px;
+    font-size: 16px;
     z-index: 2;
   `
   inner.textContent = '🚗'
 
-  // Direction pointer arrow at the front (top)
-  const pointer = document.createElement('div')
-  pointer.style.cssText = `
-    position: absolute;
-    top: -6px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 0;
-    height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-bottom: 7px solid var(--pin-color, #111111);
-  `
-  inner.appendChild(pointer)
-
-  el.appendChild(beam)
   el.appendChild(aura)
   el.appendChild(inner)
   return el
@@ -201,7 +168,8 @@ function escapeHtml(value) {
 }
 
 function vehicleColor(status) {
-  return status === 'active' || status === 'en_route' ? '#16a34a' : status === 'idle' ? '#737373' : '#dc2626'
+  // Neutral fleet: active = black, idle = gray, off = muted red (sparing).
+  return status === 'active' || status === 'en_route' ? '#000000' : status === 'idle' ? '#8A8A8A' : '#D93025'
 }
 
 function cleanupMap(map, animationRef, routeAnimationRef, markersRef) {
@@ -221,6 +189,7 @@ const EMPTY_ARRAY = []
 function setupBaseSourcesAndLayers(map) {
   // Reusable after setStyle reloads (setStyle removes custom sources/layers).
   // Guards keep initial load idempotent.
+  // Route = solid black with soft white casing (Uber-style clarity).
   if (!map.getSource('route')) {
     map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     map.addLayer({
@@ -228,10 +197,9 @@ function setupBaseSourcesAndLayers(map) {
       type: 'line',
       source: 'route',
       paint: {
-        'line-color': '#16a34a',
-        'line-width': 8,
-        'line-opacity': 0.25,
-        'line-blur': 2,
+        'line-color': '#ffffff',
+        'line-width': 9,
+        'line-opacity': 0.9,
       },
     })
     map.addLayer({
@@ -239,9 +207,9 @@ function setupBaseSourcesAndLayers(map) {
       type: 'line',
       source: 'route',
       paint: {
-        'line-color': '#16a34a',
+        'line-color': '#000000',
         'line-width': 4.5,
-        'line-opacity': 0.95,
+        'line-opacity': 1,
       },
     })
   }
@@ -252,8 +220,8 @@ function setupBaseSourcesAndLayers(map) {
       type: 'line',
       source: 'walking',
       paint: {
-        'line-color': '#f59e0b',
-        'line-width': 3,
+        'line-color': '#545454',
+        'line-width': 2.5,
         'line-opacity': 0.9,
         'line-dasharray': [1.5, 1.5],
       },
@@ -263,31 +231,31 @@ function setupBaseSourcesAndLayers(map) {
     map.addSource('stops', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     map.addLayer({
       id: 'stop-halos', type: 'circle', source: 'stops',
-      paint: { 'circle-radius': 22, 'circle-color': ['get', 'color'], 'circle-opacity': .18, 'circle-blur': .35 },
+      paint: { 'circle-radius': 20, 'circle-color': ['get', 'color'], 'circle-opacity': .12 },
     })
     map.addLayer({
       id: 'stop-points', type: 'circle', source: 'stops',
-      paint: { 'circle-radius': 15, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
+      paint: { 'circle-radius': 13, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
     })
     map.addLayer({
       id: 'stop-labels', type: 'symbol', source: 'stops',
       layout: { 'text-field': ['get', 'markerLabel'], 'text-size': 11, 'text-allow-overlap': true },
-      paint: { 'text-color': '#ffffff', 'text-halo-color': '#0f172a', 'text-halo-width': 1 },
+      paint: { 'text-color': '#ffffff', 'text-halo-color': '#000000', 'text-halo-width': 1.5 },
     })
   }
   if (!map.getSource('vehicles')) {
     map.addSource('vehicles', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     map.addLayer({
       id: 'vehicle-halos', type: 'circle', source: 'vehicles',
-      paint: { 'circle-radius': 28, 'circle-color': ['get', 'color'], 'circle-opacity': .2, 'circle-blur': .45 },
+      paint: { 'circle-radius': 24, 'circle-color': ['get', 'color'], 'circle-opacity': .12 },
     })
     map.addLayer({
       id: 'vehicle-points', type: 'circle', source: 'vehicles',
-      paint: { 'circle-radius': 18, 'circle-color': '#0f172a', 'circle-stroke-color': ['get', 'color'], 'circle-stroke-width': 3 },
+      paint: { 'circle-radius': 15, 'circle-color': '#000000', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
     })
     map.addLayer({
       id: 'vehicle-labels', type: 'symbol', source: 'vehicles',
-      layout: { 'text-field': '🚗', 'text-size': 15, 'text-allow-overlap': true },
+      layout: { 'text-field': '🚗', 'text-size': 14, 'text-allow-overlap': true },
       paint: { 'text-color': '#ffffff' },
     })
   }
@@ -558,13 +526,12 @@ function updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells
     stopFeatures.push({ type: 'Feature', properties: { color, markerLabel }, geometry: { type: 'Point', coordinates: [point.lng, point.lat] } })
   }
 
-  // Draw rich waypoints
+  // Draw rich waypoints — neutral stop system
   waypoints.forEach((wp, i) => {
     const isDepot = wp.waypoint_type === 'depot'
     const isPickup = wp.waypoint_type === 'pickup'
-    const isHome = wp.waypoint_type === 'rider_home'
-    const label = wp.marker_label || (isDepot ? '🏢' : isPickup ? `🚏 ${i}` : isHome ? '🏠' : '•')
-    const col = isDepot ? colours.depot : isHome ? '#f59e0b' : colours.waypoint
+    const label = wp.marker_label || (isDepot ? '🏢' : isPickup ? `🚏 ${i}` : '•')
+    const col = isDepot ? colours.depot : colours.waypoint
     if (mapLayerMarkers) addStopFeature(wp, col, label)
     else add(wp, col, label, isDepot ? 'Depot Hub' : `Stop ${i}`, wp.waypoint_type)
   })

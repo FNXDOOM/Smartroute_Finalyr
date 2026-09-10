@@ -17,6 +17,25 @@ export default {
         ring: 'hsl(var(--ring))',
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
+        // Strict Uber-inspired neutrals
+        ink: {
+          DEFAULT: '#000000',
+          soft: '#111111',
+          surface: '#1F1F1F',
+        },
+        paper: '#FFFFFF',
+        neutral: {
+          50: '#F6F6F6',
+          100: '#EEEEEE',
+          200: '#E2E2E2',
+          300: '#D6D6D6',
+          400: '#AFAFAF',
+          500: '#8A8A8A',
+          600: '#6B6B6B',
+          700: '#545454',
+          800: '#333333',
+          900: '#1F1F1F',
+        },
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
@@ -47,13 +66,19 @@ export default {
         },
       },
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        sm: '6px',
+        DEFAULT: '8px',
+        md: '8px',
+        lg: '12px',
+        xl: '16px',
+      },
+      boxShadow: {
+        sm: '0 2px 8px rgba(0,0,0,0.08)',
+        md: '0 8px 24px rgba(0,0,0,0.12)',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', 'sans-serif'],
-        display: ['Bricolage Grotesque', 'Inter', 'sans-serif'],
+        sans: ['Inter', 'Arial', 'Helvetica', 'sans-serif'],
+        display: ['Inter', 'Arial', 'Helvetica', 'sans-serif'],
       },
       keyframes: {
         'accordion-down': {
