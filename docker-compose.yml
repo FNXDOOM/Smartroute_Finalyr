@@ -1,18 +1,43 @@
 services:
+  # DB: Supabase via DATABASE_URL in backend/.env.
+  # Prod: no public ports on app services. NPM is the only entrypoint.
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
+    # Internal only. NPM routes app -> frontend:80.
+    expose:
+      - "80"
+    depends_on:
+      - api
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
   api:
-    build: .
-    # --proxy-headers + --forwarded-allow-ips lets Uvicorn trust X-Forwarded-For/Proto
-    # from a reverse proxy (e.g. Nginx Proxy Manager) sitting in front of this service.
-    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
+    # Trust NPM in same network only.
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"]
     env_file: ./backend/.env
     environment:
       PROCESS_ROLE: api
       ENABLE_TRACKING_BROADCAST: "true"
-    ports:
-      - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
+      # CORS for dockerized frontend.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-http://localhost:3000,http://localhost:5173}
+    # Internal only. NPM routes api -> api:8000.
+    expose:
+      - "8000"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
       interval: 30s
@@ -21,38 +46,21 @@ services:
       start_period: 60s
 
   worker:
-    build: .
+    build:
+      context: .
+      dockerfile: ./backend/Dockerfile
     command: ["python", "worker.py"]
     env_file: ./backend/.env
     environment:
       PROCESS_ROLE: worker
       ENABLE_TRACKING_BROADCAST: "false"
-    depends_on:
-      db:
-        condition: service_healthy
-    # The image's HEALTHCHECK probes an HTTP endpoint the worker doesn't serve.
+    restart: unless-stopped
+    # No HTTP in worker.
     healthcheck:
       disable: true
 
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: smartrouteai
-      POSTGRES_USER: smartroute
-      POSTGRES_PASSWORD: change-me-in-local-env
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U smartroute -d smartrouteai"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  # Reverse proxy / TLS termination in front of the api service. Admin UI is
-  # on port 81 (first login: admin@example.com / changeme -- change both
-  # immediately). Add a Proxy Host in the UI pointing at http://api:8000,
-  # with "Websockets Support" turned ON (required for /tracking/ws and
-  # /notifications/ws), and request a Let's Encrypt cert for your domain.
+  # NPM: app -> frontend:80, api -> api:8000 (websockets ON).
+  # Prod: rebuild frontend with public VITE_API_BASE_URL.
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:latest
     restart: unless-stopped
@@ -67,6 +75,5 @@ services:
       - api
 
 volumes:
-  postgres_data:
   npm_data:
   npm_letsencrypt:

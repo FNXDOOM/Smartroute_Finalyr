@@ -20,6 +20,6 @@ backend/.venv
 venv
 .venv
 
-Dockerfile*
-docker-compose*.yml
-docker-compose*.yaml
+**/Dockerfile*
+**/docker-compose*.yml
+**/docker-compose*.yaml
