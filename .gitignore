@@ -52,6 +52,12 @@ frontend/.env
 frontend/.env.local
 frontend/.env.*.local
 
+# opencode local plugins / scratch
+.opencode/node_modules/
+
+# Playwright MCP output
+.playwright-mcp/
+
 # Logs
 *.log
 logs/
