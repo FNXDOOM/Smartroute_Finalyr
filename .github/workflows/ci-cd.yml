@@ -1,0 +1,189 @@
+# SmartRouteAI CI/CD — GitHub → Docker Hub → EC2.
+#
+# PRs: lint + tests + frontend build (no push, no deploy).
+# Push to main: lint + tests + build + docker build/push (:<short-sha> + :latest)
+#   + EC2 deploy of the immutable :<short-sha> tag (never :latest).
+#
+# Backend runtime secrets are NEVER in GitHub. EC2 fetches them from
+# AWS Secrets Manager via its IAM instance role (see deploy/deploy.sh).
+# Only public frontend build args (VITE_API_BASE_URL, VITE_CLERK_PUBLISHABLE_KEY)
+# are in GitHub Variables/Secrets — they end up in the browser bundle by design.
+
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Prevent two production deploys overlapping and corrupting each other.
+# PR checks also serialize behind this group (safe, slightly slower).
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.10"
+  NODE_VERSION: "20"
+
+jobs:
+  # ---------- PR + main: backend tests ----------
+  backend-tests:
+    name: backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run pytest
+        env:
+          # Dummy non-secret values for CI only. Real secrets live in
+          # AWS Secrets Manager and are never in GitHub.
+          DATABASE_URL: sqlite:///./ci_test.db
+          LOCAL_JWT_SECRET: ci-only-dummy-not-a-secret
+          APP_ENV: test
+          AUTH_PROVIDER: clerk
+          CLERK_JWKS_URL: https://ci.invalid/.well-known/jwks.json
+          CLERK_ISSUER: https://ci.invalid
+        run: pytest tests/ -v
+
+  # ---------- PR + main: frontend lint + prod build check ----------
+  frontend-ci:
+    name: frontend lint + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build check (dummy public vars, no secrets)
+        env:
+          VITE_API_BASE_URL: http://localhost:8000
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_ci_dummy
+        run: npm run build
+
+  # ---------- main only: build + push immutable images ----------
+  docker-push:
+    name: docker build + push
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      short_sha: ${{ steps.sha.outputs.short_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+
+      - name: Compute short SHA (immutable deploy tag)
+        id: sha
+        run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3.2.0
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3.7.1
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3.3.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build + push backend (api/worker shared image)
+        uses: docker/build-push-action@v6.13.0
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: true
+          # Immutable SHA tag + convenience latest. Deploy uses SHA only.
+          tags: |
+            ${{ vars.DOCKERHUB_NAMESPACE }}/smartroute-api:${{ steps.sha.outputs.short_sha }}
+            ${{ vars.DOCKERHUB_NAMESPACE }}/smartroute-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build + push frontend (prod VITE_* baked in)
+        uses: docker/build-push-action@v6.13.0
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ vars.DOCKERHUB_NAMESPACE }}/smartroute-frontend:${{ steps.sha.outputs.short_sha }}
+            ${{ vars.DOCKERHUB_NAMESPACE }}/smartroute-frontend:latest
+          # Only public values. Never backend secrets here.
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL }}
+            VITE_CLERK_PUBLISHABLE_KEY=${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------- main only: deploy exact SHA to EC2 ----------
+  deploy-prod:
+    name: deploy to EC2
+    runs-on: ubuntu-latest
+    needs: [docker-push]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Deploy over SSH (pull SHA, secrets from Secrets Manager, migrate, healthcheck)
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          IMAGE_TAG: ${{ needs.docker-push.outputs.short_sha }}
+          DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+          BACKEND_SECRET_ID: ${{ vars.BACKEND_SECRET_ID }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          # Keep host-key checking enabled (do not weaken SSH).
+          # Add EC2 host key to ~/.ssh/known_hosts on first setup; the action
+          # respects it when `key` auth is used with default StrictHostKeyChecking.
+          script_stop: true
+          envs: IMAGE_TAG,DOCKERHUB_NAMESPACE,BACKEND_SECRET_ID,AWS_REGION
+          script: |
+            set -euo pipefail
+            PROJECT_DIR="${{ vars.EC2_PROJECT_DIR }}"
+            if [ -z "${PROJECT_DIR}" ]; then PROJECT_DIR="$HOME/Smartroute"; fi
+            echo "Project dir: ${PROJECT_DIR}"
+            cd "${PROJECT_DIR}"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+            chmod +x deploy/deploy.sh
+            export DOCKERHUB_NAMESPACE IMAGE_TAG
+            if [ -n "${BACKEND_SECRET_ID}" ]; then export BACKEND_SECRET_ID; fi
+            if [ -n "${AWS_REGION}" ]; then export AWS_REGION; fi
+            ./deploy/deploy.sh "${IMAGE_TAG}"

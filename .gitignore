@@ -16,6 +16,10 @@ ENV/
 # Environment variables
 .env.local
 .env.*.local
+# Production runtime env generated on EC2 from Secrets Manager (never commit).
+.env.prod
+deploy/.env.prod
+deploy/.last-good-tag
 
 # Database
 *.db
