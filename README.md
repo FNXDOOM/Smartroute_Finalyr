@@ -11,10 +11,9 @@ An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HD
 - [Tech Stack](#tech-stack)
 - [Running the Project](#running-the-project)
 - [Authentication & Role System](#authentication--role-system)
-- [What Works Right Now](#what-works-right-now-)
-- [What Still Needs to Be Built](#what-still-needs-to-be-built-)
 - [Architecture Overview](#architecture-overview)
 - [API Reference](#api-reference)
+- [Deployment (CI/CD)](#deployment-cicd)
 - [Security and Production Notes](#security-and-production-notes)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -34,7 +33,8 @@ cd finalyr_project
 cd backend
 pip install -r ../requirements.txt
 cp .env.example .env
-# Edit .env with DATABASE_URL, CLERK_SECRET_KEY, and STADIA_API_KEY
+# Edit .env with DATABASE_URL, CLERK_JWKS_URL, CLERK_ISSUER, CLERK_SECRET_KEY,
+# LOCAL_JWT_SECRET, and STADIA_API_KEY (see backend/.env.example)
 
 # Run migrations
 alembic -c ../alembic.ini upgrade head
@@ -94,7 +94,7 @@ Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartroutea
 | Frontend | React 19 + Vite, MapLibre GL (Stadia-only via authenticated backend proxy), Clerk (auth) |
 | Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (Supabase) |
 | Auth | Clerk (JWT RS256 via JWKS) + dual-role isolation (Passenger / Driver) |
-| Role Sync | Clerk `publicMetadata` patched via Backend API on every role change (requires `CLERK_SECRET_KEY` — note: add it to `backend/.env`; it is missing from `.env.example`) |
+| Role Sync | Clerk `publicMetadata` patched via Backend API on every role change (requires `CLERK_SECRET_KEY` in `backend/.env`; the backend only logs a line and skips the sync if it is missing) |
 | Algorithms | HDBSCAN clustering, OR-Tools CVRP (Stadia ≤25×25 → OSM Dijkstra → haversine), Hungarian algorithm (scipy), H3 spatial indexing (res 9 ≈ 0.1 km²) |
 | ML | XGBoost demand model (`ml/models/demand_model.pkl`, heuristic fallback if absent) |
 | Maps | Stadia Maps via authenticated MapLibre proxy (`/maps/stadia/*`, `/geocode/*`, `/routing/*`), OSMnx road graph; all geo endpoints India-guarded (`is_india_location`) |
@@ -151,14 +151,35 @@ docker compose up --build
 docker compose exec api alembic upgrade head
 ```
 
-The compose file runs four services: `db` (Postgres), `api`, `worker`, and
-`nginx-proxy-manager` (reverse proxy/TLS termination in front of `api`). See
+The dev compose file runs four services: `frontend` (nginx + Vite build),
+`api` (FastAPI), `worker` (`python worker.py`), and `nginx-proxy-manager`
+(reverse proxy/TLS termination). There is no local `db` service — the database
+is Supabase PostgreSQL via `DATABASE_URL`. See
 [Running behind Nginx Proxy Manager](#running-behind-nginx-proxy-manager) for
-how to configure the proxy host. Provide the production database and Clerk
-settings through `backend/.env` or your deployment platform's secret manager;
-do not bake them into the image.
+how to configure the proxy host. Provide the development database and Clerk
+settings through `backend/.env`; do not bake them into the image.
 
-For Amazon ECS/Fargate deployment with Docker Hub, use the task-definition
+### Deployment (CI/CD)
+
+Production deploys run from `main` only:
+
+```text
+push to main → GitHub Actions (lint/test/build → docker build/push :<sha>)
+  → Docker Hub (smartroute-api + smartroute-frontend)
+  → EC2 (pull exact SHA → secrets from AWS Secrets Manager
+  → alembic upgrade head → compose up → healthchecks)
+```
+
+Key files: `docker-compose.prod.yml` (pinned `image:`, no `build:`),
+`deploy/deploy.sh` (migrate → up → `frontend /health`, `api /health/live`,
+`api /health/ready` → rollback to previous SHA on failure),
+`.github/workflows/ci-cd.yml` (PRs run lint/tests/build; `main` also pushes
+and deploys; `concurrency: production`). Full setup — GitHub
+Secrets/Variables, EC2 IAM + Security Groups, the Secrets Manager JSON layout,
+first-deploy steps, and the forward-only migration / container-rollback policy —
+is in [`deploy/README.md`](deploy/README.md).
+
+For Amazon ECS/Fargate as an alternative to EC2, use the task-definition
 templates in [`deploy/ecs`](deploy/ecs). They define separate API and worker
 services, Secrets Manager injection, CloudWatch logging, and ECS health checks.
 See the [ECS deployment guide](deploy/ecs/README.md) for Docker Hub publishing,
@@ -271,135 +292,6 @@ python seed.py --reset  # wipe and re-seed
 
 ---
 
-## What Works Right Now ✅
-
-### Authentication & Role Isolation
-- **Dual-portal login screen** — tabbed switcher between Passenger Portal and Driver Portal
-- **Passenger Portal** — Clerk `<SignIn />` with Google OAuth + Email/Password
-- **Driver Portal** — credentials-only custom form (zero social login buttons) via `useSignIn()` / `useSignUp()`
-- Clerk JWT verification (RS256 via JWKS) on every backend request
-- Auto-provisions DB user on first login (`role=passenger` by default)
-- Role-based access control: `passenger`, `driver`, `admin`
-- `driver_status` lifecycle: `pending_verification → active | suspended | rejected`
-- **DriverVerificationGate** — pending drivers see a status gate instead of the dashboard
-- **Clerk `publicMetadata` sync** — role + driver_status written back to Clerk on every admin action (requires `CLERK_SECRET_KEY`)
-- WebSocket auth via the `bearer` subprotocol; tokens are not placed in URLs
-- Frontend route guard (`safeSetView`) blocks passengers from driver/admin views with toast warnings
-
-### Passenger
-- Book a ride — creates a `RideRequest` (`mode=live`, `status=pending`) in DB, fires notification; pickup/destination must be within India
-- Batch + demo booking — `POST /rides/batch`, `POST /rides/demo-batch` (Indiranagar/Koramangala presets or custom coords), `POST /rides/demo-shared-batch`, `DELETE /rides/demo-runs/{id}` (isolated `presentation_demo` scope via `PresentationDemoView`)
-- Select ride tier (SwiftX, SwiftXL, Lux Black, Moto) with flat fare display
-- Cancel pending/clustered rides (passengers may only set `cancelled` on their own rides)
-- Trip history with status badges (`GET /rides/my-rides`, live scope only)
-- Live tracking map — polls vehicle GPS every 5 seconds; `GET /rides/{id}/vehicle` resolves the assigned vehicle (null until routed)
-- Trip detail view showing assigned vehicle, cluster ID, H3 cell
-
-### Driver
-- Dashboard with fleet stats pulled from real DB
-- Drivers only see and update vehicles assigned to their user (`driver_user_id` scoping in `POST /route/optimize` + fleet views); admins assign a vehicle with `PATCH /vehicles/{id}` and `{ "driver_user_id": <id> }`
-- Live fleet map — WebSocket connection to `/tracking/ws` (`bearer` subprotocol; `?token=` rejected with 4401), updates every 2 seconds
-- Push own GPS location to backend (uses device geolocation, falls back to simulated coords)
-- View and manage assigned rides — Start / Arriving / Complete buttons (drives the same `assigned → arriving → in_progress → completed` transitions as the sim job)
-- Route waypoint detail with map overlay showing optimized stops (Stadia geometry when configured)
-
-### Passenger Real-Time Features
-- **Notifications WebSocket** — Connected to `/notifications/ws` (bearer subprotocol) for instant ride status changes (assigned, vehicle arriving, completed)
-- **Live route tracking** — WebSocket connection updates vehicle GPS every 5 seconds with real-time vehicle animation on map
-- **Route polyline rendering** — Displays optimized VRP route path (Stadia geometry when configured, else local road matrix) once a vehicle is assigned
-- **Automatic ride status progression** — Simulation job every 5 seconds advances only `assigned → arriving → in_progress → completed` (plus driver buttons); `pending → clustered → assigned` is driven by clustering / VRP / auto-dispatch. Live and `presentation_demo` scopes are isolated by `ride_mode` + `demo_run_id`
-
-### Admin (9 panels)
-- **Overview** — real-time stats: total rides, vehicles, clusters, routes, utilisation %; inline pending driver verification widget
-- **Rides** — list all rides with status filter, manually advance any ride through the pipeline
-- **Fleet** — create vehicles, set idle/active/offline, view GPS positions
-- **Drivers** — full driver verification panel; approve / suspend / reject pending driver applications with Clerk metadata sync
-- **Cluster** — run HDBSCAN clustering on pending rides, view run history with summaries; also auto-triggers on new ride bookings
-- **Routes** — run OR-Tools VRP optimization with real road distances (via Stadia routing API + OSM fallback), view waypoint maps for each route
-- **Analytics** — daily bar chart + table (7/14/30 day), overview metrics
-- **Jobs** — scheduler status, manual trigger for clustering/demand/rebalance jobs, run history
-- **Heatmap** — XGBoost demand predictions (pre-trained model deployed) visualized on MapLibre map using H3 cells
-
-### Background Jobs (auto-run on backend startup via `backend/worker.py`; opt-in in-API with `ENABLE_BACKGROUND_JOBS_IN_API=true`)
-- **Auto-dispatch pipeline** (`POST /jobs/run/auto-dispatch`) — one call runs cluster → VRP → Hungarian assign (live) or isolated demo dispatch (`?mode=presentation_demo&demo_run_id=...` with reserved `DEMO-PRESENTATION-01` vehicle)
-- Clustering every 60 seconds — groups `pending` rides into virtual stops via HDBSCAN + K-Medoids + OSMnx road snapping
-- Demand refresh every 300 seconds — updates DemandSnapshot table with XGBoost predictions (trained model at `ml/models/demand_model.pkl`)
-- Fleet rebalance every 300 seconds — generates VehicleRebalanceSuggestion records for idle vehicles
-- **Ride simulation every 5 seconds** — advances only `assigned → arriving → in_progress → completed` and pushes WebSocket notifications (frees the vehicle to `idle` on stop completion)
-
----
-
-## What Still Needs to Be Built 🚧
-
-### High Priority
-
-- [ ] **Act on vehicle rebalance suggestions**
-  - Suggestions are generated and stored (see `/jobs/rebalance-suggestions` endpoint) but never acted on
-  - Add a "Move Vehicle" button in Admin → Jobs panel that updates vehicle's lat/lng to suggested location
-  - **Effort:** Low (2-3 hours; backend ready)
-
-### Medium Priority (important features that are partially done)
-
-- [ ] **Optimize VRP solver road distance caching**
-  - Road routing **is already implemented** via Stadia routing API (up to 25×25 matrices) with OSMnx fallback for larger sets
-  - Enhancement: Add persistent cache layer to avoid repeated road graph loads on restart
-  - Or: Replace in-memory OSM graph with cached GeoParquet dataset for faster initialization
-
-- [x] **Role management & driver verification UI**
-  - `POST /auth/driver/apply`, `POST /auth/driver/{id}/verify`, `PATCH /auth/users/{id}/role` endpoints implemented
-  - Admin **Drivers** panel lists all pending applications with one-click Approve / Suspend / Reject
-  - Inline **Pending Driver Verifications** widget on the Admin Overview page
-  - Clerk `publicMetadata` automatically synced on every role or status change
-
-- [ ] **Driver assignment UI**
-  - Backend supports assigning a vehicle with `driver_user_id` (see `PATCH /vehicles/{id}`)
-  - Add an admin-facing dropdown in Fleet panel to assign drivers
-  - **Effort:** Low (2-3 hours)
-
-- [ ] **Rating system**
-  - No `ratings` table in the DB; no model or endpoints
-  - Add a rating model, POST endpoint, and a post-trip rating screen for passengers
-  - **Effort:** High (8-10 hours)
-
-- [ ] **Payment flow**
-  - Fare amounts are display-only strings (`₹12–15`) — no payment processing
-  - Requires `payments` table, Razorpay/Stripe API integration, checkout flow, webhook handling
-  - **Effort:** Very High (20-30 hours, requires payment provider setup)
-
-### Low Priority (polish and production-readiness)
-
-- [ ] **Notification badge auto-increment on WebSocket**
-  - Sidebar notification badge updates on page load but doesn't auto-update when new messages arrive via WS
-  - **Effort:** Low (1-2 hours)
-
-- [ ] **Driver view: auto-filter to own assigned rides**
-  - Backend endpoint already scopes rides by driver; frontend just needs the filter
-  - **Effort:** Low (1-2 hours)
-
-- [ ] **Notification inbox auto-refresh on new messages**
-  - Passenger trips already auto-poll every 4s; just needs WebSocket trigger instead
-  - **Effort:** Low (1-2 hours)
-
-- [ ] **Responsive / mobile layout**
-  - The sidebar + main panel layout breaks on screens narrower than ~800px
-  - No mobile-specific ride booking flow (Uber's core UX is mobile-first)
-
-- [ ] **Error boundaries**
-  - The React app crashes completely on unhandled component errors
-  - Add `<ErrorBoundary>` wrappers around each view
-
-- [x] **Backend tests**
-  - Pytest coverage: `test_health_and_ws_auth` (probes, 401s, bearer-only WS), `test_role_rbac` (passenger provisioning, role guards), `test_pipeline_and_batch` (HDBSCAN → VRP → assign integration), `test_maps_and_routing` (Stadia proxy / India guard), plus `scripts/test_models_schemas.py`
-  - Continue expanding coverage for ride status transitions and VRP solver output
-
-- [x] **Production deployment foundation**
-  - Dockerfile, Docker Compose, Alembic, separate API/worker processes, and ECS
-    Fargate task-definition templates are included
-  - Use `backend/.env` only for local development; ECS production secrets belong
-    in AWS Secrets Manager
-
----
-
 ## Architecture Overview
 
 ### Authentication Flow
@@ -506,9 +398,11 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 
 ### Running behind Nginx Proxy Manager
 
-`docker-compose.yml` includes an `nginx-proxy-manager` service (image `jc21/nginx-proxy-manager`) on the same default network as `api`, so no extra network setup is needed.
+`docker-compose.yml` includes an `nginx-proxy-manager` service (pinned to `2.12.3`
+in `docker-compose.prod.yml`) on the same default network as `api`, so no extra
+network setup is needed.
 
-1. `docker compose up -d` (starts db, api, worker, and NPM together).
+1. `docker compose up -d` (starts frontend, api, worker, and NPM together).
 2. Open the NPM admin UI at `http://<server-ip>:81`. First login is `admin@example.com` / `changeme` -- **change both immediately**.
 3. Add a Proxy Host: domain = your public domain, forward hostname/IP = `api`, forward port = `8000`, scheme = `http`.
 4. Turn on **Websockets Support** on that proxy host -- `/tracking/ws` and `/notifications/ws` will fail silently without it.
@@ -517,7 +411,8 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 7. Point your domain's DNS A record at the server before requesting the certificate, and make sure ports 80/443 are open on the host firewall (needed for Let's Encrypt's HTTP-01 challenge).
 8. Set `ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` in `backend/.env` to your real `https://` domain, not `localhost`.
 
-Uvicorn is already started with `--proxy-headers --forwarded-allow-ips=*` (see `backend/Dockerfile` / `docker-compose.yml`) so it trusts `X-Forwarded-For`/`X-Forwarded-Proto` from NPM -- this is required for the HSTS header logic in `backend/main.py` to detect HTTPS correctly and for real client IPs to show up in logs.
+Uvicorn is already started with `--proxy-headers` and `--forwarded-allow-ips` limited
+to loopback + private ranges (see `backend/Dockerfile` / `docker-compose.yml`) so it trusts `X-Forwarded-For`/`X-Forwarded-Proto` from NPM -- this is required for the HSTS header logic in `backend/main.py` to detect HTTPS correctly and for real client IPs to show up in logs.
 
 ---
 
@@ -593,6 +488,14 @@ Uvicorn is already started with `--proxy-headers --forwarded-allow-ips=*` (see `
 **Docker build fails with "Package X not found"**
 - Ensure `requirements.txt` is in the root directory and is up-to-date
 - The backend Dockerfile assumes a specific structure; verify all paths are correct
+
+**Production deploy fails or new version is unhealthy**
+- See [`deploy/README.md`](deploy/README.md): `deploy.sh` rolls containers back
+  to the previous SHA automatically but leaves DB migrations forward (by design)
+- Check EC2: `docker compose -f docker-compose.prod.yml ps` and
+  `docker compose -f docker-compose.prod.yml logs --tail=50 api`
+- Verify the Secrets Manager JSON has all required keys and the EC2 IAM role
+  allows `secretsmanager:GetSecretValue`
 
 **ECS task keeps crashing**
 - Check CloudWatch logs: `aws logs tail /ecs/smartroute-api`
@@ -676,9 +579,12 @@ backend/
 ├── utils/               # Helper functions (auth_utils, geo [haversine + India guard], ride_scope [live/demo])
 ├── config.py            # Settings and environment variables
 ├── database.py          # SQLAlchemy engine and session (+ PortableGeometry)
+├── Dockerfile           # Backend image (shared by api + worker)
 └── seed.py              # Demo data insertion (see also scripts/seed_db.py)
 
 frontend/
+├── Dockerfile           # Vite build -> nginx (VITE_* baked as build-args in CI)
+├── nginx.conf           # SPA fallback + /health probe
 ├── src/
 │   ├── App.jsx          # Main router
 │   ├── SwiftApp.jsx     # App shell with sidebar
@@ -689,6 +595,13 @@ frontend/
 │   └── config/          # Frontend constants (demoPresets, etc.)
 
 ml/models/demand_model.pkl  # Trained XGBoost demand model (see scripts/train_demand_model_synthetic.py)
+
+docker-compose.yml        # Dev: builds images locally (frontend/api/worker + NPM)
+docker-compose.prod.yml   # Prod: pulls immutable Docker Hub :<sha> images (no build)
+deploy/
+├── deploy.sh            # EC2 deploy: pull SHA → Secrets Manager → migrate → up → healthcheck → rollback
+└── README.md            # GitHub/EC2/Secrets Manager setup + first-deploy + rollback
+.github/workflows/ci-cd.yml  # PR lint/test/build; main pushes images + deploys to EC2
 
 architecture/            # Detailed technical documentation
 ├── system-design.md
