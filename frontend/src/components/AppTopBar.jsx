@@ -57,7 +57,7 @@ export default function AppTopBar({
   const recent = notifications.slice(0, 5)
 
   return (
-    <header className="app-topbar sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b bg-background/90 px-3 backdrop-blur supports-backdrop-filter:bg-background/80 md:px-5">
+    <header className="app-topbar sticky top-0 z-40 flex h-[68px] shrink-0 items-center gap-3 border-b border-[#E2E2E2] bg-white px-4 md:px-8 dark:border-[#333333] dark:bg-black">
       <Button
         variant="ghost"
         size="icon"
@@ -69,95 +69,95 @@ export default function AppTopBar({
       </Button>
 
       <div className="min-w-0 flex-1">
-        <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <nav aria-label="Breadcrumb" className="flex items-center gap-1.5 text-[12px] font-medium text-[#8A8A8A]">
           <span className="hidden truncate sm:inline">{meta.crumb.split(' / ')[0]}</span>
-          <ChevronRight className="hidden h-3 w-3 sm:inline" />
-          <span className="truncate font-medium text-foreground/80">{meta.crumb.split(' / ')[1] || meta.crumb}</span>
+          <ChevronRight className="hidden h-3 w-3 sm:inline" aria-hidden="true" />
+          <span className="truncate text-[#545454] dark:text-[#AFAFAF]">{meta.crumb.split(' / ')[1] || meta.crumb}</span>
         </nav>
-        <h1 className="truncate text-[15px] font-bold leading-tight tracking-tight">{meta.title}</h1>
+        <h1 className="truncate text-[18px] font-semibold leading-tight tracking-[-0.01em]">{meta.title}</h1>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1">
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button variant="ghost" size="icon" className="relative" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}>
-                <Bell className="h-4 w-4" />
+              <Button variant="ghost" size="icon" className="relative h-11 w-11 rounded-lg" aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ''}`}>
+                <Bell className="h-5 w-5" />
                 {unreadCount > 0 && (
-                  <Badge variant="destructive" className="absolute -right-1 -top-1 h-4 min-w-4 justify-center px-1 text-[10px] leading-none">
+                  <Badge className="absolute -right-0.5 -top-0.5 h-5 min-w-5 justify-center border-0 bg-black px-1.5 text-[11px] font-bold leading-none text-white dark:bg-white dark:text-black">
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </Badge>
                 )}
               </Button>
             }
           />
-          <DropdownMenuContent align="end" sideOffset={8} className="w-80">
-            <DropdownMenuLabel className="flex items-center justify-between">
-              <span>Notifications</span>
-              {unreadCount > 0 && <Badge variant="secondary" className="text-[10px]">{unreadCount} unread</Badge>}
+          <DropdownMenuContent align="end" sideOffset={8} className="w-80 rounded-xl border-[#E2E2E2] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+            <DropdownMenuLabel className="flex items-center justify-between px-2.5 py-2">
+              <span className="text-[14px] font-semibold">Notifications</span>
+              {unreadCount > 0 && <Badge variant="secondary" className="text-[11px]">{unreadCount} unread</Badge>}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               {recent.length === 0 && (
-                <p className="px-2 py-4 text-center text-xs text-muted-foreground">No notifications yet.</p>
+                <p className="px-2 py-6 text-center text-[13px] text-[#8A8A8A]">No notifications yet.</p>
               )}
               {recent.map((n) => (
-                <DropdownMenuItem key={n.id} onClick={() => onOpenNotifications?.()} className="items-start gap-2.5 py-2">
-                  <span className={cn('mt-0.5 h-2 w-2 shrink-0 rounded-full', n.is_read ? 'bg-muted' : 'bg-primary')} />
+                <DropdownMenuItem key={n.id} onClick={() => onOpenNotifications?.()} className="items-start gap-2.5 rounded-lg py-2.5">
+                  <span className={cn('mt-1 h-2 w-2 shrink-0 rounded-full', n.is_read ? 'bg-[#D6D6D6]' : 'bg-black dark:bg-white')} />
                   <span className="min-w-0">
-                    <span className={cn('block truncate text-xs', !n.is_read ? 'font-bold' : 'font-medium')}>{n.title}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">{n.message}</span>
+                    <span className={cn('block truncate text-[13px]', !n.is_read ? 'font-semibold' : 'font-normal')}>{n.title}</span>
+                    <span className="block truncate text-[12px] text-[#6B6B6B]">{n.message}</span>
                   </span>
                 </DropdownMenuItem>
               ))}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setView('inbox')} className="justify-center text-xs font-semibold">
-              <Inbox className="h-3.5 w-3.5" /> Open inbox
+            <DropdownMenuItem onClick={() => setView('inbox')} className="justify-center rounded-lg text-[13px] font-semibold">
+              <Inbox className="h-4 w-4" /> Open inbox
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
         <ThemeToggle theme={theme} onToggle={onToggleTheme} />
 
-        <Separator orientation="vertical" className="mx-1 h-6" />
+        <Separator orientation="vertical" className="mx-2 h-6 bg-[#E2E2E2] dark:bg-[#333333]" />
 
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button variant="ghost" className="h-9 gap-2 px-1.5" aria-label="Account menu">
-                <Avatar className="h-7 w-7">
-                  <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">
+              <Button variant="ghost" className="h-11 gap-2.5 rounded-lg px-2" aria-label="Account menu">
+                <Avatar className="h-8 w-8 rounded-lg">
+                  <AvatarFallback className="rounded-lg bg-black text-[13px] font-bold text-white dark:bg-white dark:text-black">
                     {(user?.name || 'U').charAt(0).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
-                <span className="hidden max-w-[140px] truncate text-left text-xs font-semibold lg:block">
+                <span className="hidden max-w-[140px] truncate text-left text-[14px] font-semibold lg:block">
                   {user?.name}
                 </span>
               </Button>
             }
           />
-          <DropdownMenuContent align="end" sideOffset={8} className="w-60">
-            <DropdownMenuLabel className="min-w-0">
-              <span className="block truncate text-sm font-bold">{user?.name}</span>
-              <span className="block truncate text-[11px] font-normal text-muted-foreground">{user?.email}</span>
-              <Badge variant="secondary" className="mt-1.5 text-[10px] uppercase">{user?.role}</Badge>
+          <DropdownMenuContent align="end" sideOffset={8} className="w-60 rounded-xl border-[#E2E2E2] p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.12)]">
+            <DropdownMenuLabel className="min-w-0 px-2.5 py-2">
+              <span className="block truncate text-[14px] font-semibold">{user?.name}</span>
+              <span className="block truncate text-[12px] font-normal text-[#6B6B6B]">{user?.email}</span>
+              <Badge variant="secondary" className="mt-2 text-[10px] font-semibold uppercase tracking-[0.06em]">{user?.role}</Badge>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem onClick={() => setView('profile')}>
+              <DropdownMenuItem onClick={() => setView('profile')} className="rounded-lg">
                 <UserIcon className="h-4 w-4" /> Profile
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setView('inbox')}>
+              <DropdownMenuItem onClick={() => setView('inbox')} className="rounded-lg">
                 <Inbox className="h-4 w-4" /> Inbox
                 {unreadCount > 0 && <Badge variant="secondary" className="ml-auto text-[10px]">{unreadCount}</Badge>}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setView('driver-apply')}>
+              <DropdownMenuItem onClick={() => setView('driver-apply')} className="rounded-lg">
                 <CheckCircle2 className="h-4 w-4" /> Become a driver
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onLogout} className="text-destructive">
+            <DropdownMenuItem onClick={onLogout} className="rounded-lg text-[#D93025]">
               <LogOut className="h-4 w-4" /> Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

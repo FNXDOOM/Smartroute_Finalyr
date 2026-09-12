@@ -1,171 +1,412 @@
 @import "@fontsource-variable/geist";
-/* Tailwind v3 toolchain (see tailwind.config.js + tailwindcss-animate).
-   v4-only imports (tw-animate-css, shadcn/tailwind.css with @theme/@utility/
-   @custom-variant) are intentionally omitted: Tailwind 3.4.1 cannot compile
-   them and Vite warns "Unknown at rule". Orientation variants use the v3-
-   compatible data-[orientation=...] syntax instead of data-horizontal/vertical. */
+/* Tailwind v3 toolchain (see tailwind.config.js + tailwindcss-animate). */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
+    /* ── Uber-inspired design tokens — single source of truth ── */
+    --color-black: #000000;
+    --color-near-black: #111111;
+    --color-dark-surface: #1F1F1F;
+    --color-white: #FFFFFF;
+
+    --color-gray-50: #F6F6F6;
+    --color-gray-100: #EEEEEE;
+    --color-gray-200: #E2E2E2;
+    --color-gray-300: #D6D6D6;
+    --color-gray-400: #AFAFAF;
+    --color-gray-500: #8A8A8A;
+    --color-gray-600: #6B6B6B;
+    --color-gray-700: #545454;
+    --color-gray-800: #333333;
+    --color-gray-900: #1F1F1F;
+
+    --color-success: #276EF1;
+    --color-success-strong: #1A5AD7;
+    --color-error: #D93025;
+    --color-warning: #F5A623;
+
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+    --transition-fast: 150ms;
+    --transition-normal: 200ms;
+    --transition-slow: 300ms;
+
+    --font-sans: 'Inter', Arial, Helvetica, sans-serif;
+
+    /* shadcn bridge — strict neutral mapping */
     --background: 0 0% 100%;
-    --foreground: 0 0% 9%;
+    --foreground: 0 0% 7%;
     --card: 0 0% 100%;
-    --card-foreground: 0 0% 9%;
+    --card-foreground: 0 0% 7%;
     --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 9%;
-    --primary: 0 0% 9%;
+    --popover-foreground: 0 0% 7%;
+    --primary: 0 0% 0%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
+    --secondary: 0 0% 96.5%;
+    --secondary-foreground: 0 0% 7%;
+    --muted: 0 0% 96.5%;
+    --muted-foreground: 0 0% 42%;
+    --accent: 0 0% 93.3%;
+    --accent-foreground: 0 0% 7%;
+    --destructive: 3 72% 50%;
     --destructive-foreground: 0 0% 100%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 9%;
-    --radius: 1rem;
-    --chart-1: 0 0% 9%;
-    --chart-2: 142 70% 35%;
-    --chart-3: 0 0% 45%;
-    --chart-4: 142 60% 45%;
-    --chart-5: 30 80% 55%;
-    --sidebar: 0 0% 98%;
-    --sidebar-foreground: 0 0% 9%;
-    --sidebar-primary: 0 0% 9%;
+    --border: 0 0% 88.6%;
+    --input: 0 0% 83.9%;
+    --ring: 0 0% 0%;
+    --radius: 0.5rem;
+    --chart-1: 0 0% 7%;
+    --chart-2: 217 89% 55%;
+    --chart-3: 0 0% 42%;
+    --chart-4: 0 0% 65%;
+    --chart-5: 36 92% 51%;
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 0 0% 7%;
+    --sidebar-primary: 0 0% 0%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 0 0% 96.1%;
-    --sidebar-accent-foreground: 0 0% 9%;
-    --sidebar-border: 0 0% 89.8%;
-    --sidebar-ring: 0 0% 9%;
+    --sidebar-accent: 0 0% 96.5%;
+    --sidebar-accent-foreground: 0 0% 7%;
+    --sidebar-border: 0 0% 88.6%;
+    --sidebar-ring: 0 0% 0%;
   }
 
   .dark {
-    --background: 0 0% 4%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 8%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 8%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 15%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 64%;
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 50.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 16%;
-    --input: 0 0% 16%;
-    --ring: 0 0% 98%;
-    --chart-1: 0 0% 98%;
-    --chart-2: 142 70% 45%;
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 7%;
+    --secondary: 0 0% 16.5%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 16.5%;
+    --muted-foreground: 0 0% 68.6%;
+    --accent: 0 0% 16.5%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 20%;
+    --input: 0 0% 20%;
+    --ring: 0 0% 100%;
+    --chart-1: 0 0% 100%;
+    --chart-2: 217 89% 60%;
     --chart-3: 0 0% 55%;
-    --chart-4: 142 60% 40%;
-    --chart-5: 30 80% 55%;
-    --sidebar: 0 0% 8%;
-    --sidebar-foreground: 0 0% 98%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 0 0% 9%;
-    --sidebar-accent: 0 0% 15%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 16%;
-    --sidebar-ring: 0 0% 98%;
+    --chart-4: 0 0% 40%;
+    --chart-5: 36 92% 51%;
+    --sidebar: 0 0% 0%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 16.5%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 20%;
+    --sidebar-ring: 0 0% 100%;
   }
-  .theme {
-    --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
-  }
+
   *,
   ::before,
   ::after {
     border-color: hsl(var(--border));
   }
+
+  html {
+    font-family: Inter, Arial, Helvetica, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
   body {
     @apply bg-background text-foreground;
+    font-family: Inter, Arial, Helvetica, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
   }
-  html {
-    @apply font-sans;
+
+  h1, h2, h3, h4, .display {
+    font-family: Inter, Arial, Helvetica, sans-serif;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
   }
+
+  button, input, textarea, select {
+    font-family: inherit;
+  }
+
+  ::selection {
+    background: #000;
+    color: #fff;
+  }
+  .dark ::selection {
+    background: #fff;
+    color: #000;
+  }
+
+  /* Accessible baseline. Lives in @layer base so component-level
+     focus utilities (outline-none, custom rings) win the cascade. */
+  :focus-visible {
+    outline: 2px solid #000;
+    outline-offset: 2px;
+  }
+  .dark :focus-visible {
+    outline-color: #fff;
+  }
+}
+
+/* ── Typography scale (Uber-inspired hierarchy) ── */
+@layer components {
+  .uber-hero {
+    font-size: clamp(2.75rem, 5vw, 4rem);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.03em;
+  }
+  .uber-page-title {
+    font-size: clamp(2.25rem, 3.5vw, 3rem);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+  }
+  .uber-section-title {
+    font-size: clamp(1.5rem, 2.2vw, 2rem);
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+  }
+  .uber-card-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+  }
+  .uber-eyebrow {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: hsl(var(--muted-foreground));
+  }
+  .uber-body { font-size: 1rem; line-height: 1.5; }
+  .uber-small { font-size: 0.875rem; line-height: 1.5; }
+  .uber-caption { font-size: 0.8125rem; line-height: 1.45; color: hsl(var(--muted-foreground)); }
 }
 
 @layer base {
   * {
     @apply outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-    font-family: 'Geist Variable', 'Inter', system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-  }
-  h1, h2, h3, h4, .display {
-    font-family: 'Geist Variable', 'Inter', system-ui, sans-serif;
-    letter-spacing: -0.01em;
-  }
-  button {
-    font-family: inherit;
-  }
-  input, textarea, select {
-    font-family: inherit;
-  }
 }
 
-/* Mobility type scale for .mob-* utilities. */
+/* Mobility type scale for .mob-* utilities (kept for compat, retuned). */
 .mob-page-title {
-  font-size: 1.375rem;
-  line-height: 1.25;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 @media (min-width: 768px) {
-  .mob-page-title { font-size: 1.625rem; }
+  .mob-page-title { font-size: 1.875rem; }
 }
 .mob-section-label {
   font-size: 0.6875rem;
-  font-weight: 650;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: hsl(var(--muted-foreground));
 }
 .mob-data { font-variant-numeric: tabular-nums; }
 
-/* MapLibre overrides (theme aware) */
+/* ── Buttons: substantial, 44–52px primary ── */
+@layer components {
+  .uber-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: 12px 24px;
+    border-radius: var(--radius-md);
+    background: #000;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1;
+    border: 1px solid #000;
+    transition: background var(--transition-normal) ease, transform var(--transition-fast) ease, box-shadow var(--transition-normal) ease;
+  }
+  .uber-btn-primary:hover { background: #1F1F1F; border-color: #1F1F1F; }
+  .uber-btn-primary:active { transform: translateY(1px); }
+  .dark .uber-btn-primary { background: #fff; color: #000; border-color: #fff; }
+  .dark .uber-btn-primary:hover { background: #E2E2E2; border-color: #E2E2E2; }
+
+  .uber-btn-secondary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 48px;
+    padding: 12px 24px;
+    border-radius: var(--radius-md);
+    background: #fff;
+    color: #000;
+    font-size: 15px;
+    font-weight: 600;
+    border: 1px solid var(--color-gray-300);
+    transition: background var(--transition-normal) ease, border-color var(--transition-normal) ease;
+  }
+  .uber-btn-secondary:hover { background: var(--color-gray-50); border-color: var(--color-gray-400); }
+  .dark .uber-btn-secondary { background: transparent; color: #fff; border-color: #333; }
+  .dark .uber-btn-secondary:hover { background: #1F1F1F; }
+
+  .uber-btn-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 4px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #111;
+    border-radius: 6px;
+    transition: color var(--transition-fast) ease, background var(--transition-fast) ease;
+  }
+  .uber-btn-text:hover { color: #000; background: var(--color-gray-50); }
+  .dark .uber-btn-text { color: #fff; }
+  .dark .uber-btn-text:hover { background: #1F1F1F; }
+}
+
+/* ── Inputs: 48–56px, 8px radius, strong focus ── */
+@layer components {
+  .uber-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 52px;
+    padding: 0 16px;
+    background: #fff;
+    border: 1px solid var(--color-gray-300);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast) ease, box-shadow var(--transition-fast) ease;
+  }
+  .uber-field:focus-within {
+    border-color: #000;
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.12);
+  }
+  .dark .uber-field { background: #1F1F1F; border-color: #333; }
+  .dark .uber-field:focus-within { border-color: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.15); }
+  .uber-field input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: 0;
+    outline: 0;
+    font-size: 15px;
+    height: 50px;
+  }
+  .uber-field input::placeholder { color: var(--color-gray-500); }
+  .uber-error {
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--color-error);
+  }
+}
+
+/* ── Cards: white, 1px #E2E2E2, 12px, 20–24px padding ── */
+@layer components {
+  .uber-card {
+    background: #fff;
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-lg);
+    padding: 20px 24px;
+    transition: border-color var(--transition-normal) ease, box-shadow var(--transition-normal) ease, transform var(--transition-normal) ease;
+  }
+  .uber-card-hover:hover {
+    border-color: var(--color-gray-300);
+    box-shadow: var(--shadow-sm);
+  }
+  .dark .uber-card { background: #1F1F1F; border-color: #333; }
+  .uber-float {
+    background: #fff;
+    border: 1px solid var(--color-gray-200);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+  }
+  .dark .uber-float { background: #1F1F1F; border-color: #333; }
+}
+
+/* Page container: 1200–1440 max, consistent gutters */
+@layer components {
+  .uber-container {
+    width: 100%;
+    max-width: 1280px;
+    margin-inline: auto;
+    padding-inline: 16px;
+  }
+  @media (min-width: 768px) {
+    .uber-container { padding-inline: 32px; }
+  }
+  @media (min-width: 1200px) {
+    .uber-container { padding-inline: 48px; }
+  }
+  .uber-section { padding-block: 48px; }
+  @media (min-width: 768px) {
+    .uber-section { padding-block: 72px; }
+  }
+}
+
+/* MapLibre overrides — light neutral, black/white controls */
 .maplibregl-map {
-  font-family: 'Geist Variable', 'Inter', sans-serif !important;
+  font-family: Inter, Arial, Helvetica, sans-serif !important;
+  background: #EEEEEE !important;
 }
 .maplibregl-ctrl-group {
-  border: 1px solid hsl(var(--border)) !important;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1) !important;
+  border: 1px solid var(--color-gray-200) !important;
+  box-shadow: var(--shadow-sm) !important;
   overflow: hidden;
   border-radius: 8px !important;
 }
 .maplibregl-ctrl-group button {
-  background-color: hsl(var(--card)) !important;
-  color: hsl(var(--foreground)) !important;
+  background-color: #fff !important;
+  color: #111 !important;
+  width: 36px !important;
+  height: 36px !important;
+  transition: background 150ms ease;
 }
-.maplibregl-ctrl-group button:hover {
-  background-color: hsl(var(--accent)) !important;
-}
+.maplibregl-ctrl-group button:hover { background-color: #F6F6F6 !important; }
 .maplibregl-ctrl-attrib {
-  background: hsl(var(--card) / 0.9) !important;
-  color: hsl(var(--foreground)) !important;
+  background: rgba(255, 255, 255, 0.92) !important;
+  color: #6B6B6B !important;
   font-size: 11px !important;
+  border-radius: 6px 0 0 0;
 }
-.maplibregl-ctrl-attrib a {
-  color: hsl(var(--foreground)) !important;
-}
-/* Pill ride CTAs, full-width on mobile. */
+.maplibregl-ctrl-attrib a { color: #111 !important; }
+.dark .maplibregl-ctrl-group { border-color: #333 !important; }
+.dark .maplibregl-ctrl-group button { background-color: #1F1F1F !important; color: #fff !important; }
+.dark .maplibregl-ctrl-group button:hover { background-color: #2A2A2A !important; }
+
+/* Legacy CTA helper — now maps to premium button scale */
 .uber-cta {
-  border-radius: 9999px !important;
+  border-radius: 8px !important;
   min-height: 3rem;
   font-size: 1rem;
   font-weight: 600;
+}
+@media (max-width: 767px) {
+  .uber-cta { width: 100%; }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

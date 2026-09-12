@@ -517,7 +517,7 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 7. Point your domain's DNS A record at the server before requesting the certificate, and make sure ports 80/443 are open on the host firewall (needed for Let's Encrypt's HTTP-01 challenge).
 8. Set `ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` in `backend/.env` to your real `https://` domain, not `localhost`.
 
-Uvicorn is already started with `--proxy-headers --forwarded-allow-ips=*` (see `Dockerfile` / `docker-compose.yml`) so it trusts `X-Forwarded-For`/`X-Forwarded-Proto` from NPM -- this is required for the HSTS header logic in `backend/main.py` to detect HTTPS correctly and for real client IPs to show up in logs.
+Uvicorn is already started with `--proxy-headers --forwarded-allow-ips=*` (see `backend/Dockerfile` / `docker-compose.yml`) so it trusts `X-Forwarded-For`/`X-Forwarded-Proto` from NPM -- this is required for the HSTS header logic in `backend/main.py` to detect HTTPS correctly and for real client IPs to show up in logs.
 
 ---
 
@@ -592,7 +592,7 @@ Uvicorn is already started with `--proxy-headers --forwarded-allow-ips=*` (see `
 
 **Docker build fails with "Package X not found"**
 - Ensure `requirements.txt` is in the root directory and is up-to-date
-- The Dockerfile assumes a specific structure; verify all paths are correct
+- The backend Dockerfile assumes a specific structure; verify all paths are correct
 
 **ECS task keeps crashing**
 - Check CloudWatch logs: `aws logs tail /ecs/smartroute-api`

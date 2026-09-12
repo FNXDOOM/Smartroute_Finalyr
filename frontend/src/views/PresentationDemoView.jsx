@@ -801,7 +801,7 @@ export default function PresentationDemoView({ toast }) {
               >
                 <span className={cn(
                   'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
-                  isActive ? 'bg-primary text-primary-foreground' : isPassed ? 'bg-green-600/15 text-green-700 dark:text-green-400' : 'bg-muted text-muted-foreground',
+                  isActive ? 'bg-black text-white dark:bg-white dark:text-black' : isPassed ? 'bg-[#276EF1]/10 text-[#276EF1]' : 'bg-muted text-muted-foreground',
                 )}>
                   {isPassed && !isActive ? <CheckCircle2 className="h-4 w-4" /> : <StageIcon className="h-4 w-4" />}
                 </span>
@@ -875,10 +875,10 @@ export default function PresentationDemoView({ toast }) {
         <div className="absolute bottom-3 left-3 z-10 hidden rounded-lg border border-border/80 bg-card/95 px-2.5 py-2 shadow-md backdrop-blur lg:block">
           <MapLegend
             items={[
-              { color: '#16a34a', label: 'Route / vehicle' },
+              { color: '#000000', label: 'Route / vehicle' },
               { color: '#737373', label: 'Virtual stop' },
               { color: '#525252', label: 'Walking leg' },
-              { color: '#16a34a', label: 'Destination' },
+              { color: '#545454', label: 'Destination' },
             ]}
           />
         </div>

@@ -51,29 +51,29 @@ function initialView() {
   return 'login'
 }
 
-// Toast system
+// Toast system — premium neutral cards, sparing semantic indicators
 function ToastBar({ toasts, dismiss }) {
   const styles = {
-    success: { icon: CheckCircle2, cls: 'text-green-600 dark:text-green-400', bar: 'hsl(142 70% 35%)' },
-    warning: { icon: TriangleAlert, cls: 'text-amber-500', bar: 'hsl(38 90% 50%)' },
-    error: { icon: XCircle, cls: 'text-destructive', bar: 'hsl(var(--destructive))' },
-    info: { icon: Info, cls: 'text-foreground', bar: 'hsl(var(--foreground))' },
+    success: { icon: CheckCircle2, cls: 'text-[#276EF1]', bar: '#276EF1' },
+    warning: { icon: TriangleAlert, cls: 'text-[#F5A623]', bar: '#F5A623' },
+    error: { icon: XCircle, cls: 'text-[#D93025]', bar: '#D93025' },
+    info: { icon: Info, cls: 'text-black dark:text-white', bar: '#000000' },
   }
   return (
-    <div className="pointer-events-none fixed right-4 top-16 z-[70] flex max-h-[calc(100vh-5rem)] w-[min(360px,calc(100vw-2rem))] flex-col gap-2 overflow-y-auto" role="status" aria-live="polite">
+    <div className="pointer-events-none fixed right-4 top-[84px] z-[70] flex max-h-[calc(100vh-6rem)] w-[min(360px,calc(100vw-2rem))] flex-col gap-2 overflow-y-auto" role="status" aria-live="polite">
       {toasts.map((t) => {
         const S = styles[t.type] || styles.info
         const Icon = S.icon
         return (
-          <Card key={t.id} className="toast-in pointer-events-auto overflow-hidden shadow-lg">
-            <div className="h-0.5 w-full" style={{ background: S.bar }} />
-            <CardContent className="flex items-start gap-3 p-3.5">
+          <Card key={t.id} className="toast-in pointer-events-auto overflow-hidden border-[#E2E2E2] shadow-[0_8px_24px_rgba(0,0,0,0.12)] dark:border-[#333333]">
+            <div className="h-[3px] w-full" style={{ background: S.bar }} />
+            <CardContent className="flex items-start gap-3 p-4">
               <span className={cn('mt-0.5 shrink-0', S.cls)}><Icon className="h-5 w-5" aria-hidden="true" /></span>
               <div className="min-w-0 flex-1">
-                <p className="text-[13px] font-semibold leading-tight">{t.title}</p>
-                {t.body && <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{t.body}</p>}
+                <p className="text-[14px] font-semibold leading-tight tracking-[-0.01em]">{t.title}</p>
+                {t.body && <p className="mt-1 text-[13px] leading-relaxed text-[#6B6B6B] dark:text-[#AFAFAF]">{t.body}</p>}
               </div>
-              <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => dismiss(t.id)} aria-label="Dismiss notification">
+              <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={() => dismiss(t.id)} aria-label="Dismiss notification">
                 <X className="h-3.5 w-3.5" />
               </Button>
             </CardContent>
@@ -85,39 +85,35 @@ function ToastBar({ toasts, dismiss }) {
 }
 
 // Auth screens
-// Clerk needs explicit light/dark tokens.
+// Clerk needs explicit light/dark tokens — strict black/white.
 function getClerkAppearance(theme) {
   const dark = theme === 'dark'
   return {
     variables: dark
       ? {
-          colorPrimary: '#fafafa',
-          colorBackground: '#141414',
-          colorText: '#fafafa',
-          colorTextSecondary: '#a3a3a3',
-          colorInputBackground: '#1c1c1c',
-          colorInputText: '#fafafa',
-          borderRadius: '12px',
+          colorPrimary: '#ffffff',
+          colorBackground: '#000000',
+          colorText: '#ffffff',
+          colorTextSecondary: '#AFAFAF',
+          colorInputBackground: '#1F1F1F',
+          colorInputText: '#ffffff',
+          borderRadius: '8px',
         }
       : {
-          colorPrimary: '#111111',
+          colorPrimary: '#000000',
           colorBackground: '#ffffff',
           colorText: '#111111',
-          colorTextSecondary: '#555555',
-          colorInputBackground: '#f5f5f5',
+          colorTextSecondary: '#6B6B6B',
+          colorInputBackground: '#ffffff',
           colorInputText: '#111111',
-          borderRadius: '12px',
+          borderRadius: '8px',
         },
     elements: {
-      card: 'shadow-none bg-transparent',
+      card: 'shadow-none bg-transparent border border-[#E2E2E2] rounded-xl',
       footerAction: 'hidden',
-      formButtonPrimary: 'font-weight:700',
-      socialButtonsBlockButton: dark ? 'bg-[#1c2436] border border-[#33405a] text-[#e8eef7]' : undefined,
-      socialButtonsBlockButtonText: dark ? 'text-[#e8eef7]' : undefined,
-      formFieldLabel: dark ? 'text-[#a9b4c7]' : undefined,
-      headerTitle: dark ? 'text-[#e8eef7]' : undefined,
-      headerSubtitle: dark ? 'text-[#a9b4c7]' : undefined,
-      footerActionText: dark ? 'text-[#a9b4c7]' : undefined,
+      formButtonPrimary: 'font-weight:600; min-height:48px; border-radius:8px',
+      socialButtonsBlockButton: dark ? 'bg-[#1F1F1F] border border-[#333333] text-white' : 'bg-white border border-[#D6D6D6] text-black',
+      formFieldInput: dark ? 'bg-[#1F1F1F] border-[#333333] rounded-lg min-height:52px' : 'rounded-lg min-height:52px',
     },
   }
 }
@@ -127,82 +123,85 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
 
   return (
     <div className="auth-stage">
-      <div className="auth-city" aria-hidden="true"><span /><span /><span /><span /><span /><span /><span /></div>
       <div className="auth-frame">
         <aside className="auth-intro">
           <div className="auth-intro-mark"><SmartRouteMark size={22} /></div>
-          <p className="auth-kicker">SMART TRANSIT / 01</p>
-          <h1>Smart<br />Transit</h1>
-          <p className="auth-intro-copy">A calmer ride experience for passengers, drivers, and the teams coordinating every route.</p>
+          <p className="auth-kicker">Smart transit platform</p>
+          <h1>Go anywhere with SmartRoute</h1>
+          <p className="auth-intro-copy">Request a ride, track it live, and share the trip. Flat fares. No surge. Built for daily commutes.</p>
           <div className="auth-feature-panel">
-            <div className="auth-feature-label"><span /> ROUTE INTELLIGENCE / LIVE</div>
+            <div className="auth-feature-label"><span /> Live network status</div>
             <div className="auth-feature-grid">
-              <span>Demand forecast</span>
+              <span>Flat fares</span>
               <span>Shared matching</span>
-              <span>Fleet visibility</span>
+              <span>Live tracking</span>
             </div>
           </div>
           <div className="auth-stat-row">
-            <div><strong>0%</strong><span>surge pricing</span></div>
-            <div><strong>24/7</strong><span>route intelligence</span></div>
+            <div><strong>₹12</strong><span>starting fare</span></div>
+            <div><strong>24/7</strong><span>availability</span></div>
           </div>
-          <div className="auth-route-line"><span></span><i></i><span></span><i></i><span></span></div>
+          <div className="auth-route-line" aria-hidden="true"><span></span><i></i><span></span><i></i><span></span></div>
         </aside>
         <main className="auth-content">
           <div className="auth-content-inner">
-        <div className="mb-5 flex items-start justify-between">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow"><SmartRouteMark size={21} /></span>
+        <div className="mb-6 flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-black text-white dark:bg-white dark:text-black"><SmartRouteMark size={21} /></span>
             <span>
-              <span className="block font-display text-[22px] font-extrabold leading-none tracking-tight">SmartRoute AI</span>
-              <span className="mt-1 block text-xs text-muted-foreground">Autonomous Shared Transit Optimization Engine</span>
+              <span className="block text-[20px] font-bold leading-none tracking-[-0.02em]">SmartRoute</span>
+              <span className="mt-1 block text-[13px] text-[#6B6B6B] dark:text-[#AFAFAF]">Shared transit, simplified</span>
             </span>
           </div>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
         </div>
 
+        <p className="uber-eyebrow mb-2">Get started</p>
+        <h2 className="mb-1 text-[28px] font-bold leading-tight tracking-[-0.02em]">{view === 'login' ? 'Welcome back' : 'Create your account'}</h2>
+        <p className="mb-5 text-[15px] leading-relaxed text-[#6B6B6B] dark:text-[#AFAFAF]">Sign in to book rides, track drivers live, and manage trips.</p>
+
         {/* Portal Switcher (Passenger vs Driver) */}
         <Tabs value={portal} onValueChange={setPortal} className="mb-4">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="passenger" activeValue={portal} onClick={() => setPortal('passenger')}>
-              <UserIcon className="mr-1.5 h-3.5 w-3.5" /> Passenger Portal
+          <TabsList className="grid w-full grid-cols-2 rounded-lg bg-[#F6F6F6] p-1 dark:bg-[#1F1F1F]">
+            <TabsTrigger value="passenger" activeValue={portal} onClick={() => setPortal('passenger')} className="rounded-md">
+              <UserIcon className="mr-1.5 h-3.5 w-3.5" /> Passenger
             </TabsTrigger>
-            <TabsTrigger value="driver" activeValue={portal} onClick={() => setPortal('driver')}>
-              <CarFront className="mr-1.5 h-3.5 w-3.5" /> Driver Portal
+            <TabsTrigger value="driver" activeValue={portal} onClick={() => setPortal('driver')} className="rounded-md">
+              <CarFront className="mr-1.5 h-3.5 w-3.5" /> Driver
             </TabsTrigger>
           </TabsList>
         </Tabs>
 
         {/* Simulation mode chooser */}
-        <Card className="mb-4 border-primary/30 shadow-sm">
-          <CardContent className="p-4">
-            <div className="mb-2.5 flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-primary">Simulation Mode</span>
-              <Sparkles className="h-4 w-4 text-primary" />
+        <Card className="mb-4 border-[#E2E2E2] shadow-none dark:border-[#333333]">
+          <CardContent className="p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6B6B6B]">Try the demo</span>
+              <Sparkles className="h-4 w-4 text-black dark:text-white" />
             </div>
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => onGuestLogin?.('passenger', 'home')}>
-                <Play className="h-3.5 w-3.5" /> Normal Ride
+                <Play className="h-3.5 w-3.5" /> Book a ride
               </Button>
               <Button className="flex-1" onClick={() => onGuestLogin?.('admin', 'presentation-demo')}>
-                <GraduationCap className="h-3.5 w-3.5" /> Presentation
+                <GraduationCap className="h-3.5 w-3.5" /> Live demo
               </Button>
             </div>
           </CardContent>
         </Card>
 
         {/* Quick Role Fast-Pass */}
-        <Card className="mb-4">
-          <CardContent className="p-3.5">
-            <p className="mb-2 text-center text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Quick Role Login (One-Click Bypass)</p>
+        <Card className="mb-4 shadow-none">
+          <CardContent className="p-4">
+            <p className="mb-2.5 text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-[#8A8A8A]">Quick sign in</p>
             <div className="flex gap-1.5">
-              <Button variant="secondary" size="sm" className="flex-1" onClick={() => onGuestLogin?.('passenger', 'home')}>
+              <Button variant="secondary" size="sm" className="h-10 flex-1" onClick={() => onGuestLogin?.('passenger', 'home')}>
                 <UserIcon className="h-3.5 w-3.5" /> Passenger
               </Button>
-              <Button variant="secondary" size="sm" className="flex-1" onClick={() => onGuestLogin?.('driver', 'driver-home')}>
+              <Button variant="secondary" size="sm" className="h-10 flex-1" onClick={() => onGuestLogin?.('driver', 'driver-home')}>
                 <CarFront className="h-3.5 w-3.5" /> Driver
               </Button>
-              <Button variant="secondary" size="sm" className="flex-1" onClick={() => onGuestLogin?.('admin', 'admin-overview')}>
+              <Button variant="secondary" size="sm" className="h-10 flex-1" onClick={() => onGuestLogin?.('admin', 'admin-overview')}>
                 <ShieldCheck className="h-3.5 w-3.5" /> Admin
               </Button>
             </div>
@@ -217,11 +216,11 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
           />
         ) : (
           /* Clerk Passenger Sign In / Sign Up Form */
-          <Card className="auth-passenger-card">
+          <Card className="auth-passenger-card shadow-none">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm uppercase tracking-wide text-primary">Passenger & Commuter Sign In</CardTitle>
-                <Badge variant="secondary">Google OAuth + Pass</Badge>
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-[13px] font-semibold uppercase tracking-[0.06em]">Passenger sign in</CardTitle>
+                <Badge variant="secondary" className="text-[11px]">Secure</Badge>
               </div>
             </CardHeader>
             <CardContent>
@@ -229,9 +228,9 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
                 ? <SignIn key={`signin-${theme}`} routing="hash" fallbackRedirectUrl="/" appearance={getClerkAppearance(theme)} />
                 : <SignUp key={`signup-${theme}`} routing="hash" fallbackRedirectUrl="/" appearance={getClerkAppearance(theme)} />
               }
-              <p className="mt-4 text-center text-xs text-muted-foreground">
+              <p className="mt-4 text-center text-[13px] text-[#6B6B6B]">
                 {view === 'login' ? "Don't have an account? " : 'Already have an account? '}
-                <button onClick={onToggle} className="font-semibold text-primary hover:underline">
+                <button onClick={onToggle} className="font-semibold text-black underline-offset-4 hover:underline dark:text-white">
                   {view === 'login' ? 'Sign up' : 'Sign in'}
                 </button>
               </p>
@@ -246,33 +245,33 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
   )
 }
 
-// Loading screen
+// Loading screen — solid black, minimal ring, clear hierarchy
 function LoadingScreen({ onGuestLogin }) {
   return (
     <div className="loading-screen flex max-h-full min-h-0 h-full w-full flex-col items-center justify-center gap-4 overflow-y-auto p-6 text-center">
       <div className="loading-orbit" aria-hidden="true">
         <div className="loading-orbit-ring" />
-        <div className="loading-orbit-core"><SmartRouteMark size={30} /></div>
+        <div className="loading-orbit-core"><SmartRouteMark size={24} /></div>
       </div>
-      <div className="loading-wordmark">SmartRoute <span>AI</span></div>
-      <p className="loading-caption">Connecting intelligent routes...</p>
+      <div className="loading-wordmark">SmartRoute</div>
+      <p className="loading-caption">Finding your route…</p>
       <div className="flex w-full max-w-[360px] flex-col gap-2" aria-hidden="true">
-        <Skeleton className="h-3 w-2/3 mx-auto opacity-40" />
-        <Skeleton className="h-3 w-1/2 mx-auto opacity-30" />
+        <Skeleton className="mx-auto h-2 w-2/3 bg-white/10" />
+        <Skeleton className="mx-auto h-2 w-1/2 bg-white/10" />
       </div>
 
       {/* Fallback fast pass if Clerk is taking a while or blocked by Brave Shields */}
-      <Card className="loading-access-card w-full max-w-[360px] text-left shadow-lg">
+      <Card className="loading-access-card w-full max-w-[360px] border-[#333333] text-left shadow-none">
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Quick Simulation Access</CardTitle>
-          <CardDescription className="text-xs">If authentication is slow or blocked, choose which isolated simulation to open:</CardDescription>
+          <CardTitle className="text-[15px] font-semibold text-white">Continue to demo</CardTitle>
+          <CardDescription className="text-[13px] text-white/60">If sign-in is slow, explore instantly:</CardDescription>
         </CardHeader>
         <CardContent className="flex gap-2">
-          <Button variant="outline" className="flex-1" onClick={() => onGuestLogin?.('passenger', 'home')}>
-            <Play className="h-3.5 w-3.5" /> Normal Ride
+          <Button variant="outline" className="flex-1 border-[#333333] bg-transparent text-white hover:bg-[#1F1F1F] hover:text-white" onClick={() => onGuestLogin?.('passenger', 'home')}>
+            <Play className="h-3.5 w-3.5" /> Book a ride
           </Button>
-          <Button className="flex-1" onClick={() => onGuestLogin?.('admin', 'presentation-demo')}>
-            <GraduationCap className="h-3.5 w-3.5" /> Presentation
+          <Button className="flex-1 bg-white text-black hover:bg-[#E2E2E2]" onClick={() => onGuestLogin?.('admin', 'presentation-demo')}>
+            <GraduationCap className="h-3.5 w-3.5" /> Live demo
           </Button>
         </CardContent>
       </Card>
@@ -595,32 +594,32 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
 
   const sidebarBody = (
     <>
-      <div className="brand mb-5 flex items-center gap-2.5 px-1">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-sm"><SmartRouteMark size={18} /></span>
+      <div className="brand mb-6 flex items-center gap-3 px-2">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-black text-white dark:bg-white dark:text-black"><SmartRouteMark size={19} /></span>
         <div className="brand-copy min-w-0 flex-1">
-          <p className="text-sm font-extrabold leading-none tracking-tight">SmartRoute</p>
-          <p className="mt-1 text-[11px] text-muted-foreground">Shared transit ops</p>
+          <p className="text-[15px] font-bold leading-none tracking-[-0.01em]">SmartRoute</p>
+          <p className="mt-1 text-[12px] text-[#6B6B6B] dark:text-[#AFAFAF]">Shared transit</p>
         </div>
-        <Badge variant="secondary" className="shrink-0 text-[10px] uppercase">{user.role}</Badge>
+        <Badge variant="secondary" className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.06em]">{user.role}</Badge>
       </div>
 
-      <Card className="mb-4 shadow-sm">
-        <CardContent className="p-2.5">
-          <p className="mb-1.5 px-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Simulation mode</p>
-          <div className="grid grid-cols-2 gap-1.5" role="group" aria-label="Simulation mode">
+      <Card className="mb-5 border-[#E2E2E2] shadow-none dark:border-[#333333]">
+        <CardContent className="p-3">
+          <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#8A8A8A]">Mode</p>
+          <div className="grid grid-cols-2 gap-1.5 rounded-lg bg-[#F6F6F6] p-1 dark:bg-[#1F1F1F]" role="group" aria-label="Simulation mode">
             <Button
               variant={!isDemo ? 'default' : 'ghost'}
               size="sm"
-              className="w-full"
+              className="h-10 w-full"
               onClick={() => go(roleHome(user.role))}
               aria-pressed={!isDemo}
             >
-              Normal
+              Ride
             </Button>
             <Button
               variant={isDemo ? 'default' : 'ghost'}
               size="sm"
-              className="w-full"
+              className="h-10 w-full"
               onClick={() => go('presentation-demo')}
               aria-pressed={isDemo}
             >
@@ -630,13 +629,13 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
         </CardContent>
       </Card>
 
-      <nav className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-0.5" aria-label="Primary">
+      <nav className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-0.5" aria-label="Primary">
         {sections.map((section) => (
           <div key={section.label}>
-            <p className="nav-label mb-1.5 px-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+            <p className="nav-label mb-2 px-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8A8A8A]">
               {section.label}
             </p>
-            <div className="flex flex-col gap-0.5">
+            <div className="flex flex-col gap-1">
               {section.items.map((item) => {
                 const active = view === item.v
                 const Icon = item.Icon
@@ -645,16 +644,16 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
                     key={item.v}
                     variant={active ? 'secondary' : 'ghost'}
                     className={cn(
-                      'nav-item h-9 w-full justify-start gap-2.5 px-2.5 font-medium',
-                      active && 'bg-secondary font-semibold shadow-[inset_2px_0_0_hsl(var(--primary))]',
+                      'nav-item h-11 w-full justify-start gap-3 rounded-lg px-3 font-medium',
+                      active && 'bg-[#F6F6F6] font-semibold dark:bg-[#1F1F1F]',
                     )}
                     onClick={() => go(item.v)}
                     aria-current={active ? 'page' : undefined}
                   >
-                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    <span className="nav-label flex-1 truncate text-left text-[13px]">{item.label}</span>
+                    <Icon className="h-[18px] w-[18px] shrink-0" aria-hidden="true" />
+                    <span className="nav-label flex-1 truncate text-left text-[14px]">{item.label}</span>
                     {item.badge && unreadCount > 0 && (
-                      <Badge variant="destructive" className="ml-auto h-5 min-w-5 px-1.5 text-[10px]">{unreadCount > 9 ? '9+' : unreadCount}</Badge>
+                      <Badge className="ml-auto h-5 min-w-5 border-0 bg-black px-1.5 text-[10px] font-bold text-white dark:bg-white dark:text-black">{unreadCount > 9 ? '9+' : unreadCount}</Badge>
                     )}
                   </Button>
                 )
@@ -664,35 +663,35 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
         ))}
       </nav>
 
-      <Separator className="my-3" />
+      <Separator className="my-4 bg-[#E2E2E2] dark:bg-[#333333]" />
       <button
         onClick={() => go('profile')}
-        className="user-row mb-2 flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="user-row mb-2 flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors duration-150 hover:bg-[#F6F6F6] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black dark:hover:bg-[#1F1F1F]"
       >
-        <Avatar className="h-8 w-8 shrink-0">
-          <AvatarFallback className="bg-primary/10 text-xs font-bold text-primary">{(user.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
+        <Avatar className="h-9 w-9 shrink-0 rounded-lg">
+          <AvatarFallback className="rounded-lg bg-black text-[13px] font-bold text-white dark:bg-white dark:text-black">{(user.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
         </Avatar>
         <div className="user-copy min-w-0 flex-1">
-          <p className="truncate text-xs font-semibold">{user.name}</p>
-          <p className="truncate text-[11px] text-muted-foreground">{user.email}</p>
+          <p className="truncate text-[13px] font-semibold">{user.name}</p>
+          <p className="truncate text-[12px] text-[#6B6B6B] dark:text-[#AFAFAF]">{user.email}</p>
         </div>
       </button>
-      <Button variant="outline" className="w-full justify-start gap-2" onClick={onLogout}>
-        <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="sign-out-label">Sign out</span>
+      <Button variant="outline" className="h-11 w-full justify-start gap-2.5" onClick={onLogout}>
+        <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="sign-out-label text-[14px]">Sign out</span>
       </Button>
     </>
   )
 
   return (
-    <div className="app-shell flex h-full w-full bg-background">
+    <div className="app-shell flex h-full w-full bg-white dark:bg-black">
       {/* Desktop sidebar */}
-      <aside className="app-sidebar hidden w-[248px] shrink-0 flex-col border-r bg-card px-3 py-5 md:flex">
+      <aside className="app-sidebar hidden w-[264px] shrink-0 flex-col border-r border-[#E2E2E2] bg-white px-4 py-6 md:flex dark:border-[#333333] dark:bg-black">
         {sidebarBody}
       </aside>
 
       {/* Mobile nav */}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent side="left" className="flex w-[280px] flex-col px-3 py-5">
+        <SheetContent side="left" className="flex w-[300px] flex-col rounded-r-2xl border-[#E2E2E2] bg-white px-4 py-6 dark:border-[#333333] dark:bg-black">
           <SheetHeader className="sr-only">
             <SheetTitle>Navigation</SheetTitle>
           </SheetHeader>
@@ -714,7 +713,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
           theme={theme}
           onToggleTheme={onToggleTheme}
         />
-        <main className="app-main flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+        <main className="app-main flex min-h-0 flex-1 flex-col overflow-hidden bg-[#FFFFFF] dark:bg-black">
           <RoleRouter user={user} view={view} setView={setView} notifications={notifications} setNotifications={setNotifications} toast={toast} onRefreshProfile={onRefreshProfile} />
         </main>
       </div>
@@ -760,14 +759,14 @@ function InboxView({ notifications, setNotifications, toast }) {
   }
   const unread = notifications.filter((n) => !n.is_read).length
   return (
-    <div className="mx-auto w-full max-w-[760px] space-y-4 p-4 md:p-7">
+    <div className="mx-auto w-full max-w-[760px] space-y-4 p-4 md:p-8">
       <PageHeader
         title="Notifications"
         description={notifications.length ? `${unread} unread · ${notifications.length} total` : 'Workspace inbox'}
         actions={unread > 0 ? <Button variant="outline" size="sm" onClick={markAll}><CheckCircle2 className="h-3.5 w-3.5" /> Mark all read</Button> : undefined}
       />
       {notifications.length === 0 && (
-        <DashboardEmptyState icon={Bell} title="No notifications yet" hint="Ride updates, dispatch events and driver approvals will appear here." />
+        <DashboardEmptyState icon={Bell} title="You're all caught up" hint="Ride updates, dispatch events and driver approvals will appear here." />
       )}
       <div className="flex flex-col gap-2">
         {notifications.map((n) => (
@@ -778,18 +777,20 @@ function InboxView({ notifications, setNotifications, toast }) {
             tabIndex={!n.is_read ? 0 : undefined}
             role={!n.is_read ? 'button' : undefined}
             className={cn(
-              'shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-              !n.is_read && 'cursor-pointer border-primary/30 bg-primary/[0.04] hover:bg-primary/[0.07]',
+              'shadow-none transition-[border-color,background-color] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black',
+              !n.is_read
+                ? 'cursor-pointer border-black bg-[#F6F6F6] hover:border-[#545454] dark:border-white dark:bg-[#1F1F1F]'
+                : 'hover:border-[#D6D6D6]',
             )}
           >
-            <CardContent className="flex items-start gap-3 p-3.5">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10"><Bell className="h-4 w-4 text-primary" aria-hidden="true" /></span>
+            <CardContent className="flex items-start gap-3.5 p-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-black text-white dark:bg-white dark:text-black"><Bell className="h-4 w-4" aria-hidden="true" /></span>
               <div className="min-w-0 flex-1">
-                <p className={cn('text-[13px] leading-tight', !n.is_read ? 'font-bold' : 'font-medium')}>{n.title}</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{n.message}</p>
-                <p className="mt-1 text-[11px] text-muted-foreground/70">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</p>
+                <p className={cn('text-[14px] leading-tight tracking-[-0.01em]', !n.is_read ? 'font-semibold' : 'font-normal')}>{n.title}</p>
+                <p className="mt-1 text-[13px] leading-relaxed text-[#6B6B6B] dark:text-[#AFAFAF]">{n.message}</p>
+                <p className="mt-1.5 text-[12px] text-[#8A8A8A]">{n.created_at ? new Date(n.created_at).toLocaleString() : ''}</p>
               </div>
-              {!n.is_read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="Unread" />}
+              {!n.is_read && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-black dark:bg-white" aria-label="Unread" />}
             </CardContent>
           </Card>
         ))}
@@ -812,33 +813,33 @@ function ProfileView({ user }) {
     } catch (error) { void error } finally { setSaving(false) }
   }
   return (
-    <div className="mx-auto w-full max-w-[560px] space-y-5 p-4 md:p-7">
-      <PageHeader title="Profile" description="How you appear to dispatch and riders" />
-      <Card className="shadow-sm">
-        <CardContent className="p-6">
-          <div className="mb-6 flex items-center gap-3.5">
-            <Avatar className="h-14 w-14">
-              <AvatarFallback className="bg-primary text-xl font-extrabold text-primary-foreground">{(user.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
+    <div className="mx-auto w-full max-w-[560px] space-y-5 p-4 md:p-8">
+      <PageHeader title="Profile" description="How you appear to drivers and dispatch" />
+      <Card className="shadow-none">
+        <CardContent className="p-6 md:p-8">
+          <div className="mb-8 flex items-center gap-4">
+            <Avatar className="h-16 w-16 rounded-xl">
+              <AvatarFallback className="rounded-xl bg-black text-2xl font-bold text-white dark:bg-white dark:text-black">{(user.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate text-base font-bold">{user.name}</p>
-              <p className="truncate text-xs text-muted-foreground">{user.email}</p>
-              <Badge className="mt-1.5 uppercase" variant="secondary">{user.role}</Badge>
+              <p className="truncate text-[20px] font-semibold tracking-[-0.01em]">{user.name}</p>
+              <p className="truncate text-[13px] text-[#6B6B6B] dark:text-[#AFAFAF]">{user.email}</p>
+              <Badge className="mt-2 uppercase" variant="secondary">{user.role}</Badge>
             </div>
           </div>
-          <div className="mb-4 space-y-1.5">
-            <Label htmlFor="profile-name">Full name</Label>
+          <div className="mb-5 space-y-2">
+            <Label htmlFor="profile-name" className="text-[13px] font-semibold">Full name</Label>
             <Input id="profile-name" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
           </div>
-          <div className="mb-4 space-y-1.5">
-            <Label htmlFor="profile-phone">Phone</Label>
+          <div className="mb-5 space-y-2">
+            <Label htmlFor="profile-phone" className="text-[13px] font-semibold">Phone</Label>
             <Input id="profile-phone" value={phone} onChange={(e) => setPhone(e.target.value)} autoComplete="tel" inputMode="tel" />
           </div>
-          <div className="mb-5 space-y-1.5">
-            <Label htmlFor="profile-email">Email</Label>
+          <div className="mb-6 space-y-2">
+            <Label htmlFor="profile-email" className="text-[13px] font-semibold">Email</Label>
             <Input id="profile-email" value={user.email} disabled className="opacity-60" />
           </div>
-          <Button className="w-full" onClick={save} disabled={saving}>
+          <Button className="h-12 w-full" onClick={save} disabled={saving}>
             {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving…</> : saved ? <><CheckCircle2 className="h-4 w-4" /> Saved</> : 'Save changes'}
           </Button>
         </CardContent>

@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-ssr
+.git
+.vscode
+.idea
+*.log
+npm-debug.log*
+coverage
+.playwright-mcp
+# Never bake local env files into the image. Prod VITE_* come from
+# CI build-args; dev .env stays on the developer machine.
+.env
+.env.*
+!.env.example
