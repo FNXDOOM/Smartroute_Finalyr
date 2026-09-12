@@ -5,14 +5,14 @@ export function ThemeToggle({ theme, onToggle, className }) {
   const isDark = theme === 'dark'
   return (
     <Button
-      variant="outline"
+      variant="ghost"
       size="icon"
       onClick={onToggle}
       title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
       aria-label="Toggle theme"
-      className={className}
+      className={`h-11 w-11 rounded-lg ${className ?? ''}`}
     >
-      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
     </Button>
   )
 }

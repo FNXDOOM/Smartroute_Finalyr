@@ -1,0 +1,101 @@
+# Production Compose — EC2 / Docker Hub / Secrets Manager.
+#
+# Differences from docker-compose.yml (dev):
+#   - No `build:` sections. EC2 only pulls immutable Docker Hub images.
+#   - Deployment MUST use an immutable tag: IMAGE_TAG=<short git SHA>.
+#     Never deploy with `:latest`.
+#   - Backend runtime secrets come from deploy/.env.prod, which is generated
+#     on EC2 by deploy/deploy.sh from AWS Secrets Manager. That file is never
+#     committed (see .gitignore) and never baked into images.
+#   - ALLOWED_ORIGINS / CLERK_AUTHORIZED_PARTIES come from deploy/.env.prod.
+#     There are deliberately NO localhost fallbacks here — fail fast if unset.
+#   - Only nginx-proxy-manager publishes host ports (80/443/81).
+#     api/frontend/worker use `expose:` only (internal Docker network).
+#
+# Usage on EC2 (via deploy/deploy.sh, not manually):
+#   DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<sha> docker compose -f docker-compose.prod.yml up -d
+
+services:
+  frontend:
+    image: ${DOCKERHUB_NAMESPACE:?DOCKERHUB_NAMESPACE is required}/smartroute-frontend:${IMAGE_TAG:?IMAGE_TAG is required (immutable git SHA, never latest)}
+    # Internal only. NPM routes app -> frontend:80.
+    expose:
+      - "80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  api:
+    image: ${DOCKERHUB_NAMESPACE:?DOCKERHUB_NAMESPACE is required}/smartroute-api:${IMAGE_TAG:?IMAGE_TAG is required (immutable git SHA, never latest)}
+    # Trust NPM in same network only.
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"]
+    # Runtime secrets from Secrets Manager (written by deploy/deploy.sh).
+    env_file:
+      - path: ./deploy/.env.prod
+        required: true
+    environment:
+      PROCESS_ROLE: api
+      ENABLE_TRACKING_BROADCAST: "true"
+      APP_ENV: production
+      ENABLE_BACKGROUND_JOBS_IN_API: "false"
+      # NOTE: ALLOWED_ORIGINS and CLERK_AUTHORIZED_PARTIES are intentionally
+      # NOT defaulted here. They must come from deploy/.env.prod (production
+      # https domains). Compose will start, but the app healthcheck/readiness
+      # and deploy.sh validation will fail fast if they are missing/wrong.
+    # Internal only. NPM routes api -> api:8000.
+    expose:
+      - "8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  worker:
+    image: ${DOCKERHUB_NAMESPACE:?DOCKERHUB_NAMESPACE is required}/smartroute-api:${IMAGE_TAG:?IMAGE_TAG is required (immutable git SHA, never latest)}
+    command: ["python", "worker.py"]
+    env_file:
+      - path: ./deploy/.env.prod
+        required: true
+    environment:
+      PROCESS_ROLE: worker
+      ENABLE_TRACKING_BROADCAST: "false"
+      APP_ENV: production
+      ENABLE_BACKGROUND_JOBS_IN_API: "false"
+    restart: unless-stopped
+    # Single replica by design. No HTTP endpoint to probe.
+    # Do NOT scale this service: jobs must run exactly once.
+    deploy:
+      replicas: 1
+    healthcheck:
+      disable: true
+
+  # NPM: app -> frontend:80, api -> api:8000 (websockets ON).
+  # Configure Proxy Hosts once in NPM UI (port 81). This service is NOT
+  # rebuilt per deploy; it persists certs in named volumes.
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:2.12.3
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  npm_data:
+  npm_letsencrypt:

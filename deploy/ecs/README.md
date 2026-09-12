@@ -89,7 +89,7 @@ Build the Docker image locally and push to Docker Hub:
 docker login
 
 # Build the image
-docker build -t smartrouteai:latest .
+docker build -f backend/Dockerfile -t smartrouteai:latest .
 
 # Tag for Docker Hub
 docker tag smartrouteai:latest ${DOCKERHUB_USERNAME}/smartrouteai:1.0.0
@@ -433,7 +433,7 @@ aws application-autoscaling put-scaling-policy \
 
 1. **Build and push new Docker image:**
    ```bash
-   docker build -t smartrouteai:v2.0 .
+   docker build -f backend/Dockerfile -t smartrouteai:v2.0 .
    docker tag smartrouteai:v2.0 ${DOCKERHUB_USERNAME}/smartrouteai:v2.0
    docker push ${DOCKERHUB_USERNAME}/smartrouteai:v2.0
    ```

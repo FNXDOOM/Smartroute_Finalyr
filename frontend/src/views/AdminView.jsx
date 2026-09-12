@@ -34,11 +34,11 @@ const STATUS_STYLES = {
   assigned: 'border-foreground/30 bg-foreground text-background',
   arriving: 'border-foreground/30 bg-foreground text-background',
   in_progress: 'border-foreground/30 bg-foreground text-background',
-  completed: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
-  solved: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  completed: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
+  solved: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
   cancelled: 'border-destructive/30 bg-destructive/10 text-destructive',
   idle: 'border-border bg-muted text-muted-foreground',
-  active: 'border-green-600/30 bg-green-600/10 text-green-700 dark:text-green-400',
+  active: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
   en_route: 'border-foreground/30 bg-foreground text-background',
   offline: 'border-destructive/30 bg-destructive/10 text-destructive',
   no_pending_requests: 'border-border bg-muted text-muted-foreground',
@@ -55,16 +55,16 @@ function StatusBadge({ status }) {
 
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
-    <Card>
-      <CardContent className="p-4">
+    <Card className="shadow-none transition-[border-color,box-shadow] duration-200 hover:border-[#D6D6D6] hover:shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
+      <CardContent className="p-5">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <Icon className="h-4 w-4 text-primary" />
+          <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#8A8A8A]">{label}</p>
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-black text-white dark:bg-white dark:text-black">
+            <Icon className="h-4 w-4" />
           </span>
         </div>
-        <p className="mt-2 truncate font-display text-2xl font-extrabold tracking-tight" title={String(value)}>{value}</p>
-        {sub && <p className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</p>}
+        <p className="mt-3 truncate text-[28px] font-bold leading-none tracking-[-0.02em] tabular-nums" title={String(value)}>{value}</p>
+        {sub && <p className="mt-1.5 truncate text-[13px] text-[#6B6B6B] dark:text-[#AFAFAF]">{sub}</p>}
       </CardContent>
     </Card>
   )
@@ -79,8 +79,8 @@ function PageHeader({ title, description, onBack, backLabel = 'Overview', action
         </Button>
       )}
       <div className="min-w-0 flex-1">
-        <h1 className="font-display text-xl font-extrabold tracking-tight md:text-2xl">{title}</h1>
-        {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
+        <h1 className="text-[24px] font-bold leading-tight tracking-[-0.02em] md:text-[30px]">{title}</h1>
+        {description && <p className="mt-1 text-[14px] text-[#6B6B6B] dark:text-[#AFAFAF]">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
@@ -89,7 +89,7 @@ function PageHeader({ title, description, onBack, backLabel = 'Overview', action
 
 function EmptyState({ icon: Icon = CircleDot, title, hint }) {
   return (
-    <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed py-10 text-center">
+    <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-[#E2E2E2] bg-white px-4 py-12 text-center dark:border-[#333333] dark:bg-[#1F1F1F]">
       <Icon className="h-6 w-6 text-muted-foreground" />
       <p className="text-sm font-semibold">{title}</p>
       {hint && <p className="max-w-[300px] text-xs text-muted-foreground">{hint}</p>}
@@ -207,10 +207,10 @@ function OverviewPanel({ user, setView, toast }) {
       />
 
       {pendingCount > 0 && (
-        <Card className="border-amber-500/40 bg-amber-500/[0.06]">
+        <Card className="border-black bg-[#F6F6F6] dark:border-white dark:bg-[#1F1F1F]">
           <CardContent className="flex flex-wrap items-center gap-3 p-4">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/15">
-              <CarFront className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-black dark:bg-white">
+              <CarFront className="h-4 w-4 text-black dark:text-white" />
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-[13px] font-bold">{pendingCount} driver{pendingCount === 1 ? '' : 's'} waiting for approval</p>
@@ -467,7 +467,7 @@ function VehiclesPanel({ setView, toast }) {
       />
 
       {pendingCount > 0 && (
-        <Card className="border-amber-500/40 bg-amber-500/[0.06]">
+        <Card className="border-black bg-[#F6F6F6] dark:border-white dark:bg-[#1F1F1F]">
           <CardContent className="flex flex-wrap items-center gap-2.5 p-3.5">
             <p className="min-w-0 flex-1 text-[13px]"><strong>{pendingCount} driver{pendingCount === 1 ? '' : 's'}</strong> <span className="text-muted-foreground">waiting for approval</span></p>
             <Button size="sm" variant="outline" onClick={() => setView('admin-drivers')} className="gap-1.5">
@@ -614,8 +614,8 @@ function ClusterPanel({ setView, toast }) {
           <MapLegend
             className="ml-auto"
             items={[
-              { color: '#a78bfa', label: 'Pooled stop' },
-              { color: '#f59e0b', label: 'Noise' },
+              { color: '#000000', label: 'Pooled stop' },
+              { color: '#8A8A8A', label: 'Noise' },
             ]}
           />
         </div>
@@ -695,11 +695,11 @@ function ClusterPanel({ setView, toast }) {
                     </div>
                     <div className="mb-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                       <span className="mob-data"><strong className="text-foreground">{run.total_processed_requests}</strong> rides</span>
-                      <span className="mob-data"><strong className="text-violet-600 dark:text-violet-400">{run.clusters_formed}</strong> groups</span>
-                      <span className="mob-data"><strong className="text-amber-600 dark:text-amber-400">{run.noise_requests_count}</strong> left out</span>
+                      <span className="mob-data"><strong className="text-black dark:text-white">{run.clusters_formed}</strong> groups</span>
+                      <span className="mob-data"><strong className="text-black dark:text-white">{run.noise_requests_count}</strong> left out</span>
                       {run.created_at ? <span>{new Date(run.created_at).toLocaleString()}</span> : null}
                     </div>
-                    <DensityBar value={run.clusters_formed || 0} max={maxGroups} colorClass="bg-violet-500" label={`Run ${run.id}: ${run.clusters_formed} groups`} />
+                    <DensityBar value={run.clusters_formed || 0} max={maxGroups} colorClass="bg-black dark:bg-white" label={`Run ${run.id}: ${run.clusters_formed} groups`} />
                   </button>
                   {open && (
                     <CardContent className="space-y-2 pt-0" onClick={(e) => e.stopPropagation()}>
@@ -714,18 +714,18 @@ function ClusterPanel({ setView, toast }) {
                               style={{ borderRadius: 0 }}
                             />
                           </div>
-                          <p className="mb-2 text-[11px] text-muted-foreground">{selectedStops.length} pooled {selectedStops.length === 1 ? 'stop' : 'stops'} · violet pins sized equally, bar = riders</p>
+                          <p className="mb-2 text-[11px] text-muted-foreground">{selectedStops.length} pooled {selectedStops.length === 1 ? 'stop' : 'stops'} · black pins, bar = riders</p>
                         </div>
                       )}
                       {(run.cluster_summary || []).slice(0, 8).map((cs) => (
                         <div key={cs.cluster_id} className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-2.5 py-2">
-                          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-violet-500" aria-hidden="true" />
+                          <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-black dark:bg-white" aria-hidden="true" />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-baseline justify-between gap-2">
                               <p className="text-[11px] font-semibold">Group #{cs.cluster_id}</p>
                               <p className="mob-data shrink-0 text-[11px] text-muted-foreground">{cs.passenger_count} riders</p>
                             </div>
-                            <DensityBar value={cs.passenger_count || 0} max={maxRiders} colorClass="bg-violet-500" className="mt-1" />
+                            <DensityBar value={cs.passenger_count || 0} max={maxRiders} colorClass="bg-black dark:bg-white" className="mt-1" />
                             <p className="mob-data mt-1 truncate text-[10px] text-muted-foreground">stop {cs.virtual_stop_lat?.toFixed(4)}, {cs.virtual_stop_lng?.toFixed(4)}</p>
                           </div>
                         </div>
@@ -869,9 +869,9 @@ function RoutesPanel({ setView, toast }) {
                           </div>
                           <MapLegend
                             items={[
-                              { color: '#3b82f6', label: 'Depot' },
-                              { color: '#a78bfa', label: 'Stop' },
-                              { color: '#f43f5e', label: 'Destination' },
+                              { color: '#545454', label: 'Depot' },
+                              { color: '#000000', label: 'Stop' },
+                              { color: '#545454', label: 'Destination' },
                             ]}
                           />
                         </>
@@ -1013,7 +1013,7 @@ function AnalyticsPanel({ setView, toast }) {
                     <TableRow key={d.day}>
                       <TableCell className="px-4">{new Date(d.day).toLocaleDateString('en', { month: 'short', day: 'numeric' })}</TableCell>
                       <TableCell className="mob-data px-4 font-semibold">{d.ride_requests}</TableCell>
-                      <TableCell className="mob-data px-4 text-violet-600 dark:text-violet-400">{d.clustered_rides}</TableCell>
+                      <TableCell className="mob-data px-4 text-black dark:text-white">{d.clustered_rides}</TableCell>
                       <TableCell className="mob-data px-4 text-green-700 dark:text-green-400">{d.completed_rides}</TableCell>
                       <TableCell className="mob-data px-4 text-destructive">{d.cancelled_rides}</TableCell>
                       <TableCell className="mob-data px-4">{d.route_plans}</TableCell>
@@ -1086,7 +1086,7 @@ function JobsPanel({ setView, toast }) {
       {status && (
         <Card>
           <CardContent className="flex flex-wrap items-center gap-3 p-4">
-            <span className={cn('flex h-2.5 w-2.5 rounded-full', status.scheduler_running ? 'animate-pulse bg-green-500' : 'bg-destructive')} />
+            <span className={cn('flex h-2.5 w-2.5 rounded-full', status.scheduler_running ? 'animate-pulse bg-black dark:bg-white' : 'bg-destructive')} />
             <p className="text-sm font-bold">Scheduler {status.scheduler_running ? 'running' : 'stopped'}</p>
             <Separator orientation="vertical" className="hidden h-5 sm:block" />
             <p className="text-xs text-muted-foreground">Grouping every {status.cluster_interval_seconds}s</p>
@@ -1342,7 +1342,7 @@ function PendingDriversPanel({ setView, toast }) {
       ) : pending.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center gap-1.5 py-12 text-center">
-            <CheckCheck className="h-8 w-8 text-green-500" />
+            <CheckCheck className="h-8 w-8 text-black dark:text-white" />
             <p className="font-bold">All caught up</p>
             <p className="text-sm text-muted-foreground">Every driver application has been reviewed.</p>
           </CardContent>
@@ -1350,7 +1350,7 @@ function PendingDriversPanel({ setView, toast }) {
       ) : (
         <div className="space-y-2">
           {pending.map((driver) => (
-            <Card key={driver.id} className="border-amber-500/30">
+            <Card key={driver.id} className="border-black dark:border-white">
               <CardContent className="flex flex-wrap items-center gap-3 p-3.5">
                 <Avatar className="h-9 w-9">
                   <AvatarFallback className="bg-primary/10 text-sm font-bold text-primary">
@@ -1364,8 +1364,8 @@ function PendingDriversPanel({ setView, toast }) {
                 <div className="flex flex-wrap gap-1.5">
                   <Button
                     size="sm"
-                    variant="secondary"
-                    className="h-8 gap-1 border border-emerald-500/40 text-emerald-600 hover:text-green-700 dark:text-green-400 dark:hover:text-emerald-400"
+                    variant="default"
+                    className="h-9 gap-1.5"
                     disabled={!!verifying[driver.id]}
                     onClick={() => handleVerify(driver.id, 'active')}
                   >
@@ -1375,7 +1375,7 @@ function PendingDriversPanel({ setView, toast }) {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-8 gap-1 text-amber-600 hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-400"
+                    className="h-9 gap-1.5"
                     disabled={!!verifying[driver.id]}
                     onClick={() => handleVerify(driver.id, 'suspended')}
                   >

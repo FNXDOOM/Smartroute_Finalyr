@@ -188,25 +188,25 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   }
 
   return (
-    <Card className="shadow-lg">
+    <Card className="shadow-none">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="flex items-center gap-2 text-sm uppercase tracking-wide">
-            <CarFront className="h-4 w-4 text-primary" /> Driver & Fleet Portal
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-[13px] font-semibold uppercase tracking-[0.06em]">
+            <CarFront className="h-4 w-4" /> Driver sign in
           </CardTitle>
-          <Badge variant="secondary">Credentials only</Badge>
+          <Badge variant="secondary" className="text-[11px]">Fleet only</Badge>
         </div>
-        <CardDescription className="flex items-center gap-1.5 pt-1 text-xs">
-          <Lock className="h-3 w-3" /> Social logins are disabled here — fleet credentials only.
+        <CardDescription className="flex items-center gap-1.5 pt-1.5 text-[13px]">
+          <Lock className="h-3.5 w-3.5" /> Fleet credentials only — no social login here.
         </CardDescription>
       </CardHeader>
       <CardContent>
         {errorMsg && (
-          <p className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{errorMsg}</p>
+          <p className="mb-3 rounded-lg border border-[#D93025]/25 bg-[#D93025]/10 px-3.5 py-2.5 text-[13px] text-[#D93025]">{errorMsg}</p>
         )}
         {noticeMsg && (
-          <p className="mb-3 flex items-start gap-2 rounded-md border border-primary/30 bg-primary/[0.07] px-3 py-2 text-xs text-foreground">
-            <MailCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <p className="mb-3 flex items-start gap-2 rounded-lg border border-[#E2E2E2] bg-[#F6F6F6] px-3.5 py-2.5 text-[13px] text-black dark:border-[#333333] dark:bg-[#2A2A2A] dark:text-white">
+            <MailCheck className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{noticeMsg}</span>
           </p>
         )}
@@ -228,7 +228,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
               />
             </div>
 
-            <Button type="submit" className="w-full" disabled={loading || code.trim().length < 6}>
+            <Button type="submit" className="h-12 w-full" disabled={loading || code.trim().length < 6}>
               {loading && <Loader2 className="h-4 w-4 animate-spin" />}
               {loading ? 'Verifying…' : 'Verify Email & Finish Onboarding'}
             </Button>
@@ -284,23 +284,23 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
             </div>
           )}
 
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" className="h-12 w-full" disabled={loading}>
             {loading && <Loader2 className="h-4 w-4 animate-spin" />}
             {loading ? 'Authenticating…' : mode === 'signin' ? 'Sign In to Driver Portal' : 'Register Driver Profile'}
           </Button>
         </form>
         )}
 
-        <div className="mt-4 flex items-center justify-between border-t pt-3 text-xs">
+        <div className="mt-5 flex items-center justify-between border-t border-[#E2E2E2] pt-4 text-[13px] dark:border-[#333333]">
           <button
             type="button"
             onClick={handleModeSwitch}
-            className="text-muted-foreground underline hover:text-foreground"
+            className="text-[#6B6B6B] underline underline-offset-4 hover:text-black dark:hover:text-white"
           >
             {mode === 'signin' ? 'Apply as a new Driver' : 'Already a registered driver?'}
           </button>
-          <button type="button" onClick={onSwitchToPassenger} className="font-semibold text-primary hover:underline">
-            ← Passenger Login
+          <button type="button" onClick={onSwitchToPassenger} className="font-semibold text-black underline-offset-4 hover:underline dark:text-white">
+            ← Passenger login
           </button>
         </div>
       </CardContent>
