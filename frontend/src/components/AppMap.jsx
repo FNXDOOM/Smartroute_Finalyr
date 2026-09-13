@@ -377,6 +377,9 @@ export default function AppMap({
       cleanupMap(map, animationRef, routeAnimationRef, markersRef)
       mapRef.current = null
     }
+    // Map init runs once; overlay/vehicle updates are handled by the
+    // effects below, so prop changes must not re-create the map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getToken])
 
   const latestPropsRef = useRef(null)
