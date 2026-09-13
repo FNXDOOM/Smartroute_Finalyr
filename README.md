@@ -222,14 +222,14 @@ SmartRoute AI uses **Clerk** for authentication with two completely isolated log
 
 ### Passenger Portal
 
-Accessible via the **👤 Passenger Portal** tab on the login screen.
+Accessible via the ** Passenger Portal** tab on the login screen.
 - Full Clerk `<SignIn />` / `<SignUp />` component with **Google OAuth + Email/Password**
 - First-time sign-up auto-provisions a DB user with `role=passenger`
 - Role is stored in the database and synced to Clerk `publicMetadata`
 
 ### Driver Portal
 
-Accessible via the **🚗 Driver Portal** tab on the login screen.
+Accessible via the ** Driver Portal** tab on the login screen.
 - Custom `DriverLoginForm` using Clerk's headless `useSignIn()` / `useSignUp()` SDK
 - **No social login buttons** — strictly credentials-only (email + password)
 - Sign-up uses Clerk email-code verification (6-digit input with resend) when the instance requires it
@@ -298,12 +298,12 @@ python seed.py --reset  # wipe and re-seed
 
 ```
 Login Screen
-├── 👤 Passenger Portal (tab)
+├──  Passenger Portal (tab)
 │   └── Clerk <SignIn /> — Google OAuth + Email/Password
 │       └── JWT decoded → role defaults to "passenger"
 │       └── DB user auto-provisioned
 │
-└── 🚗 Driver Portal (tab)
+└── Driver Portal (tab)
     └── DriverLoginForm (useSignIn / useSignUp — credentials only)
         └── POST /auth/driver/apply
         └── role="driver", driver_status="pending_verification"
