@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import {
   ArrowLeft, ArrowRight, Bike, CarFront, CheckCircle2, ChevronRight, CircleDot,
-  Clock, Crown, Loader2, LocateFixed, MapPin, Navigation, Search, Users, X, Zap,
+  Clock, Crown, Loader2, LocateFixed, MapPin, Navigation, Search, Users, X,
 } from 'lucide-react'
 import { ridesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
 import { useWebSocket } from '../hooks/useWebSocket.js'
