@@ -19,3 +19,4 @@ pydantic[email]==2.5.0
 scikit-learn==1.7.2
 pandas==2.3.3
 numpy==2.2.6
+httpx==0.25.2

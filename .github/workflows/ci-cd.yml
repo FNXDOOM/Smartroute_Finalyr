@@ -153,6 +153,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Smoke-test backend image (fail fast if runtime deps missing)
+        # Imports the app inside the JUST-PUSHED immutable image. A missing
+        # production dependency (e.g. httpx in requirements.txt) fails here,
+        # BEFORE the image reaches EC2. config.py raises at import without
+        # LOCAL_JWT_SECRET, so dummy CI-only values are passed explicitly.
+        run: |
+          docker run --rm \
+            -e DATABASE_URL=sqlite:///./ci_test.db \
+            -e LOCAL_JWT_SECRET=ci-only-dummy-not-a-secret \
+            -e APP_ENV=test \
+            -e AUTH_PROVIDER=clerk \
+            -e CLERK_JWKS_URL=https://ci.invalid/.well-known/jwks.json \
+            -e CLERK_ISSUER=https://ci.invalid \
+            "${{ vars.DOCKERHUB_NAMESPACE }}/smartroute-api:${{ steps.sha.outputs.short_sha }}" \
+            python -c "import main; print('backend image import ok')"
+
   # ---------- main only: ship bundle to EC2 (GIT-FREE) + deploy exact SHA ----------
   deploy-prod:
     name: deploy to EC2
