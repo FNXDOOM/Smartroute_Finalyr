@@ -104,7 +104,10 @@ aws secretsmanager create-secret \
    (`npm ci`, `lint`, `build` check) run. Any failure stops the pipeline.
 2. `docker-push`: Buildx builds backend (`./backend/Dockerfile`) and frontend
    (`./frontend/Dockerfile` + prod `VITE_*` args), pushes
-   `: <short-sha>` and `:latest`. Deploy uses the SHA only.
+   `: <short-sha>` and `:latest`, then smoke-tests the pushed backend image
+   (`docker run ... python -c "import main"` with dummy CI env) so a missing
+   runtime dependency fails the pipeline before EC2 is touched.
+   Deploy uses the SHA only.
 3. `deploy-prod` (env `production`, concurrency `production`): SCP
    `docker-compose.prod.yml` + `deploy/deploy.sh` from THAT commit to
    `$EC2_DEPLOY_DIR`, then SSH `./deploy/deploy.sh <short-sha>`:
@@ -112,6 +115,10 @@ aws secretsmanager create-secret \
    `docker run --rm ... alembic upgrade head` (new image) →
    `docker compose -f docker-compose.prod.yml up -d` →
    poll `frontend /health`, `api /health/live`, `api /health/ready` (180s).
+   The frontend probe must use `http://127.0.0.1/health`, NOT `localhost`:
+   inside the nginx:alpine container `localhost` resolves to IPv6 (`::1`)
+   while `nginx.conf` listens IPv4-only (`listen 80`), so a `localhost`
+   probe fails with "Connection refused". Do not "simplify" it back.
 4. Success: record SHA in `deploy/.last-good-tag`, prune images keeping newest 3
    per repo. Failure: automatic rollback (see §5), workflow marked failed.
 
