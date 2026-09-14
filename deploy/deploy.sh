@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 #
-# SmartRouteAI — EC2 production deploy script.
+# SmartRouteAI — EC2 production deploy script (GIT-FREE).
 #
 # Called by GitHub Actions AFTER images are pushed to Docker Hub:
 #   ./deploy/deploy.sh <IMAGE_TAG>
+#
+# EC2 layout (created by SCP each deploy, NO git repo):
+#   $DEPLOY_DIR/docker-compose.prod.yml
+#   $DEPLOY_DIR/deploy/deploy.sh
+#   $DEPLOY_DIR/deploy/.env.prod      (generated, mode 0600)
+#   $DEPLOY_DIR/deploy/.last-good-tag (generated)
+# Default $DEPLOY_DIR is the parent of this script (e.g. /opt/smartroute).
 #
 # What it does:
 #   1. Pulls exact immutable images (never :latest):
@@ -28,12 +35,15 @@
 #     tested backward plan.
 #
 # Required on EC2:
-#   - Docker Engine + Compose plugin, AWS CLI v2, jq NOT required (python3 used).
+#   - Docker Engine + Compose plugin, AWS CLI v2, python3.
+#   - git is NOT required and MUST NOT be used. No source repo on EC2.
 #   - IAM instance profile with secretsmanager:GetSecretValue on the secret.
-#   - This repo checked out at the production branch (compose file read here).
+#   - The 2-file bundle: docker-compose.prod.yml + deploy/deploy.sh
+#     (shipped by CI via SCP on every deploy).
 #   - Env: DOCKERHUB_NAMESPACE, IMAGE_TAG (arg or env).
 #     Optional: BACKEND_SECRET_ID (default smartroute/production/backend),
-#               AWS_REGION (auto-detected via IMDSv2 if unset).
+#               AWS_REGION (auto-detected via IMDSv2 if unset),
+#               DEPLOY_ROOT (defaults to parent of this script).
 #
 # Secrets Manager layout (single JSON secret — atomic, one fetch):
 #   Secret ID: $BACKEND_SECRET_ID (default: smartroute/production/backend)
@@ -53,12 +63,14 @@ set -euo pipefail
 # Never enable `set -x`: it would leak secrets if any command expanded them.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-cd "${REPO_ROOT}"
+# Git-free root: parent of deploy/ (e.g. /opt/smartroute). Overridable for tests.
+DEPLOY_ROOT="${DEPLOY_ROOT:-$(cd "${SCRIPT_DIR}/.." && pwd)}"
+REPO_ROOT="${REPO_ROOT:-${DEPLOY_ROOT}}"  # back-compat alias; same directory
+cd "${DEPLOY_ROOT}"
 
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
-ENV_FILE="${ENV_FILE:-deploy/.env.prod}"
-STATE_FILE="${STATE_FILE:-deploy/.last-good-tag}"
+COMPOSE_FILE="${COMPOSE_FILE:-${DEPLOY_ROOT}/docker-compose.prod.yml}"
+ENV_FILE="${ENV_FILE:-${DEPLOY_ROOT}/deploy/.env.prod}"
+STATE_FILE="${STATE_FILE:-${DEPLOY_ROOT}/deploy/.last-good-tag}"
 BACKEND_SECRET_ID="${BACKEND_SECRET_ID:-smartroute/production/backend}"
 
 IMAGE_TAG="${1:-${IMAGE_TAG:-}}"
@@ -74,6 +86,10 @@ if [[ "${IMAGE_TAG}" == "latest" ]]; then
 fi
 if [[ -z "${DOCKERHUB_NAMESPACE}" ]]; then
   echo "ERROR: DOCKERHUB_NAMESPACE is required (e.g. export DOCKERHUB_NAMESPACE=myorg)." >&2
+  exit 2
+fi
+if [[ ! -f "${COMPOSE_FILE}" ]]; then
+  echo "ERROR: compose file not found: ${COMPOSE_FILE}. CI must SCP docker-compose.prod.yml next to deploy/." >&2
   exit 2
 fi
 

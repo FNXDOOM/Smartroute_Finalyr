@@ -1,3 +1,6 @@
 # Keep LF endings for shell scripts even on Windows checkouts.
 deploy/deploy.sh text eol=lf
 *.sh text eol=lf
+# Workflow run: blocks are executed as bash on Linux runners; CRLF would break them.
+.github/workflows/*.yml text eol=lf
+*.yml text eol=lf

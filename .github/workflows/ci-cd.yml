@@ -1,8 +1,13 @@
-# SmartRouteAI CI/CD — GitHub → Docker Hub → EC2.
+# SmartRouteAI CI/CD — GitHub → Docker Hub → EC2 (EC2 is GIT-FREE).
 #
 # PRs: lint + tests + frontend build (no push, no deploy).
 # Push to main: lint + tests + build + docker build/push (:<short-sha> + :latest)
 #   + EC2 deploy of the immutable :<short-sha> tag (never :latest).
+#
+# EC2 NEVER runs git and holds NO source repo. Each deploy SCPs ONLY:
+#   docker-compose.prod.yml + deploy/deploy.sh  →  $EC2_DEPLOY_DIR/
+# then runs deploy.sh <SHA>, which pulls images, fetches secrets from
+# AWS Secrets Manager via the IAM instance role, migrates, and starts compose.
 #
 # Backend runtime secrets are NEVER in GitHub. EC2 fetches them from
 # AWS Secrets Manager via its IAM instance role (see deploy/deploy.sh).
@@ -148,7 +153,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---------- main only: deploy exact SHA to EC2 ----------
+  # ---------- main only: ship bundle to EC2 (GIT-FREE) + deploy exact SHA ----------
   deploy-prod:
     name: deploy to EC2
     runs-on: ubuntu-latest
@@ -156,34 +161,67 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production
     steps:
-      - name: Deploy over SSH (pull SHA, secrets from Secrets Manager, migrate, healthcheck)
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout deployment bundle source
+        uses: actions/checkout@v4.2.2
+
+      - name: Transfer bundle + deploy over SSH (no git on EC2)
         env:
           IMAGE_TAG: ${{ needs.docker-push.outputs.short_sha }}
           DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
           BACKEND_SECRET_ID: ${{ vars.BACKEND_SECRET_ID }}
           AWS_REGION: ${{ vars.AWS_REGION }}
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: 22
-          # Keep host-key checking enabled (do not weaken SSH).
-          # Add EC2 host key to ~/.ssh/known_hosts on first setup; the action
-          # respects it when `key` auth is used with default StrictHostKeyChecking.
-          script_stop: true
-          envs: IMAGE_TAG,DOCKERHUB_NAMESPACE,BACKEND_SECRET_ID,AWS_REGION
-          script: |
-            set -euo pipefail
-            PROJECT_DIR="${{ vars.EC2_PROJECT_DIR }}"
-            if [ -z "${PROJECT_DIR}" ]; then PROJECT_DIR="$HOME/Smartroute"; fi
-            echo "Project dir: ${PROJECT_DIR}"
-            cd "${PROJECT_DIR}"
-            git fetch origin main
-            git checkout main
-            git pull --ff-only origin main
-            chmod +x deploy/deploy.sh
-            export DOCKERHUB_NAMESPACE IMAGE_TAG
-            if [ -n "${BACKEND_SECRET_ID}" ]; then export BACKEND_SECRET_ID; fi
-            if [ -n "${AWS_REGION}" ]; then export AWS_REGION; fi
-            ./deploy/deploy.sh "${IMAGE_TAG}"
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_DEPLOY_DIR: ${{ vars.EC2_DEPLOY_DIR }}
+        run: |
+          set -euo pipefail
+
+          : "${IMAGE_TAG:?docker-push short_sha missing}"
+          : "${DOCKERHUB_NAMESPACE:?vars.DOCKERHUB_NAMESPACE missing}"
+          : "${EC2_HOST:?secrets.EC2_HOST missing}"
+          : "${EC2_USER:?secrets.EC2_USER missing}"
+          : "${EC2_SSH_KEY:?secrets.EC2_SSH_KEY missing}"
+
+          # Absolute path only. The old default "~/Smartroute" is banned on
+          # purpose: "~" does NOT expand inside quoted SCP/SSH targets, so a
+          # vars value of ~/... silently creates a literal directory named "~".
+          DEPLOY_DIR="${EC2_DEPLOY_DIR:-/opt/smartroute}"
+          case "${DEPLOY_DIR}" in
+            "~"*) echo "ERROR: EC2_DEPLOY_DIR must be absolute (e.g. /opt/smartroute), got '${DEPLOY_DIR}'." >&2; exit 2;;
+            "/"*) ;;
+            *)    echo "ERROR: EC2_DEPLOY_DIR must be absolute, got '${DEPLOY_DIR}'." >&2; exit 2;;
+          esac
+          if [ "${IMAGE_TAG}" = "latest" ]; then
+            echo "ERROR: refusing to deploy ':latest'. Use an immutable git SHA tag." >&2
+            exit 2
+          fi
+
+          # These are the ONLY two files EC2 is allowed to need.
+          test -f docker-compose.prod.yml || { echo "ERROR: docker-compose.prod.yml missing in repo root." >&2; exit 2; }
+          test -f deploy/deploy.sh || { echo "ERROR: deploy/deploy.sh missing." >&2; exit 2; }
+
+          # --- SSH setup with host-key checking ON ---
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${EC2_SSH_KEY}" > ~/.ssh/ec2_deploy_key
+          chmod 600 ~/.ssh/ec2_deploy_key
+          ssh-keyscan -H "${EC2_HOST}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+          SSH="ssh -i ~/.ssh/ec2_deploy_key -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -p 22"
+          SCP="scp -i ~/.ssh/ec2_deploy_key -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -P 22"
+
+          echo "Deploy dir on EC2: ${DEPLOY_DIR}"
+          # shellcheck disable=SC2029
+          ${SSH} "${EC2_USER}@${EC2_HOST}" "mkdir -p '${DEPLOY_DIR}/deploy'"
+
+          echo "Uploading deployment bundle (2 files only, no repo)..."
+          ${SCP} docker-compose.prod.yml "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/docker-compose.prod.yml"
+          ${SCP} deploy/deploy.sh "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/deploy/deploy.sh"
+
+          echo "Running deploy.sh for IMAGE_TAG=${IMAGE_TAG}..."
+          # Values passed here are non-secret (namespace, SHA, secret ID, region).
+          # Backend secrets are fetched ON EC2 from Secrets Manager, never via SSH.
+          # shellcheck disable=SC2029
+          ${SSH} "${EC2_USER}@${EC2_HOST}" "chmod +x '${DEPLOY_DIR}/deploy/deploy.sh' && DOCKERHUB_NAMESPACE='${DOCKERHUB_NAMESPACE}' IMAGE_TAG='${IMAGE_TAG}' BACKEND_SECRET_ID='${BACKEND_SECRET_ID}' AWS_REGION='${AWS_REGION}' '${DEPLOY_DIR}/deploy/deploy.sh' '${IMAGE_TAG}'"
+
+          shred -u ~/.ssh/ec2_deploy_key 2>/dev/null || rm -f ~/.ssh/ec2_deploy_key
