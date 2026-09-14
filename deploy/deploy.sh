@@ -175,7 +175,9 @@ rollback() {
 # --- Health checks (container-internal, no host ports needed). ---
 # api/frontend expose ports internally only; NPM owns host 80/443.
 check_frontend_health() {
-  compose exec -T frontend wget -qO- http://localhost/health 2>/dev/null | grep -q "ok"
+  # 127.0.0.1, not localhost: localhost resolves to ::1 (IPv6) inside the
+  # nginx:alpine container while nginx listens IPv4-only (see nginx.conf).
+  compose exec -T frontend wget -qO- http://127.0.0.1/health 2>/dev/null | grep -q "ok"
 }
 
 check_api_live() {
