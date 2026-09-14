@@ -1,14 +1,14 @@
-# Production deploy — Docker Hub + EC2 + Secrets Manager
+# Production deploy — Docker Hub + EC2 + Secrets Manager (EC2 is GIT-FREE)
 
 Dev workflow is unchanged: `docker compose up --build` still uses
 `docker-compose.yml` + `backend/.env` + `frontend/.env`.
 
-Production uses **separate** files and never builds on EC2:
+Production uses **separate** files and never builds on EC2.
+EC2 holds NO git repo. Each deploy ships a 2-file bundle via SCP:
 
-- `docker-compose.prod.yml` — pulls immutable
-  `<NAMESPACE>/smartroute-api:<SHA>` and `<NAMESPACE>/smartroute-frontend:<SHA>`
-- `deploy/deploy.sh` — pull → secrets → migrate → up → healthcheck → rollback
-- `.github/workflows/ci-cd.yml` — lint/test/build, push, SSH deploy
+- `docker-compose.prod.yml` → `$EC2_DEPLOY_DIR/docker-compose.prod.yml`
+- `deploy/deploy.sh`         → `$EC2_DEPLOY_DIR/deploy/deploy.sh`
+- `.github/workflows/ci-cd.yml` — lint/test/build, push, SCP bundle, SSH deploy
 
 ## 1. GitHub configuration
 
@@ -33,7 +33,7 @@ Actions → Settings → Secrets and variables → Actions.
 | `VITE_API_BASE_URL` | `https://api.example.com` | Frontend build-arg (public API origin) |
 | `AWS_REGION` | `ap-south-1` | Passed to `deploy.sh` (else auto-detected on EC2) |
 | `BACKEND_SECRET_ID` | `smartroute/production/backend` | Secrets Manager ID (default if unset) |
-| `EC2_PROJECT_DIR` | `~/Smartroute` | Repo checkout path on EC2 (default if unset) |
+| `EC2_DEPLOY_DIR` | `/opt/smartroute` | Absolute bundle dir on EC2 (default if unset). Must be absolute; `~` values are rejected. Replaces the old `EC2_PROJECT_DIR`. |
 
 Backend runtime secrets are **not** in GitHub. EC2 reads them from Secrets Manager.
 
@@ -42,12 +42,12 @@ the `deploy-prod` job references `environment: production`.
 
 ## 2. EC2 configuration (one-time)
 
-1. Ubuntu 22.04/24.04, Docker Engine + Compose plugin, AWS CLI v2, `git`, `python3`.
+1. Ubuntu 22.04/24.04, Docker Engine + Compose plugin, AWS CLI v2, `python3`. `git` is NOT needed.
 2. Attach an **IAM instance profile** with only:
    `secretsmanager:GetSecretValue` on the backend secret (see §3).
    No long-lived AWS keys on EC2.
-3. Clone the repo to `$EC2_PROJECT_DIR`, checkout `main`, ensure
-   `docker-compose.prod.yml` + `deploy/deploy.sh` exist.
+3. Create the deploy dir (CI creates it too, but set ownership once):
+   `sudo mkdir -p /opt/smartroute/deploy && sudo chown -R ubuntu:ubuntu /opt/smartroute`.
 4. Security Groups: open `80/443` (NPM), restrict `22` (SSH) and `81` (NPM admin)
    to admin IPs. Do **not** open `8000` or DB ports publicly.
 5. First run: `docker login` is **not** needed for public repos; for private
@@ -105,8 +105,9 @@ aws secretsmanager create-secret \
 2. `docker-push`: Buildx builds backend (`./backend/Dockerfile`) and frontend
    (`./frontend/Dockerfile` + prod `VITE_*` args), pushes
    `: <short-sha>` and `:latest`. Deploy uses the SHA only.
-3. `deploy-prod` (env `production`, concurrency `production`): SSH to EC2,
-   `git fetch/pull main`, `./deploy/deploy.sh <short-sha>`:
+3. `deploy-prod` (env `production`, concurrency `production`): SCP
+   `docker-compose.prod.yml` + `deploy/deploy.sh` from THAT commit to
+   `$EC2_DEPLOY_DIR`, then SSH `./deploy/deploy.sh <short-sha>`:
    pull exact images → fetch secret JSON → write `deploy/.env.prod` (0600) →
    `docker run --rm ... alembic upgrade head` (new image) →
    `docker compose -f docker-compose.prod.yml up -d` →
@@ -123,19 +124,19 @@ aws secretsmanager create-secret \
   (pulled, never rebuilt) and re-checks health. The DB stays migrated;
   old code is expected to tolerate additive columns (the repo's pattern).
   Destructive migrations need a manual, tested backward plan — do not auto-deploy those.
-- Manual rollback: `DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<prev-sha> ./deploy/deploy.sh <prev-sha>`
-  or `DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<prev-sha> docker compose -f docker-compose.prod.yml up -d`.
+- Manual rollback: `DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<prev-sha> /opt/smartroute/deploy/deploy.sh <prev-sha>`
+  or `DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<prev-sha> docker compose -f /opt/smartroute/docker-compose.prod.yml up -d`.
 
 ## 6. First production deployment (safe order)
 
 ```bash
 # 1. Create Secrets Manager JSON secret, Docker Hub repos, GitHub secrets/vars above.
-# 2. Merge to main (current dev branch is `features`):
+# 2. Run the EC2 one-time setup: deploy dir + IAM check (no git clone).
+#    sudo mkdir -p /opt/smartroute/deploy && sudo chown -R ubuntu:ubuntu /opt/smartroute
+# 3. Merge to main (current dev branch is `features`):
 git checkout main && git merge features && git push origin main
-# 3. Watch Actions → CI/CD → docker-push → deploy-prod.
-# 4. On EC2 (if SSH deploy not yet wired), run manually once:
-cd ~/Smartroute && git pull --ff-only origin main
-export DOCKERHUB_NAMESPACE=<ns> AWS_REGION=<region>
-./deploy/deploy.sh <short-sha-from-CI>
+# 4. Watch Actions → CI/CD → docker-push → deploy-prod.
 # 5. Configure NPM hosts, verify https app + api docs, then leave CI to handle the rest.
+# 6. If ~/Smartroute exists from the old flow, remove it after the first green
+#    Git-free deploy: rm -rf ~/Smartroute (nothing reads it anymore).
 ```
