@@ -26,7 +26,10 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/health || exit 1"]
+      # NOTE: 127.0.0.1, not localhost. In nginx:alpine, localhost resolves
+      # to ::1 (IPv6) but nginx.conf listens IPv4-only (listen 80), so a
+      # localhost probe gets "Connection refused" while 127.0.0.1 returns 200.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
