@@ -2,7 +2,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import * as maplibregl from 'maplibre-gl'
+import { setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
+
+setWorkerUrl(workerUrl)
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 const STADIA_STYLE_URL = `${API_BASE_URL}/maps/stadia/style.json`
