@@ -67,6 +67,14 @@ STADIA_MAP_STYLE_PATH = os.getenv(
     "STADIA_MAP_STYLE_PATH", "styles/alidade_smooth.json"
 ).strip().lstrip("/")
 
+# Rate limiting / abuse protection (application level; see utils/rate_limit.py).
+# These guard endpoints and downstream services per client — they are NOT DDoS
+# protection; volumetric attacks must be absorbed at the proxy/edge layer.
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+RATE_LIMIT_DEFAULT_PER_MINUTE = int(os.getenv("RATE_LIMIT_DEFAULT_PER_MINUTE", "120"))
+# JSON-only API: cap request bodies before they are buffered.
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "1048576"))  # 1 MiB
+
 # Razorpay payments. KEY_SECRET/WEBHOOK_SECRET must NEVER reach the frontend.
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "").strip()
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "").strip()

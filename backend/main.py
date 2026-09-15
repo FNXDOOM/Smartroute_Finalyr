@@ -13,6 +13,7 @@ from routers import analytics
 from routers import jobs
 from routers import payments
 from config import ALLOWED_ORIGINS, APP_ENV, ENABLE_TRACKING_BROADCAST, ENABLE_BACKGROUND_JOBS_IN_API
+from utils.rate_limit import RateLimitBodyGuardMiddleware
 from services.background_jobs import start_background_jobs, stop_background_jobs
 
 logging.basicConfig(
@@ -36,6 +37,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
+
+# Registered LAST so it wraps everything and executes FIRST: request-size cap
+# and per-IP rate limiting run before any auth, DB, or external API work.
+# NOT DDoS protection — volumetric attacks are handled at the proxy/edge.
+app.add_middleware(RateLimitBodyGuardMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

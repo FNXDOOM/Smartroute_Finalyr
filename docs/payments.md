@@ -197,6 +197,12 @@ Expected behaviour:
 | `POST /payments/create-order` | Bearer JWT | Validate ride + compute fare server-side, create DB row + Razorpay Order, return public checkout payload |
 | `POST /payments/verify` | Bearer JWT (owner/admin) | Verify checkout signature + Razorpay API cross-check; mark `paid` exactly once; idempotent |
 | `POST /payments/webhook` | Signature only | Verified webhook receiver: `payment.captured` / `payment.failed` / `refund.processed`, idempotent |
+
+Rate limits (application-level, per-IP + per-user; see `utils/rate_limit.py`):
+`create-order` ≤10/10min per IP and ≤15/10min per user; `verify` ≤20/10min per IP
+and ≤30/10min per user. The webhook is deliberately exempt from IP throttling —
+its `X-Razorpay-Signature` verification is the access control, and throttling it
+could delay legitimate Razorpay deliveries.
 | `GET /payments/mine` | Bearer JWT | Current user's payments (no secrets) |
 | `GET /payments/{payment_id}` | Bearer JWT (owner/admin) | Single payment |
 

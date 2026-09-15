@@ -40,10 +40,18 @@ from services.razorpay_service import (
     verify_webhook_signature,
 )
 from utils.auth_utils import get_current_user
+from utils.rate_limit import enforce_user_rate_limit
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Per-USER caps layered on top of the per-IP middleware limits: a shared-NAT
+# attacker must not be able to exhaust Razorpay order creation by consuming
+# the whole IP budget. These are cheap in-memory checks; the user is already
+# authenticated by the time they run.
+_limit_orders_per_user = enforce_user_rate_limit("payments_create_order", 15, 600)
+_limit_verify_per_user = enforce_user_rate_limit("payments_verify", 30, 600)
 
 # Injected in tests. Production default reads config lazily at call time.
 _client: Optional[RazorpayClient] = None
@@ -173,7 +181,12 @@ def _fire_payment_notification(db: Session, payment: Payment, outcome: str) -> N
         )
 
 
-@router.post("/create-order", response_model=PaymentCheckoutResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/create-order",
+    response_model=PaymentCheckoutResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(_limit_orders_per_user)],
+)
 def create_payment_order(
     payment_in: PaymentCreate,
     db: Session = Depends(get_db),
@@ -311,7 +324,11 @@ def create_payment_order(
     )
 
 
-@router.post("/verify", response_model=PaymentVerifyResponse)
+@router.post(
+    "/verify",
+    response_model=PaymentVerifyResponse,
+    dependencies=[Depends(_limit_verify_per_user)],
+)
 def verify_payment(
     verify_in: PaymentVerifyRequest,
     db: Session = Depends(get_db),
