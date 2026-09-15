@@ -10,6 +10,7 @@ from models.job_run import JobRun
 from models.demand_snapshot import DemandSnapshot
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 from models.notification import Notification
+from models.payment import Payment
 
 __all__ = [
     "User",
@@ -24,4 +25,5 @@ __all__ = [
     "DemandSnapshot",
     "VehicleRebalanceSuggestion",
     "Notification",
+    "Payment",
 ]

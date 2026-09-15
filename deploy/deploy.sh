@@ -50,6 +50,10 @@
 #   SecretString (JSON object, keys = env var names). Required keys:
 #     DATABASE_URL, CLERK_JWKS_URL, CLERK_ISSUER, CLERK_SECRET_KEY,
 #     STADIA_API_KEY, LOCAL_JWT_SECRET, ALLOWED_ORIGINS, CLERK_AUTHORIZED_PARTIES
+#   Razorpay (required for payment endpoints to return 200; rzp_test_* in
+#     staging, rzp_live_* in production):
+#     RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET
+#     (KEY_SECRET/WEBHOOK_SECRET are backend-only; never in frontend build args)
 #   Optional keys (sane prod defaults applied if absent):
 #     APP_ENV, AUTH_PROVIDER, CLERK_AUDIENCE, CLERK_ALLOW_NATIVE_CLIENTS,
 #     LOCAL_JWT_EXPIRES_MINUTES, LOG_LEVEL, ENABLE_BACKGROUND_JOBS_IN_API,
@@ -258,6 +262,14 @@ required = [
     "ALLOWED_ORIGINS",
     "CLERK_AUTHORIZED_PARTIES",
 ]
+# Razorpay payment secrets. Required so payment endpoints are not silently
+# broken (they would otherwise 503 on every request). Backend-only: never
+# add RAZORPAY_* to frontend build args or VITE_* variables.
+razorpay_required = [
+    "RAZORPAY_KEY_ID",
+    "RAZORPAY_KEY_SECRET",
+    "RAZORPAY_WEBHOOK_SECRET",
+]
 defaults = {
     "APP_ENV": "production",
     "AUTH_PROVIDER": "clerk",
@@ -292,6 +304,15 @@ if not isinstance(data, dict):
 missing = [k for k in required if not str(data.get(k, "")).strip()]
 if missing:
     print(f"ERROR: secret {sys.argv[0]} missing required keys: {', '.join(missing)}", file=sys.stderr)
+    sys.exit(1)
+missing_rzp = [k for k in razorpay_required if not str(data.get(k, "")).strip()]
+if missing_rzp:
+    print(
+        "ERROR: Razorpay payment keys missing: " + ", ".join(missing_rzp)
+        + ". Add them to the backend secret (rzp_live_* keys in production). "
+        + "They must never be added to frontend build args.",
+        file=sys.stderr,
+    )
     sys.exit(1)
 if str(data.get("LOCAL_JWT_SECRET", "")).strip() in ("", "dev-only-change-me-in-production"):
     print("ERROR: LOCAL_JWT_SECRET is missing or still the dev placeholder.", file=sys.stderr)

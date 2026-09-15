@@ -34,7 +34,8 @@ cd backend
 pip install -r ../requirements.txt
 cp .env.example .env
 # Edit .env with DATABASE_URL, CLERK_JWKS_URL, CLERK_ISSUER, CLERK_SECRET_KEY,
-# LOCAL_JWT_SECRET, and STADIA_API_KEY (see backend/.env.example)
+# LOCAL_JWT_SECRET, STADIA_API_KEY, and the RAZORPAY_* payment keys
+# (see backend/.env.example and docs/payments.md)
 
 # Run migrations
 alembic -c ../alembic.ini upgrade head
@@ -99,6 +100,7 @@ Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartroutea
 | ML | XGBoost demand model (`ml/models/demand_model.pkl`, heuristic fallback if absent) |
 | Maps | Stadia Maps via authenticated MapLibre proxy (`/maps/stadia/*`, `/geocode/*`, `/routing/*`), OSMnx road graph; all geo endpoints India-guarded (`is_india_location`) |
 | Isolation | `ride_mode` (`live` \| `presentation_demo`) + `demo_run_id` on rides/stops/runs/plans/vehicles (Alembic `0002_demo_scope`); `PresentationDemoView` keeps demos off live fleet |
+| Payments | Razorpay Checkout (Standard) — server-created Orders, HMAC-SHA256 signature verification, verified webhooks; see [`docs/payments.md`](docs/payments.md) |
 | Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications (bearer subprotocol only; `?token=` rejected with 4401) |
 
 ---
@@ -367,6 +369,14 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 - `POST /jobs/run/auto-dispatch` — full cluster → VRP → assign pipeline (`?mode=live|presentation_demo`)
 - `POST /jobs/run/clustering` — same `mode`/`demo_run_id` query support
 
+### Payments (Razorpay)
+- `POST /payments/create-order` — authenticated user; server-side fare + Razorpay Order; returns public checkout payload (Key ID, order ID, amount) only
+- `POST /payments/verify` — verifies the checkout signature server-side and marks the payment `paid` (idempotent)
+- `POST /payments/webhook` — signature-verified Razorpay webhook (`payment.captured` / `payment.failed` / `refund.processed`)
+- `GET /payments/mine` / `GET /payments/{id}` — current user's payments (owner/admin scoped)
+
+Full setup, test cards, webhook config, and security model: [`docs/payments.md`](docs/payments.md).
+
 ### Real-Time
 - `WS /tracking/ws` with the `bearer` subprotocol — live vehicle tracking stream (`?token=` query rejected with 4401; scoped: admin=fleet, driver=own vehicle, passenger=own ride vehicle)
 - `WS /notifications/ws` with the `bearer` subprotocol — per-user notification stream
@@ -384,6 +394,7 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 - **Driver Portal isolation**: The Driver Portal login form uses Clerk's headless `useSignIn()` — Google OAuth buttons are never rendered. Social logins are architecturally excluded, not just hidden.
 - **Role enforcement is defence-in-depth**: Roles are checked at three layers — frontend route guard, FastAPI `require_roles()` dependency, and Clerk `publicMetadata` claims in the JWT.
 - **`driver_status` guard**: Even if a user has `role=driver`, driver-only API endpoints reject requests if `driver_status` is not `active`.
+- **Payments**: the Razorpay Key Secret and Webhook Secret are backend-only (`backend/.env` / Secrets Manager). Fares are computed server-side; every payment is marked `paid` only after server-side signature verification; webhooks are signature-verified and idempotent. See [`docs/payments.md`](docs/payments.md).
 - Tracking data is scoped server-side: passengers see only their assigned ride vehicle, drivers see only their assigned vehicle, and admins see the fleet.
 - Admins assign a driver to a vehicle with `PATCH /vehicles/{vehicle_id}`:
 
@@ -575,7 +586,7 @@ backend/
 ├── models/              # SQLAlchemy ORM models (12 tables)
 ├── routers/             # API endpoint groups (auth, rides, cluster, route, vehicle, tracking, notifications, analytics, predict, jobs, routing, geocode, maps)
 ├── schemas/             # Pydantic request/response validators
-├── services/            # Business logic (clustering, routing/vrp_solver, assignment, prediction, stadia_client, clerk_service, background_jobs, etc.)
+├── services/            # Business logic (clustering, routing/vrp_solver, assignment, prediction, stadia_client, clerk_service, razorpay_service, background_jobs, etc.)
 ├── utils/               # Helper functions (auth_utils, geo [haversine + India guard], ride_scope [live/demo])
 ├── config.py            # Settings and environment variables
 ├── database.py          # SQLAlchemy engine and session (+ PortableGeometry)
@@ -602,6 +613,8 @@ deploy/
 ├── deploy.sh            # EC2 deploy: pull SHA → Secrets Manager → migrate → up → healthcheck → rollback
 └── README.md            # GitHub/EC2/Secrets Manager setup + first-deploy + rollback
 .github/workflows/ci-cd.yml  # PR lint/test/build; main pushes images + deploys to EC2
+
+docs/                    # Feature guides (payments.md — Razorpay setup & operations)
 
 architecture/            # Detailed technical documentation
 ├── system-design.md
