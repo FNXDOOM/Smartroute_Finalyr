@@ -7,6 +7,7 @@ import {
 import { ridesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
 import { useWebSocket } from '../hooks/useWebSocket.js'
 import AppMap from '../components/AppMap'
+import RazorpayPayment from '../components/RazorpayPayment'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -462,13 +463,23 @@ export default function PassengerView({ view, setView, toast }) {
                 )}
 
                 {isRideActive ? (
-                  <div className="flex gap-2">
-                    <Button className="flex-1" size="sm" onClick={() => setView('tracking')}>
-                      <Navigation className="h-3.5 w-3.5" /> Fullscreen tracking
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={handleCancel} className="text-destructive hover:text-destructive">
-                      Cancel
-                    </Button>
+                  <div className="flex flex-col gap-2">
+                    {/* Razorpay fare payment — backend-verified; success only
+                        after POST /payments/verify confirms it. */}
+                    <RazorpayPayment
+                      rideRequest={activeRide}
+                      rideOptionId={activeRide.ride_option_id || selected}
+                      rideOptionName={activeRide.ride_option_name || 'ride fare'}
+                      onPaid={() => toast('success', 'Payment successful!', 'Your ride fare has been received.')}
+                    />
+                    <div className="flex gap-2">
+                      <Button className="flex-1" size="sm" onClick={() => setView('tracking')}>
+                        <Navigation className="h-3.5 w-3.5" /> Fullscreen tracking
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleCancel} className="text-destructive hover:text-destructive">
+                        Cancel
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex flex-col gap-1.5">

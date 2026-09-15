@@ -929,6 +929,94 @@ Proxied tiles/sprites/glyphs (`Cache-Control: public, max-age=86400`; JSON bodie
 
 ---
 
+## Payments `/payments` (Razorpay)
+
+Full setup guide, test cards, webhook config, and the security model:
+[`../docs/payments.md`](../docs/payments.md).
+
+### `POST /payments/create-order`
+Create a Razorpay Order for a ride fare. The amount is computed **server-side**
+(fare table × backend route distance, in paise) — the client only supplies
+`ride_request_id` + `ride_option_id` (`swift-x`, `swift-xl`, `swift-lux`,
+`swift-moto`).
+
+**Auth required:** Yes (any role)
+
+**Request body:**
+```json
+{ "ride_request_id": 12, "ride_option_id": "swift-x" }
+```
+
+**Responses:**
+- `201` — Public checkout payload (Key ID + order ID + amount; the Key Secret is never included):
+```json
+{
+  "payment_id": 1,
+  "internal_order_id": 1,
+  "razorpay_key_id": "rzp_test_...",
+  "razorpay_order_id": "order_Ny3f...",
+  "amount": 1500,
+  "currency": "INR",
+  "customer_name": "Ananya",
+  "customer_email": "ananya@example.com",
+  "customer_phone": "+91...",
+  "ride_request_id": 12,
+  "ride_option_name": "swift-x"
+}
+```
+- `400` — Invalid ride option
+- `404` — Ride not found (also returned for other users' rides)
+- `409` — Ride already paid
+- `502` — Razorpay unavailable (payment row recorded `failed`)
+- `503` — Payments not configured (`RAZORPAY_*` env missing)
+
+### `POST /payments/verify`
+Verify the Checkout handler signature server-side and mark the payment
+`paid` exactly once. Idempotent for duplicates.
+
+**Auth required:** Yes (payment owner or admin)
+
+**Request body:**
+```json
+{
+  "razorpay_order_id": "order_Ny3f...",
+  "razorpay_payment_id": "pay_GAc...",
+  "razorpay_signature": "..."
+}
+```
+
+Server-side steps: ownership check → signature
+(`HMAC-SHA256(order_id|payment_id, key_secret)`) → Razorpay API cross-check
+(order/amount/currency/captured) → commit `paid`.
+
+**Responses:**
+- `200` — `{ "payment_id": 1, "status": "paid", "verified": true, "ride_request_id": 12, "message": "Payment verified" }` (duplicate calls return `"Payment already verified"`)
+- `400` — Signature verification failed / order mismatch / amount mismatch / payment not captured (payment recorded `failed`)
+- `403` — Not your payment
+- `404` — No payment for this order
+- `409` — Terminal state (`failed`/`refunded`)
+
+### `POST /payments/webhook`
+Razorpay webhook receiver. `X-Razorpay-Signature` is verified against the
+**raw body** with `RAZORPAY_WEBHOOK_SECRET` before parsing. Handles
+`payment.captured`, `payment.failed`, `refund.processed`; unknown events are
+acknowledged; duplicate deliveries are no-ops; `paid` is never downgraded.
+
+**Auth required:** None by design — the signature is the authentication.
+Configure in Dashboard → Settings → Webhooks (see `docs/payments.md`).
+
+**Responses:**
+- `200` — `{ "received": true }`
+- `400` — Invalid signature or malformed payload
+
+### `GET /payments/mine` / `GET /payments/{payment_id}`
+List the current user's payments / fetch one payment (owner or admin).
+No Razorpay secrets in any payload.
+
+**Auth required:** Yes (owner/admin for single fetch)
+
+---
+
 ## HTTP Status Codes Used
 
 | Code | Meaning |

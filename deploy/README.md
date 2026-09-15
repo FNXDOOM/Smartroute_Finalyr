@@ -74,9 +74,18 @@ Required (deploy aborts if missing/empty):
   "STADIA_API_KEY": "<stadia-key>",
   "LOCAL_JWT_SECRET": "<64+ random chars>",
   "ALLOWED_ORIGINS": "https://app.example.com",
-  "CLERK_AUTHORIZED_PARTIES": "https://app.example.com"
+  "CLERK_AUTHORIZED_PARTIES": "https://app.example.com",
+  "RAZORPAY_KEY_ID": "rzp_live_...",
+  "RAZORPAY_KEY_SECRET": "<razorpay-key-secret>",
+  "RAZORPAY_WEBHOOK_SECRET": "<razorpay-webhook-secret>"
 }
 ```
+
+Razorpay keys are backend-only: the deploy validation fails if they are
+missing, and they must never be added to frontend build args (`VITE_*`). Use
+`rzp_test_*` credentials for staging and `rzp_live_*` for production — see
+[`docs/payments.md`](../docs/payments.md) for setup, webhooks, and test-mode
+payment flow.
 
 Optional (defaults in `deploy.sh` if absent):
 `APP_ENV` (forced to `production`), `AUTH_PROVIDER`, `CLERK_AUDIENCE`,

@@ -1,6 +1,6 @@
 # Database Schema
 
-12 tables. Supabase PostgreSQL + PostGIS in production, SQLite only when explicitly configured for local development.
+13 tables. Supabase PostgreSQL + PostGIS in production, SQLite only when explicitly configured for local development.
 
 Live vs presentation isolation: `ride_requests`, `cluster_runs`, `route_plans`, `virtual_stops`, and `vehicles` carry `ride_mode` (`live` | `presentation_demo`, indexed) + `demo_run_id` (nullable, indexed) — see Alembic `0002_demo_scope` and `backend/utils/ride_scope.py`. Live queries default to `mode=live`.
 
@@ -31,7 +31,9 @@ users ────────────────────────�
   │                                                       │
   │                                                       └── demand_snapshots
   │
-  └── notifications (user_id FK)
+  ├── notifications (user_id FK)
+  │
+  └── payments (user_id FK, ride_request_id FK nullable)
 ```
 
 ---
@@ -333,6 +335,35 @@ Advisory suggestions for repositioning idle vehicles to high-demand zones.
 
 ---
 
+---
+
+## Table: `payments`
+
+Razorpay payment records — the server-side source of truth for payment state
+(Alembic `0003_payments`). See [`../docs/payments.md`](../docs/payments.md).
+
+| Column | Type | Constraints | Notes |
+|---|---|---|---|
+| `id` | INTEGER | PK, index | Internal order ID (also sent to Checkout as receipt `payment-{id}`) |
+| `user_id` | INTEGER | FK → users.id, NOT NULL, index | Set from the authenticated principal, never from the client |
+| `ride_request_id` | INTEGER | FK → ride_requests.id, nullable, index | Set when paying a ride fare |
+| `purpose` | VARCHAR | NOT NULL, default `ride_fare` | `ride_fare` (wallet_topup reserved) |
+| `amount` | INTEGER | NOT NULL | **Paise**, computed server-side (fare table × backend route distance, clamped to the tier band) |
+| `currency` | VARCHAR | NOT NULL, default `INR` | |
+| `status` | VARCHAR | NOT NULL, default `created`, index | `created` / `pending` / `paid` / `failed` / `refunded` |
+| `razorpay_order_id` | VARCHAR | nullable, index | From Razorpay Orders API; verify looks up by this |
+| `razorpay_payment_id` | VARCHAR | nullable | Stored only after successful verification/webhook |
+| `verified` | INTEGER | NOT NULL, default 0 | 1 only after server-side signature verification |
+| `failure_reason` | VARCHAR | nullable | `signature_verification_failed`, `amount_mismatch`, `order_mismatch`, `payment_not_captured`, `razorpay_payment_failed`, `razorpay_order_creation_failed` |
+| `metadata` (`razorpay_metadata` attr) | JSON | nullable | Webhook/verify event context — no card data, no secrets |
+| `created_at` | TIMESTAMPTZ | server default NOW() | |
+| `updated_at` | TIMESTAMPTZ | server default NOW() | |
+
+**State flow:** `created → pending → paid`, `pending → failed`, `paid → refunded`.
+A `paid` payment is never downgraded; duplicate webhooks/verifications are no-ops.
+
+---
+
 ## PortableGeometry Type
 
 The `PortableGeometry` custom SQLAlchemy type handles the PostgreSQL/SQLite difference:
@@ -356,6 +387,7 @@ All geospatial computation (distance, clustering, snapping) is done in Python, n
 | `vehicles` | id, license_plate, driver_user_id, ride_mode, demo_run_id |
 | `tracking_events` | id, vehicle_id, ride_request_id, route_plan_id, created_at |
 | `notifications` | id, user_id, notification_type, related_entity_id, created_at |
+| `payments` | id, user_id, ride_request_id, status, razorpay_order_id |
 | `job_runs` | id, job_name |
 | `demand_snapshots` | id, job_run_id, h3_index |
 | `vehicle_rebalance_suggestions` | id, job_run_id, vehicle_id, target_h3_index |

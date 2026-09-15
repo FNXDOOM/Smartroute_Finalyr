@@ -163,6 +163,20 @@ export const predictApi = {
     (await client.get('/predict/demand', { params: { latitude: lat, longitude: lng } })).data,
 };
 
+// Payments (Razorpay)
+// NOTE: checkout responses contain only PUBLIC values (key id, order id,
+// amount). The Razorpay Key Secret never reaches this client; payment state
+// is confirmed only via the backend /payments/verify response.
+export const paymentsApi = {
+  createOrder: async (payload) => (await client.post('/payments/create-order', payload)).data,
+  verify: async (razorpayResponse) => (await client.post('/payments/verify', {
+    razorpay_order_id: razorpayResponse.razorpay_order_id,
+    razorpay_payment_id: razorpayResponse.razorpay_payment_id,
+    razorpay_signature: razorpayResponse.razorpay_signature,
+  })).data,
+  mine: async () => (await client.get('/payments/mine')).data,
+};
+
 // Jobs
 export const jobsApi = {
   status: async () => (await client.get('/jobs/status')).data,

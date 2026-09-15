@@ -66,12 +66,27 @@ STADIA_TILES_URL = os.getenv(
 STADIA_MAP_STYLE_PATH = os.getenv(
     "STADIA_MAP_STYLE_PATH", "styles/alidade_smooth.json"
 ).strip().lstrip("/")
+
+# Razorpay payments. KEY_SECRET/WEBHOOK_SECRET must NEVER reach the frontend.
+RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "").strip()
+RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "").strip()
+RAZORPAY_WEBHOOK_SECRET = os.getenv("RAZORPAY_WEBHOOK_SECRET", "").strip()
+RAZORPAY_API_BASE = os.getenv(
+    "RAZORPAY_API_BASE", "https://api.razorpay.com/v1"
+).rstrip("/")
 _raw_authorized_parties = os.getenv("CLERK_AUTHORIZED_PARTIES", "")
 CLERK_AUTHORIZED_PARTIES = [
     origin.strip().rstrip("/")
     for origin in _raw_authorized_parties.split(",")
     if origin.strip()
 ]
+
+if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+    print(
+        "WARNING: RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET not set; "
+        "payment endpoints will return 503 until configured.",
+        file=sys.stderr,
+    )
 
 if AUTH_PROVIDER == "clerk" and (not CLERK_JWKS_URL or not CLERK_ISSUER):
     print(

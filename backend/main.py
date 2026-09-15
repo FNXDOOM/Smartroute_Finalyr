@@ -11,6 +11,7 @@ from database import engine
 from routers import auth, rides, cluster, route, routing, geocode, maps, vehicle, predict, tracking, notifications
 from routers import analytics
 from routers import jobs
+from routers import payments
 from config import ALLOWED_ORIGINS, APP_ENV, ENABLE_TRACKING_BROADCAST, ENABLE_BACKGROUND_JOBS_IN_API
 from services.background_jobs import start_background_jobs, stop_background_jobs
 
@@ -86,6 +87,7 @@ app.include_router(tracking.router, prefix="/tracking", tags=["Tracking"])
 app.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
+app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 
 
 @app.get("/")
