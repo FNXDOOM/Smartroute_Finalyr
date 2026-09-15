@@ -143,6 +143,38 @@ aws secretsmanager create-secret \
 - Manual rollback: `DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<prev-sha> /opt/smartroute/deploy/deploy.sh <prev-sha>`
   or `DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<prev-sha> docker compose -f /opt/smartroute/docker-compose.prod.yml up -d`.
 
+## 5b. Abuse protection / rate limiting (production)
+
+Three layers, each with a distinct job (application limits do NOT stop DDoS):
+
+1. **API app (FastAPI, `utils/rate_limit.py`)** — per-IP sliding-window limits
+   + 1 MiB body cap (413) on every route; stricter per-endpoint budgets for
+   `/auth/login` (15/5min), `/auth/register` (5/h), `/predict`, `/cluster/*`,
+   `/route/optimize`, `/routing`, `/geocode`, `/maps/stadia`, `/rides/*` batch,
+   `/jobs/run`; additional per-USER caps on `/payments/create-order` (15/10min)
+   and `/payments/verify` (30/10min). `/payments/webhook`, `/health/*` and CORS
+   preflight are exempt; webhook auth = X-Razorpay-Signature. 429s are
+   project-shape (`{"detail": ...}`) with `Retry-After` and `X-RateLimit-*`
+   headers. Tune via `RATE_LIMIT_ENABLED`, `RATE_LIMIT_DEFAULT_PER_MINUTE`,
+   `MAX_BODY_BYTES` (deploy/.env.prod or Secrets Manager).
+2. **Nginx Proxy Manager (edge proxy)** — only published ports; owns TLS and
+   connection exposure. Configure once in the NPM UI (port 81) per proxy host:
+   Advanced → custom nginx config:
+   `limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;` in the
+   http-level custom config, then `limit_req zone=api burst=40 nodelay;`,
+   `limit_conn_per_ip 40;` and `proxy_read_timeout 60s;` in the api host.
+   These shed volumetric floods before they reach uvicorn.
+3. **EC2 security group** — allows 80/443 + SSH only. It is access control,
+   NOT DDoS mitigation. Volumetric attacks must be handled by a cloud WAF/
+   CDN (e.g. Cloudflare) or AWS Shield Standard in front of EC2; add one if
+   the deployment becomes a target. App- and proxy-level limits cannot stop
+   traffic that saturates the instance's network.
+
+Note: per-IP limits live in the api container's memory. The stack ships
+exactly one `api` replica (worker is a separate non-HTTP process), so state
+is correct today. If `api` is ever scaled to N replicas, effective limits
+multiply by N — move the store to a shared backend (Redis) first.
+
 ## 6. First production deployment (safe order)
 
 ```bash
