@@ -158,12 +158,19 @@ Three layers, each with a distinct job (application limits do NOT stop DDoS):
    headers. Tune via `RATE_LIMIT_ENABLED`, `RATE_LIMIT_DEFAULT_PER_MINUTE`,
    `MAX_BODY_BYTES` (deploy/.env.prod or Secrets Manager).
 2. **Nginx Proxy Manager (edge proxy)** — only published ports; owns TLS and
-   connection exposure. Configure once in the NPM UI (port 81) per proxy host:
-   Advanced → custom nginx config:
-   `limit_req_zone $binary_remote_addr zone=api:10m rate=20r/s;` in the
-   http-level custom config, then `limit_req zone=api burst=40 nodelay;`,
-   `limit_conn_per_ip 40;` and `proxy_read_timeout 60s;` in the api host.
-   These shed volumetric floods before they reach uvicorn.
+   connection exposure. Paste-ready per-host configs live in `deploy/nginx/`
+   (deliberately zoneless — see below):
+   - `npm-api-host-advanced.conf` → paste into the api proxy host's
+     Advanced tab: 1 MiB body cap, body/header/keepalive/send timeouts.
+   - `npm-frontend-host-advanced.conf` → paste into the frontend host's
+     Advanced tab: same timeouts.
+   These are timeouts and body caps only. Edge-level request-rate limiting
+   (`limit_req`/`limit_conn`) needs http-level zones that NPM's Advanced tab
+   cannot define (they'd require a custom http_top include via docker exec);
+   this deployment relies on the FastAPI limiter (layer 1) for request
+   budgets instead. If floods ever become a problem, add `limit_req_zone` +
+   `limit_req` at that point — rejected clients should get 429 via
+   `limit_req_status 429;`.
 3. **EC2 security group** — allows 80/443 + SSH only. It is access control,
    NOT DDoS mitigation. Volumetric attacks must be handled by a cloud WAF/
    CDN (e.g. Cloudflare) or AWS Shield Standard in front of EC2; add one if
