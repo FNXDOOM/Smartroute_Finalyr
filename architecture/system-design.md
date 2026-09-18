@@ -111,21 +111,27 @@ This is the full lifecycle of a passenger ride from request to completion.
          │
          ▼
     Build distance matrix — 3-tier cascade in vrp_solver.py:
-      1) Stadia road matrix (sources/targets ≤25 each)
+      1) Stadia road matrix (chunked past the 25x25 cap, blocks cached by coordinate)
       2) local OSM road graph (Dijkstra over build_road_graph radius)
       3) haversine fallback (always available)
          │
          ▼
-    OR-Tools CVRP Solver (per-vehicle capacities, PATH_CHEAPEST_ARC + GUIDED_LOCAL_SEARCH, 10 s limit)
-    → respects vehicle capacities
-    → assigns stop sequences to minimize total distance
+    OR-Tools shared-ride routing (both called through shared_route_builder.py):
+      solve_shared_ride_pdp  — depot + one pickup node per pooled stop + one destination
+                               node per ride, paired; a signed load dimension, so a seat is
+                               free again at its drop-off; open-ended, ends at the last drop
+      solve_vrp              — pickups-only CVRP fallback when no PDP route exists
+                               (routes close back at the depot)
+      PATH_CHEAPEST_ARC + GUIDED_LOCAL_SEARCH, 10-15 s limit, per-vehicle capacities
          │
          ▼
-    Best-effort geometry enrichment via Stadia route_many (routing_provider = "stadia" | "local-road-matrix")
+    Best-effort per-leg geometry enrichment via Stadia route_many
+    (geometry + one polyline per consecutive waypoint pair; routing_provider =
+     "stadia" | "local-road-matrix", problem = "pdp" | "cvrp")
          │
          ▼
     For each route solution:
-      RoutePlan saved (route_id, vehicle_id, distance, duration, metadata + geometry/maneuvers)
+      RoutePlan saved (route_id, vehicle_id, distance, duration, metadata + geometry/legs/maneuvers)
       RouteWaypointRecords saved (ordered stop sequence)
       Vehicle updated (assigned_route_id, status = "active")
       RideRequests updated (status = "assigned")

@@ -127,29 +127,48 @@ If OSMnx is not installed or the download fails, `snap_to_road` returns the orig
 
 ---
 
-## 5. OR-Tools CVRP Solver
+## 5. OR-Tools Shared-Ride Solver (pickup-and-delivery)
 
 **File:** `backend/services/routing/vrp_solver.py`  
+**Caller:** `backend/services/routing/shared_route_builder.py`  
 **Library:** `ortools` (Google)
 
 ### What it does
-Solves the Capacitated Vehicle Routing Problem (CVRP): given a set of virtual stops with passenger demands, and a fleet of vehicles with capacity constraints, find the optimal assignment of stops to vehicles and the optimal visit order — minimizing total travel distance.
+A vehicle pool is a **pickup-and-delivery problem**, not pickups-only: every pooled ride
+request contributes a destination node paired with the boarding stop its passenger walks
+to. `solve_shared_ride_pdp` assigns boarding stops *and* drop-offs to vehicles and orders
+the whole run, so a pooled route can serve more passengers in one trip than the vehicle's
+capacity allows at any single moment — a seat is free again the moment its rider alights.
 
 ### Problem formulation
 ```
-Depot: starting and ending point for all routes
-Stops: virtual stops with passenger_count as demand
-Vehicles: each with capacity constraint
+Nodes:    depot (index 0)
+          + one pickup node per pooled boarding stop (demand = riders there)
+          + one destination node per ride request (demand 1, pair_index → its pickup)
+Vehicles: each with its own capacity constraint
+Load:     a signed dimension — +n at a pickup, -1 per rider dropped off
 
 Minimize: total distance traveled by all vehicles
-Subject to: each stop visited exactly once
-            vehicle load never exceeds capacity
-            all routes start and end at depot
+Subject to: each node visited exactly once
+            load never exceeds capacity and never goes below zero
+            a destination is only visited after its own pickup (AddPickupAndDelivery)
+            the route is open-ended: it ends at the last drop-off, not back at the depot
 ```
+
+### CVRP fallback
+When no pickup-and-delivery solution exists — e.g. more riders pool into one run than
+there are seats — the builder retries with `solve_vrp`, the pickups-only Capacitated VRP
+this pipeline used before: stops carry `passenger_count` as demand, capacity is consumed
+permanently, and every route starts *and* ends at the depot. The fallback's closing hop
+back to the hub is persisted as a `depot` waypoint (it is not a solver stop).
+`route_plans.route_metadata.problem` records which model ran: `pdp` | `cvrp`.
 
 ### Distance matrix
 3-tier cascade in `build_stadia_distance_matrix` → `build_road_distance_matrix` → `build_distance_matrix`:
-1. Stadia road matrix when all sides have ≤25 points and `STADIA_API_KEY` is set (distances converted km → m)
+1. Stadia road matrix when `STADIA_API_KEY` is set (distances converted km → m). The
+   endpoint caps a request at 25×25, so a larger node list is fetched in blocks
+   (`_matrix_block`), and blocks are cached by coordinate (`_fetch_matrix_block`) —
+   failures are deliberately *not* cached, so a transient error can be retried
 2. Local OSM road graph (Dijkstra from `build_road_graph` radius, `max(3000, span*1.35)` m) — per-pair fallback keeps haversine where a node is unreachable
 3. Haversine great-circle fallback (always available):
 ```python
@@ -170,11 +189,18 @@ params.time_limit.seconds = 10  # hard timeout
 {
   "status": "solved",
   "routes": [
-    { "vehicle_idx": 0, "stop_indices": [0, 2, 4, 0], "distance_m": 4200 }
+    # PDP: depot → pickup → its drop-offs. CVRP: depot → stops → depot.
+    { "vehicle_idx": 0, "stop_indices": [0, 2, 5, 3], "distance_m": 4200 }
   ],
   "total_distance_m": 8500
 }
 ```
+The same module also splits the road geometry per leg: `extract_route_details`
+(`backend/services/stadia_client.py`) returns the stitched `geometry` plus the shapes
+between consecutive waypoints, and `shared_route_builder.enrich_route_geometry` stitches
+those per-leg shapes across windows (`ROUTE_LOCATION_WINDOW = 24` waypoints per routing
+call, `MAX_ENRICHMENT_CHUNKS = 6`). A leg boundary is exactly the drive between two
+consecutive stops, which is what lets a client draw a pooled route stop by stop.
 
 ---
 

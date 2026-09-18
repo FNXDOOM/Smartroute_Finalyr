@@ -178,6 +178,50 @@ Passenger-scoped lookup of the vehicle currently assigned to a ride (via `virtua
 
 ---
 
+### `GET /rides/{ride_id}/route`
+The pooled route this ride is part of, as its own passenger sees it — what a passenger
+client draws as the shared ride rather than a single pickup → drop-off line.
+
+Resolved via `virtual_stop_id → route_waypoints.passenger_ids → route_plans`, with the
+same lazy geometry resolution as `/route/history/{route_id}`. Other riders at a stop are
+**not** exposed here (only the caller's own stop is marked `is_mine`), unlike the
+driver-facing route plan.
+
+**Auth required:** Yes (the ride's own passenger, or admin)
+
+**Responses:**
+- `200` — `RideRouteResponse`:
+```json
+{
+  "route_id": "route-1-a3f9c2b1",
+  "vehicle_id": 1,
+  "provider": "stadia",
+  "problem": "pdp",
+  "geometry": [[55.2708, 25.2048]],
+  "legs": [{ "index": 0, "geometry": [], "distance_meters": 1200.0, "duration_seconds": 150.0, "from_sequence": 1, "to_sequence": 2 }],
+  "stops": [
+    { "sequence": 1, "lat": 25.2100, "lng": 55.2800, "waypoint_type": "pickup", "passenger_count": 3, "is_mine": true }
+  ],
+  "my_pickup_sequence": 1,
+  "my_destination_sequence": 3,
+  "my_leg_indices": [1, 2],
+  "total_distance_meters": 4200.0,
+  "estimated_duration_seconds": 480.0
+}
+```
+`my_leg_indices` are the leg numbers the passenger actually rides — the drive from their
+boarding stop to their drop-off — and `legs[].from_sequence` / `to_sequence` say which
+stops each leg joins, so a client can highlight the right leg. Both are omitted when the
+router did not return every leg, rather than guessed.
+
+- `403` — Not your ride (and not admin)
+- `404` — Ride not found
+- `200` with `null` — the ride is not on an optimized pooled route: its pool has not been
+  solved yet, or a driver accepted it manually (which unlinks the ride from its virtual
+  stop). A client then draws the rider's own pickup → drop-off line instead.
+
+---
+
 ### `GET /rides/`
 List all ride requests system-wide (live scope by default).
 
@@ -337,7 +381,12 @@ Get full detail of a cluster run including `cluster_summary` JSON.
 ---
 
 ### `POST /route/optimize`
-Solve the Capacitated VRP and assign vehicle routes (live scope). Drivers can only optimise vehicles they own (`vehicles.driver_user_id == self`); admins can use any vehicles.
+Solve the pooled route and assign vehicle routes (live scope). The pool is solved as a
+pickup-and-delivery problem — each pooled boarding stop plus one destination node per
+ride, so drop-offs free their seat again (see `architecture/algorithms.md` §5). If no
+such solution exists the builder falls back to the pickups-only CVRP, whose routes close
+back at the depot. Drivers can only optimise vehicles they own
+(`vehicles.driver_user_id == self`); admins can use any vehicles.
 
 **Auth required:** Yes (admin or driver)
 
@@ -359,7 +408,10 @@ Solve the Capacitated VRP and assign vehicle routes (live scope). Drivers can on
 | depot_lat / depot_lng | yes | Starting/ending point for all routes |
 | source_cluster_run_id | no | Must be a live-scope cluster run when supplied |
 
-Distance matrix: Stadia (≤25×25) → OSM Dijkstra → haversine; response includes `geometry`/`maneuvers` and `routing_provider: "stadia" | "local-road-matrix"` when Stadia is configured.
+Distance matrix: Stadia (chunked past its 25×25 cap, cached by coordinate) → OSM Dijkstra →
+haversine; route geometry is enriched per leg, so the response carries `geometry`, `legs`
+(one polyline per consecutive waypoint pair) and `maneuvers`, with
+`routing_provider: "stadia" | "local-road-matrix"` recorded on the persisted plan.
 
 **Responses:**
 - `200` — Optimization result
@@ -375,13 +427,20 @@ Distance matrix: Stadia (≤25×25) → OSM Dijkstra → haversine; response inc
       "waypoints": [
         { "stop_id": null, "lat": 25.2048, "lng": 55.2708, "waypoint_type": "depot", "passenger_ids": [] },
         { "stop_id": 2, "lat": 25.2100, "lng": 55.2800, "waypoint_type": "pickup", "passenger_ids": [3, 4, 5] },
+        { "stop_id": null, "lat": 25.2150, "lng": 55.3050, "waypoint_type": "destination", "passenger_ids": [3] },
         { "stop_id": null, "lat": 25.2048, "lng": 55.2708, "waypoint_type": "depot", "passenger_ids": [] }
+      ],
+      "legs": [
+        { "index": 0, "geometry": [[55.2708, 25.2048], [55.2800, 25.2100]], "distance_meters": 1200.0, "duration_seconds": 150.0 }
       ]
     }
   ],
   "unassigned_stops": []
 }
 ```
+
+A `depot` waypoint only appears in the pickups-only fallback, where the route returns to
+its hub. A pickup-and-delivery route ends at its last `destination`.
 - `400` — Empty vehicle list
 - `404` — One or more vehicle/stop IDs not found
 
@@ -400,12 +459,26 @@ List all route plans, newest first.
 ---
 
 ### `GET /route/history/{route_id}`
-Get a full route plan including all waypoints.
+Get a full route plan: its waypoints, its road geometry, its legs and the problem it was
+solved as. This is the route view a driver client draws.
 
 **Auth required:** Yes (admin or driver)
 
+**Response fields worth knowing:**
+| Field | Notes |
+|---|---|
+| `waypoints[]` | `sequence`, `lat`, `lng`, `waypoint_type` (`pickup` \| `destination` \| `depot`), `passenger_ids` (the rides served there) |
+| `geometry` | Full polyline `[[lng, lat], ...]`, promoted out of `route_metadata` |
+| `legs[]` | One entry per consecutive waypoint pair: `index`, `geometry`, `distance_meters`, `duration_seconds`, `begin_shape_index`, `end_shape_index` |
+| `problem` | `pdp` (pickups + drop-offs) or `cvrp` (pickups-only fallback) |
+
+Plans written by the automatic dispatch job carry stops but **no** road geometry, so the
+first request for such a plan resolves it over its own waypoints and caches the result on
+the plan (a failed attempt is cached too, so a polling client cannot hammer the router).
+`legs` therefore always lines up with the waypoint order: `len(legs) == len(waypoints) - 1`.
+
 **Responses:**
-- `200` — Full RoutePlanResponse with waypoints array
+- `200` — Full RoutePlanResponse with waypoints, geometry, legs and problem
 - `404` — Route not found
 
 ---

@@ -73,11 +73,12 @@ Passenger App / Driver App / Admin Dashboard
 - Enables efficient demand prediction (one prediction per H3 cell)
 - Makes caching and incremental updates easier
 
-### Why OR-Tools CVRP Solver?
+### Why OR-Tools (shared-ride pickup & delivery)?
 
-- Google's production-grade solver handles complex constraints (vehicle capacity, time windows, etc.)
-- Significantly better routes than greedy algorithms
-- Distance matrix is 3-tier: Stadia road matrix (≤25×25) → local OSM road graph (Dijkstra) → haversine fallback (`backend/services/routing/vrp_solver.py`)
+- A pooled route has to serve *pickups and drop-offs*: a passenger's destination is a node paired with the boarding stop they walk to, and the seat frees up when they alight. OR-Tools expresses that directly (`AddPickupAndDelivery` precedence plus a signed load dimension), so one vehicle can carry more riders per run than its capacity allows at any instant
+- The pickups-only CVRP (`solve_vrp`) stays as the fallback for pools no pickup-and-delivery route can serve — extra riders in one run, say — and every plan records which model ran as `route_metadata.problem` (`pdp` | `cvrp`)
+- Google's production-grade solver handles the complex constraints (vehicle capacity, time windows, etc.) and beats greedy algorithms on distance
+- Distance matrix is 3-tier: Stadia road matrix (chunked past its 25×25 cap, blocks cached by coordinate) → local OSM road graph (Dijkstra) → haversine fallback (`backend/services/routing/vrp_solver.py`)
 - Reasonable solve time for our fleet size (10 s hard limit via `GUIDED_LOCAL_SEARCH` + `PATH_CHEAPEST_ARC`)
 - Alternative: Local search (LKH) or Genetic Algorithms, but those have longer solve times
 
@@ -103,7 +104,7 @@ Passenger App / Driver App / Admin Dashboard
 | Clustering | HDBSCAN | Density-based, finds variable-density clusters, no K specification needed |
 | Stop placement | scikit-learn-extra K-Medoids | Picks an actual point (from data) vs. K-Means' arbitrary centroid |
 | Road snapping | OSMnx + NetworkX | Snaps pickups to nearest road, handles complex street networks |
-| Route optimization | Google OR-Tools (CVRP) | Industry-standard VRP solver, fast and reliable |
+| Route optimization | Google OR-Tools (pickup & delivery, CVRP fallback) | Industry-standard VRP solver, fast and reliable |
 | Vehicle assignment | SciPy Hungarian algorithm | Optimal 1:1 matching between vehicles and routes |
 | Demand prediction | XGBoost regressor | Fast inference, handles seasonal patterns + holidays |
 | Real-time | WebSockets via Starlette | Full-duplex, low latency, multiple subprotocol support |

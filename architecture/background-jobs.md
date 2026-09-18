@@ -211,7 +211,9 @@ in_progress  → completed
 
 ### What it does
 
-Runs the full end-to-end pipeline in one call: cluster pending → collect clustered stops without an active route → solve VRP → Hungarian-assign idle vehicles → mark rides `assigned`. Demo mode uses/creates the reserved `DEMO-PRESENTATION-01` vehicle (capacity 4) so presentations never consume live fleet.
+Runs the full end-to-end pipeline in one call: cluster pending → collect clustered stops without an active route → solve the pooled route (`shared_route_builder.build_shared_routes`: pickup & delivery, with the pickups-only CVRP as fallback) → Hungarian-assign idle vehicles → persist the plan and mark rides `assigned`.
+
+The plans it writes carry stops but no road geometry — a client reading the plan later resolves it once (`GET /route/history/{route_id}`), and that result is cached on the plan. Demo mode uses/creates the reserved `DEMO-PRESENTATION-01` vehicle (capacity 4) so presentations never consume live fleet.
 
 ### Writes to
 - Same tables as Job 1 plus `route_plans`, `route_waypoints`, `vehicles`, `notifications`
