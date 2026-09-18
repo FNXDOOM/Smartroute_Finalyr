@@ -45,3 +45,44 @@ class RideRequestBatchCreate(BaseModel):
 class DemoSharedBatchCreate(BaseModel):
     demo_run_id: str = Field(..., min_length=1, max_length=64)
     riders: List[RideRequestCreate] = Field(..., min_length=1, max_length=3)
+
+
+class RideRouteLeg(BaseModel):
+    """One leg of a pooled route: the drive between two consecutive stops."""
+
+    index: int
+    geometry: List[List[float]] = Field(default_factory=list)
+    distance_meters: float = 0
+    duration_seconds: float = 0
+    from_sequence: Optional[int] = None
+    to_sequence: Optional[int] = None
+
+
+class RideRouteStop(BaseModel):
+    sequence: int
+    lat: float
+    lng: float
+    waypoint_type: str = Field(..., description="depot | pickup | destination")
+    passenger_count: int = 0
+    is_mine: bool = False
+
+
+class RideRouteResponse(BaseModel):
+    """The pooled route this ride belongs to, as the passenger's map draws it.
+
+    Route plans are shared: ``stops`` covers every boarding stop and drop-off on
+    the vehicle's route, and ``is_mine`` marks the ones this passenger uses.
+    """
+
+    route_id: str
+    vehicle_id: int
+    provider: str = "unknown"
+    problem: str = "pdp"
+    geometry: List[List[float]] = Field(default_factory=list)
+    legs: List[RideRouteLeg] = Field(default_factory=list)
+    stops: List[RideRouteStop] = Field(default_factory=list)
+    my_pickup_sequence: Optional[int] = None
+    my_destination_sequence: Optional[int] = None
+    my_leg_indices: List[int] = Field(default_factory=list)
+    total_distance_meters: float = 0
+    estimated_duration_seconds: float = 0

@@ -201,15 +201,33 @@ def _decode_polyline(encoded: str, precision: int = 6) -> list[list[float]]:
 
 
 def extract_route_details(data: dict) -> dict:
-    """Normalize Stadia/Valhalla route output for the rest of the app."""
+    """Normalize Stadia/Valhalla route output for the rest of the app.
+
+    ``geometry`` stays the single stitched polyline every existing caller
+    relies on. ``legs`` exposes the same coordinates split per Valhalla leg
+    (one leg per consecutive pair of requested locations) so pooled routes can
+    be drawn segment by segment instead of as one line.
+    """
     trip = data.get("trip") or {}
     geometry: list[list[float]] = []
     maneuvers: list[dict] = []
-    for leg in trip.get("legs", []) or []:
+    legs: list[dict] = []
+    for index, leg in enumerate(trip.get("legs", []) or []):
         shape = leg.get("shape")
-        if shape:
-            decoded = _decode_polyline(shape)
+        decoded = _decode_polyline(shape) if shape else []
+        begin_shape_index = max(0, len(geometry) - 1)
+        if decoded:
             geometry.extend(decoded if not geometry else decoded[1:])
+        end_shape_index = max(0, len(geometry) - 1)
+        leg_summary = leg.get("summary") or {}
+        legs.append({
+            "index": index,
+            "geometry": decoded,
+            "distanceMeters": float(leg_summary.get("length") or 0) * 1000,
+            "durationSeconds": float(leg_summary.get("time") or 0),
+            "begin_shape_index": begin_shape_index,
+            "end_shape_index": end_shape_index,
+        })
         for maneuver in leg.get("maneuvers", []) or []:
             instruction = (
                 maneuver.get("verbal_pre_transition_instruction")
@@ -230,6 +248,7 @@ def extract_route_details(data: dict) -> dict:
         "distanceMeters": float(summary.get("length") or 0) * 1000,
         "durationSeconds": float(summary.get("time") or 0),
         "geometry": geometry,
+        "legs": legs,
         "maneuvers": maneuvers,
     }
 

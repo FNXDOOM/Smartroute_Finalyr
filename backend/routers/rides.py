@@ -19,9 +19,13 @@ from schemas.ride_request import (
     RideRequestStatusUpdate,
     RideRequestBatchCreate,
     DemoSharedBatchCreate,
+    RideRouteLeg,
+    RideRouteResponse,
+    RideRouteStop,
 )
 from schemas.tracking import VehicleSnapshot
 from services.notifications import create_notification
+from services.routing.shared_route_builder import resolve_route_geometry
 from utils.auth_utils import get_current_user
 from utils.geo import is_india_location
 from services.clustering.h3_partitioner import get_h3_index
@@ -463,6 +467,112 @@ def get_ride_vehicle(
         return None
 
     return VehicleSnapshot.model_validate(vehicle)
+
+
+@router.get("/{ride_id}/route", response_model=Optional[RideRouteResponse])
+def get_ride_route(
+    ride_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Pooled route this ride belongs to, with per-leg geometry.
+
+    ``None`` means the ride is not on an optimized shared route — for example a
+    ride a driver accepted manually, which is deliberately unlinked from its
+    virtual stop.
+    """
+    ride = db.query(RideRequest).filter(RideRequest.id == ride_id).first()
+    if not ride:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Ride request #{ride_id} not found",
+        )
+    if ride.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this ride request",
+        )
+
+    if not ride.virtual_stop_id:
+        return None
+
+    candidate_waypoints = (
+        db.query(RouteWaypointRecord)
+        .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id)
+        .all()
+    )
+    pickup_waypoint = next(
+        (waypoint for waypoint in candidate_waypoints if ride.id in (waypoint.passenger_ids or [])),
+        None,
+    )
+    if not pickup_waypoint:
+        return None
+
+    route_plan = db.query(RoutePlan).filter(RoutePlan.id == pickup_waypoint.route_plan_id).first()
+    if not route_plan:
+        return None
+
+    stops = sorted(route_plan.waypoints or [], key=lambda waypoint: waypoint.sequence)
+    route_geometry = resolve_route_geometry(db, route_plan)
+    stored_legs = (route_geometry or {}).get("legs") or []
+
+    destination_waypoint = next(
+        (
+            waypoint
+            for waypoint in stops
+            if waypoint.waypoint_type == "destination" and ride.id in (waypoint.passenger_ids or [])
+        ),
+        None,
+    )
+
+    # A leg is the drive between two consecutive stops, so leg k joins stops k
+    # and k+1 — only trust that mapping when the router returned every leg.
+    legs_aligned = len(stored_legs) == max(0, len(stops) - 1)
+    legs: List[RideRouteLeg] = []
+    for position, leg in enumerate(stored_legs):
+        legs.append(
+            RideRouteLeg(
+                index=int(leg.get("index", position)),
+                geometry=leg.get("geometry") or [],
+                distance_meters=float(leg.get("distance_meters") or 0),
+                duration_seconds=float(leg.get("duration_seconds") or 0),
+                from_sequence=stops[position].sequence if legs_aligned else None,
+                to_sequence=stops[position + 1].sequence if legs_aligned else None,
+            )
+        )
+
+    my_leg_indices: List[int] = []
+    if legs_aligned and destination_waypoint is not None:
+        first = min(pickup_waypoint.sequence, destination_waypoint.sequence)
+        last = max(pickup_waypoint.sequence, destination_waypoint.sequence)
+        my_leg_indices = [
+            index for index in range(max(0, first), min(last, len(legs)))
+        ]
+
+    return RideRouteResponse(
+        route_id=route_plan.route_id,
+        vehicle_id=route_plan.vehicle_id,
+        provider=(route_geometry or {}).get("provider") or "unknown",
+        problem=str((route_plan.route_metadata or {}).get("problem") or "pdp"),
+        geometry=(route_geometry or {}).get("geometry") or [],
+        legs=legs,
+        stops=[
+            RideRouteStop(
+                sequence=waypoint.sequence,
+                lat=float(waypoint.lat),
+                lng=float(waypoint.lng),
+                waypoint_type=waypoint.waypoint_type,
+                passenger_count=len(waypoint.passenger_ids or []),
+                is_mine=bool(ride.id in (waypoint.passenger_ids or [])),
+            )
+            for waypoint in stops
+        ],
+        my_pickup_sequence=pickup_waypoint.sequence,
+        my_destination_sequence=destination_waypoint.sequence if destination_waypoint else None,
+        my_leg_indices=my_leg_indices,
+        total_distance_meters=float(route_plan.total_distance_meters or 0),
+        estimated_duration_seconds=float(route_plan.estimated_duration_seconds or 0),
+    )
 
 
 @router.get("/", response_model=List[RideRequestResponse])

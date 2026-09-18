@@ -1,6 +1,5 @@
 from datetime import datetime
 from typing import List
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -8,23 +7,25 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.cluster_run import ClusterRun
 from models.route_plan import RoutePlan
-from models.route_waypoint import RouteWaypointRecord
 from models.user import User
 from models.vehicle import Vehicle
 from models.virtual_stop import VirtualStop
 from schemas.route import (
     OptimizedRouteResponse,
     RouteHistoryResponse,
+    RouteLeg,
     RoutePlanResponse,
     RouteSolution,
     RouteWaypoint,
     RouteWaypointRecordResponse,
     VRPRequest,
 )
-from services.routing.vrp_solver import solve_vrp
-from services.stadia_client import extract_route_details, route_many
+from services.routing.shared_route_builder import (
+    build_shared_routes,
+    persist_shared_route,
+    resolve_route_geometry,
+)
 from services.notifications import create_notification, create_notifications_for_users
-from config import STADIA_API_KEY
 from utils.auth_utils import get_current_user
 from utils.ride_scope import LIVE_MODE
 
@@ -87,134 +88,47 @@ def optimize_routes(
             detail={"message": "Some virtual stops were not found", "missing_virtual_stop_ids": missing_ids},
         )
 
-    capacities = [vehicle.capacity for vehicle in vehicles]
-    stops = [{"lat": payload.depot_lat, "lng": payload.depot_lng, "demand": 0, "stop_id": None}]
-    for virtual_stop in virtual_stops:
-        stops.append(
-            {
-                "lat": virtual_stop.lat,
-                "lng": virtual_stop.lng,
-                "demand": max(1, int(virtual_stop.passenger_count)),
-                "stop_id": virtual_stop.id,
-            }
+    built_routes = build_shared_routes(
+        vehicles=vehicles,
+        virtual_stops=virtual_stops,
+        depot_lat=payload.depot_lat,
+        depot_lng=payload.depot_lng,
+    )
+    if not built_routes:
+        return OptimizedRouteResponse(
+            status="no_solution",
+            routes=[],
+            unassigned_stops=payload.virtual_stop_ids,
         )
 
-    solution = solve_vrp(
-        stops=stops,
-        num_vehicles=len(vehicles),
-        vehicle_capacity=min(capacities) if capacities else 1,
-        vehicle_capacities=capacities,
-    )
-
-    if solution["status"] == "no_solution":
-        return OptimizedRouteResponse(status="no_solution", routes=[], unassigned_stops=payload.virtual_stop_ids)
-
-    stop_lookup = {idx: stop for idx, stop in enumerate(stops)}
     used_stop_ids: List[int] = []
     route_solutions: List[RouteSolution] = []
-    persisted_route_ids: List[str] = []
 
-    for route_data in solution["routes"]:
-        vehicle_idx = route_data["vehicle_idx"]
-        actual_vehicle = vehicles[vehicle_idx]
-        route_id = f"route-{actual_vehicle.id}-{uuid4().hex[:8]}"
-        persisted_route_ids.append(route_id)
-
-        waypoint_payloads: List[dict] = [
-            {
-                "stop_id": None,
-                "lat": payload.depot_lat,
-                "lng": payload.depot_lng,
-                "waypoint_type": "depot",
-                "passenger_ids": [],
-            }
-        ]
-
-        for stop_index in route_data["stop_indices"][1:]:
-            stop = stop_lookup[stop_index]
-            if stop.get("stop_id") is None:
-                continue
-            virtual_stop = next(vs for vs in virtual_stops if vs.id == stop["stop_id"])
-            used_stop_ids.append(virtual_stop.id)
-            passenger_ids = [request.id for request in virtual_stop.ride_requests]
-            waypoint_payloads.append(
-                {
-                    "stop_id": virtual_stop.id,
-                    "lat": virtual_stop.lat,
-                    "lng": virtual_stop.lng,
-                    "waypoint_type": "pickup",
-                    "passenger_ids": passenger_ids,
-                }
-            )
-
-        waypoint_payloads.append(
-            {
-                "stop_id": None,
-                "lat": payload.depot_lat,
-                "lng": payload.depot_lng,
-                "waypoint_type": "depot",
-                "passenger_ids": [],
-            }
+    for built in built_routes:
+        actual_vehicle = vehicles[built.vehicle_index]
+        persisted = persist_shared_route(
+            db,
+            built,
+            vehicle=actual_vehicle,
+            mode=LIVE_MODE,
+            created_by_user_id=current_user.id,
+            source_cluster_run_id=payload.source_cluster_run_id,
         )
-
-        road_route = {}
-        if STADIA_API_KEY:
-            try:
-                road_route = extract_route_details(route_many([
-                    {"lat": waypoint["lat"], "lon": waypoint["lng"]}
-                    for waypoint in waypoint_payloads
-                ]))
-            except RuntimeError:
-                # Fallback to local matrix if hosted geometry fails.
-                road_route = {}
-        route_distance = road_route.get("distanceMeters") or float(route_data["distance_m"])
-        estimated_duration = road_route.get("durationSeconds") or (
-            float(route_data["distance_m"]) / 8.33 if route_data["distance_m"] else 0.0
-        )
+        used_stop_ids.extend(built.stop_ids)
         route_solutions.append(
             RouteSolution(
-                route_id=route_id,
+                route_id=persisted.route_id,
                 vehicle_id=actual_vehicle.id,
-                waypoints=[RouteWaypoint(**waypoint) for waypoint in waypoint_payloads],
-                total_distance_meters=float(route_distance),
-                estimated_duration_seconds=estimated_duration,
-                geometry=road_route.get("geometry", []),
-                maneuvers=road_route.get("maneuvers", []),
+                waypoints=[RouteWaypoint(**waypoint) for waypoint in built.waypoints],
+                total_distance_meters=float(built.distance_m),
+                estimated_duration_seconds=float(built.duration_s),
+                geometry=built.geometry,
+                maneuvers=built.maneuvers,
+                legs=[RouteLeg(**leg) for leg in built.legs],
             )
         )
 
-        actual_vehicle.assigned_route_id = route_id
-        actual_vehicle.status = "active"
-
-        route_plan = RoutePlan(
-            route_id=route_id,
-            vehicle_id=actual_vehicle.id,
-            source_cluster_run_id=payload.source_cluster_run_id,
-            status="solved",
-            depot_lat=payload.depot_lat,
-            depot_lng=payload.depot_lng,
-            total_distance_meters=float(route_distance),
-            estimated_duration_seconds=estimated_duration,
-            created_by_user_id=current_user.id,
-            route_metadata={
-                "vehicle_capacity": actual_vehicle.capacity,
-                "assigned_stop_ids": [wp["stop_id"] for wp in waypoint_payloads if wp["stop_id"] is not None],
-                "source_cluster_run_id": payload.source_cluster_run_id,
-                "geometry": road_route.get("geometry", []),
-                "maneuvers": road_route.get("maneuvers", []),
-                "routing_provider": "stadia" if road_route else "local-road-matrix",
-            },
-        )
-        db.add(route_plan)
-        db.flush()
-
-        passenger_user_ids = []
-        for virtual_stop in virtual_stops:
-            if virtual_stop.id in [wp["stop_id"] for wp in waypoint_payloads if wp["stop_id"] is not None]:
-                for request in virtual_stop.ride_requests:
-                    request.status = "assigned"
-                    passenger_user_ids.append(request.user_id)
-        passenger_user_ids = sorted(set(passenger_user_ids))
+        passenger_user_ids = persisted.passenger_user_ids
         if passenger_user_ids:
             create_notifications_for_users(
                 db,
@@ -223,9 +137,9 @@ def optimize_routes(
                 title="Your route has been optimized",
                 message=f"Your shared ride route has been assigned to vehicle {actual_vehicle.license_plate}.",
                 related_entity_type="route_plan",
-                related_entity_id=route_plan.id,
+                related_entity_id=persisted.route_plan.id,
                 metadata={
-                    "route_id": route_id,
+                    "route_id": persisted.route_id,
                     "vehicle_id": actual_vehicle.id,
                     "cluster_run_id": payload.source_cluster_run_id,
                 },
@@ -236,28 +150,15 @@ def optimize_routes(
             user_id=current_user.id,
             notification_type="route_optimized",
             title="Route optimization completed",
-            message=f"Route {route_id} was optimized for vehicle {actual_vehicle.license_plate}.",
+            message=f"Route {persisted.route_id} was optimized for vehicle {actual_vehicle.license_plate}.",
             related_entity_type="route_plan",
-            related_entity_id=route_plan.id,
+            related_entity_id=persisted.route_plan.id,
             metadata={
                 "vehicle_id": actual_vehicle.id,
-                "route_id": route_id,
+                "route_id": persisted.route_id,
                 "cluster_run_id": payload.source_cluster_run_id,
             },
         )
-
-        for sequence, waypoint in enumerate(waypoint_payloads):
-            db.add(
-                RouteWaypointRecord(
-                    route_plan_id=route_plan.id,
-                    sequence=sequence,
-                    stop_id=waypoint["stop_id"],
-                    lat=waypoint["lat"],
-                    lng=waypoint["lng"],
-                    waypoint_type=waypoint["waypoint_type"],
-                    passenger_ids=waypoint["passenger_ids"],
-                )
-            )
 
     db.commit()
 
@@ -267,6 +168,17 @@ def optimize_routes(
         routes=route_solutions,
         unassigned_stops=unassigned_stops,
     )
+
+
+def _route_plan_response(route_plan: RoutePlan) -> RoutePlanResponse:
+    """Route plan with its geometry, legs and problem promoted out of metadata."""
+    metadata = route_plan.route_metadata or {}
+    response = RoutePlanResponse.model_validate(route_plan)
+    return response.model_copy(update={
+        "geometry": metadata.get("geometry") or [],
+        "legs": [RouteLeg(**leg) for leg in (metadata.get("legs") or [])],
+        "problem": str(metadata.get("problem") or "cvrp"),
+    })
 
 
 @router.get("/history", response_model=RouteHistoryResponse)
@@ -289,7 +201,10 @@ def list_routes(
         .limit(limit)
         .all()
     )
-    return RouteHistoryResponse(status="ok", routes=[RoutePlanResponse.model_validate(route) for route in routes])
+    return RouteHistoryResponse(
+        status="ok",
+        routes=[_route_plan_response(route) for route in routes],
+    )
 
 
 @router.get("/history/{route_id}", response_model=RoutePlanResponse)
@@ -312,4 +227,9 @@ def get_route_history(
     if not route_plan:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route not found")
 
-    return RoutePlanResponse.model_validate(route_plan)
+    # Plans written by the automatic dispatch job carry no road geometry, so a
+    # driver opening the map is the first chance to fetch it (cached on the
+    # plan, exactly once, for every later caller).
+    resolve_route_geometry(db, route_plan)
+
+    return _route_plan_response(route_plan)

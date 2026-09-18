@@ -24,7 +24,7 @@ from services.prediction.demand_model import predict_zone_demand
 from services.prediction.feature_engineering import get_h3_center
 from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
-from services.routing.vrp_solver import solve_vrp
+from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
 from services.notifications import create_notification, create_notifications_for_users
 from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE, apply_ride_scope, validate_ride_mode
@@ -516,116 +516,34 @@ def run_auto_dispatch_pipeline(
                 "idle_vehicles": len(idle_vehicles),
             }
 
-        capacities = [v.capacity for v in idle_vehicles]
-        stops = [{"lat": depot_lat, "lng": depot_lng, "demand": 0, "stop_id": None}]
-        for vs in virtual_stops:
-            stops.append({
-                "lat": vs.lat,
-                "lng": vs.lng,
-                "demand": max(1, int(vs.passenger_count)),
-                "stop_id": vs.id,
-            })
-
-        solution = solve_vrp(
-            stops=stops,
-            num_vehicles=len(idle_vehicles),
-            vehicle_capacity=min(capacities) if capacities else 4,
-            vehicle_capacities=capacities,
+        built_routes = build_shared_routes(
+            vehicles=idle_vehicles,
+            virtual_stops=virtual_stops,
+            depot_lat=depot_lat,
+            depot_lng=depot_lng,
+            request_statuses=("clustered",),
         )
 
         routes_count = 0
         assigned_rides_count = 0
-        stop_lookup = {idx: stop for idx, stop in enumerate(stops)}
 
-        for route_data in solution.get("routes", []):
-            vehicle_idx = route_data["vehicle_idx"]
-            if vehicle_idx >= len(idle_vehicles):
+        for built in built_routes:
+            if built.vehicle_index >= len(idle_vehicles):
                 continue
-            actual_vehicle = idle_vehicles[vehicle_idx]
-            route_id = f"route-{actual_vehicle.id}-{uuid4().hex[:8]}"
-
-            waypoint_payloads = [{
-                "stop_id": None,
-                "lat": depot_lat,
-                "lng": depot_lng,
-                "waypoint_type": "depot",
-                "passenger_ids": [],
-            }]
-
-            for stop_index in route_data["stop_indices"][1:]:
-                stop = stop_lookup.get(stop_index)
-                if not stop or stop.get("stop_id") is None:
-                    continue
-                vs_match = next((v for v in virtual_stops if v.id == stop["stop_id"]), None)
-                if not vs_match:
-                    continue
-                passenger_ids = [req.id for req in vs_match.ride_requests if req.status == "clustered"]
-                waypoint_payloads.append({
-                    "stop_id": vs_match.id,
-                    "lat": vs_match.lat,
-                    "lng": vs_match.lng,
-                    "waypoint_type": "pickup",
-                    "passenger_ids": passenger_ids,
-                })
-
-            waypoint_payloads.append({
-                "stop_id": None,
-                "lat": depot_lat,
-                "lng": depot_lng,
-                "waypoint_type": "depot",
-                "passenger_ids": [],
-            })
-
-            actual_vehicle.assigned_route_id = route_id
-            actual_vehicle.status = "active"
-
-            route_plan = RoutePlan(
-                route_id=route_id,
-                vehicle_id=actual_vehicle.id,
-                source_cluster_run_id=cluster_res.get("cluster_run_id"),
-                status="solved",
-                depot_lat=depot_lat,
-                depot_lng=depot_lng,
-                total_distance_meters=float(route_data.get("distance_m", 0)),
-                estimated_duration_seconds=float(route_data.get("distance_m", 0)) / 8.33,
-                created_by_user_id=triggered_by_user_id,
+            actual_vehicle = idle_vehicles[built.vehicle_index]
+            persisted = persist_shared_route(
+                db,
+                built,
+                vehicle=actual_vehicle,
                 mode=mode,
+                created_by_user_id=triggered_by_user_id,
+                source_cluster_run_id=cluster_res.get("cluster_run_id"),
                 demo_run_id=demo_run_id,
-                route_metadata={
-                    "vehicle_capacity": actual_vehicle.capacity,
-                    "assigned_stop_ids": [wp["stop_id"] for wp in waypoint_payloads if wp["stop_id"] is not None],
-                    "routing_provider": "local-road-matrix",
-                },
+                assign_statuses=("clustered",),
             )
-            db.add(route_plan)
-            db.flush()
+            assigned_rides_count += len(persisted.ride_ids)
 
-            for sequence, waypoint in enumerate(waypoint_payloads):
-                db.add(
-                    RouteWaypointRecord(
-                        route_plan_id=route_plan.id,
-                        sequence=sequence,
-                        stop_id=waypoint["stop_id"],
-                        lat=waypoint["lat"],
-                        lng=waypoint["lng"],
-                        waypoint_type=waypoint["waypoint_type"],
-                        passenger_ids=waypoint["passenger_ids"],
-                    )
-                )
-
-            # Mark member rides assigned
-            passenger_user_ids = []
-            for wp in waypoint_payloads:
-                if wp["stop_id"]:
-                    vs_item = next((v for v in virtual_stops if v.id == wp["stop_id"]), None)
-                    if vs_item:
-                        for req in vs_item.ride_requests:
-                            if req.status == "clustered":
-                                req.status = "assigned"
-                                assigned_rides_count += 1
-                                passenger_user_ids.append(req.user_id)
-
-            passenger_user_ids = sorted(set(passenger_user_ids))
+            passenger_user_ids = persisted.passenger_user_ids
             if passenger_user_ids:
                 create_notifications_for_users(
                     db,
@@ -634,8 +552,8 @@ def run_auto_dispatch_pipeline(
                     title="Your route has been optimized",
                     message=f"Your shared ride has been assigned to vehicle {actual_vehicle.license_plate}.",
                     related_entity_type="route_plan",
-                    related_entity_id=route_plan.id,
-                    metadata={"route_id": route_id, "vehicle_id": actual_vehicle.id},
+                    related_entity_id=persisted.route_plan.id,
+                    metadata={"route_id": persisted.route_id, "vehicle_id": actual_vehicle.id},
                 )
             routes_count += 1
 
