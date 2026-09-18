@@ -96,7 +96,7 @@ Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartroutea
 | Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (Supabase) |
 | Auth | Clerk (JWT RS256 via JWKS) + dual-role isolation (Passenger / Driver) |
 | Role Sync | Clerk `publicMetadata` patched via Backend API on every role change (requires `CLERK_SECRET_KEY` in `backend/.env`; the backend only logs a line and skips the sync if it is missing) |
-| Algorithms | HDBSCAN clustering, OR-Tools CVRP (Stadia ≤25×25 → OSM Dijkstra → haversine), Hungarian algorithm (scipy), H3 spatial indexing (res 9 ≈ 0.1 km²) |
+| Algorithms | HDBSCAN clustering, OR-Tools shared-ride routing (pickup & delivery with a CVRP fallback; Stadia road matrix chunked past 25×25 → OSM Dijkstra → haversine), Hungarian algorithm (scipy), H3 spatial indexing (res 9 ≈ 0.1 km²) |
 | ML | XGBoost demand model (`ml/models/demand_model.pkl`, heuristic fallback if absent) |
 | Maps | Stadia Maps via authenticated MapLibre proxy (`/maps/stadia/*`, `/geocode/*`, `/routing/*`), OSMnx road graph; all geo endpoints India-guarded (`is_india_location`) |
 | Isolation | `ride_mode` (`live` \| `presentation_demo`) + `demo_run_id` on rides/stops/runs/plans/vehicles (Alembic `0002_demo_scope`); `PresentationDemoView` keeps demos off live fleet |
