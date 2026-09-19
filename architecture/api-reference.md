@@ -384,7 +384,8 @@ Get full detail of a cluster run including `cluster_summary` JSON.
 Solve the pooled route and assign vehicle routes (live scope). The pool is solved as a
 pickup-and-delivery problem — each pooled boarding stop plus one destination node per
 ride, so drop-offs free their seat again (see `architecture/algorithms.md` §5). If no
-such solution exists the builder falls back to the pickups-only CVRP, whose routes close
+when no such solution exists the pool remains clustered for a later split/retry; passenger
+routes are never assigned without destination nodes, and routes close
 back at the depot. Drivers can only optimise vehicles they own
 (`vehicles.driver_user_id == self`); admins can use any vehicles.
 
@@ -439,7 +440,7 @@ haversine; route geometry is enriched per leg, so the response carries `geometry
 }
 ```
 
-A `depot` waypoint only appears in the pickups-only fallback, where the route returns to
+A `depot` waypoint is not used in passenger itineraries; the route returns to
 its hub. A pickup-and-delivery route ends at its last `destination`.
 - `400` — Empty vehicle list
 - `404` — One or more vehicle/stop IDs not found
@@ -470,7 +471,7 @@ solved as. This is the route view a driver client draws.
 | `waypoints[]` | `sequence`, `lat`, `lng`, `waypoint_type` (`pickup` \| `destination` \| `depot`), `passenger_ids` (the rides served there) |
 | `geometry` | Full polyline `[[lng, lat], ...]`, promoted out of `route_metadata` |
 | `legs[]` | One entry per consecutive waypoint pair: `index`, `geometry`, `distance_meters`, `duration_seconds`, `begin_shape_index`, `end_shape_index` |
-| `problem` | `pdp` (pickups + drop-offs) or `cvrp` (pickups-only fallback) |
+| `problem` | `pdp` (pickups + drop-offs) |
 
 Plans written by the automatic dispatch job carry stops but **no** road geometry, so the
 first request for such a plan resolves it over its own waypoints and caches the result on

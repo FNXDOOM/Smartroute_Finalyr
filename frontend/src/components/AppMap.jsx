@@ -332,23 +332,39 @@ export default function AppMap({
         return
       }
 
-      map = new maplibregl.Map({
-        container: containerRef.current,
-        style: STADIA_STYLE_URL,
-        center: [initialCenter.current[1], initialCenter.current[0]],
-        zoom: initialZoom.current,
-        attributionControl: true,
-        transformRequest: (url) => {
-          const requestUrl = backendMapUrl(url)
-          if (requestUrl.includes('/maps/stadia/')) {
-            return { url: requestUrl, headers: { Authorization: `Bearer ${token}` } }
-          }
-          return { url: requestUrl }
-        },
-      })
+      // The token lookup is asynchronous. During that await React may unmount
+      // or remount this component (especially in development StrictMode), so
+      // do not read the ref again without validating that it is still the
+      // live DOM element captured by this effect.
+      const container = containerRef.current
+      if (cancelled || !container || !(container instanceof HTMLElement)) return
+
+      try {
+        map = new maplibregl.Map({
+          container,
+          style: STADIA_STYLE_URL,
+          center: [initialCenter.current[1], initialCenter.current[0]],
+          zoom: initialZoom.current,
+          attributionControl: true,
+          transformRequest: (url) => {
+            const requestUrl = backendMapUrl(url)
+            if (requestUrl.includes('/maps/stadia/')) {
+              return { url: requestUrl, headers: { Authorization: `Bearer ${token}` } }
+            }
+            return { url: requestUrl }
+          },
+        })
+      } catch (error) {
+        if (!cancelled) {
+          setMapError(error instanceof Error && error.message
+            ? `Map could not be initialized: ${error.message}`
+            : 'Map could not be initialized.')
+        }
+        return
+      }
 
       resizeObserver = new ResizeObserver(() => map?.resize())
-      resizeObserver.observe(containerRef.current)
+      resizeObserver.observe(container)
       requestAnimationFrame(() => map?.resize())
 
       map.on('error', (e) => {

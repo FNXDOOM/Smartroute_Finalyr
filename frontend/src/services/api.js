@@ -69,6 +69,7 @@ export const ridesApi = {
   },
   getById: async (id) => (await client.get(`/rides/${id}`)).data,
   getVehicle: async (id) => (await client.get(`/rides/${id}/vehicle`)).data,
+  getRoute: async (id) => (await client.get(`/rides/${id}/route`)).data,
   updateStatus: async (id, status) => (await client.patch(`/rides/${id}/status`, { status })).data,
   cancel: async (id) => (await client.delete(`/rides/${id}`)).data,
 };

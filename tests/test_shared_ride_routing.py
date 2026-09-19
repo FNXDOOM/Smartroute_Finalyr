@@ -229,9 +229,10 @@ def test_pool_solver_reuses_a_seat_after_a_drop_off_where_cvrp_cannot():
 
 
 class _StubRequest:
-    def __init__(self, request_id, status="clustered"):
+    def __init__(self, request_id, status="clustered", is_shared=True):
         self.id = request_id
         self.status = status
+        self.is_shared = is_shared
         self.dest_lat = 12.9756
         self.dest_lng = 77.6066
 
@@ -279,7 +280,7 @@ def test_builder_uses_the_pool_model_for_a_feasible_pool():
     assert built.waypoints[1]["stop_id"] is None
 
 
-def test_builder_falls_back_to_pickups_only_when_the_pool_is_infeasible(monkeypatch):
+def test_builder_does_not_assign_a_pickup_only_route_when_pdp_is_infeasible(monkeypatch):
     monkeypatch.setattr(
         shared_route_builder,
         "solve_shared_ride_pdp",
@@ -296,11 +297,9 @@ def test_builder_falls_back_to_pickups_only_when_the_pool_is_infeasible(monkeypa
         enrich=False,
     )
 
-    assert len(routes) == 1
-    built = routes[0]
-    assert built.problem == "cvrp"
-    # The old shape: pickups, then the drive back to the hub.
-    assert [waypoint["waypoint_type"] for waypoint in built.waypoints] == ["pickup", "depot"]
+    # A pickup-only fallback has no passenger drop-offs and must never be
+    # persisted as an assigned passenger route.
+    assert routes == []
 
 
 def test_builder_returns_nothing_when_no_model_can_serve_the_pool():
@@ -317,6 +316,55 @@ def test_builder_returns_nothing_when_no_model_can_serve_the_pool():
     )
 
     assert routes == []
+
+
+def test_private_ride_gets_a_dedicated_vehicle_and_never_pools():
+    pytest.importorskip("ortools.constraint_solver")
+    # Two private rides plus one shared pool, with exactly two vehicles.
+    private_a = _StubStop(11, [_StubRequest(201, is_shared=False)])
+    private_b = _StubStop(12, [_StubRequest(202, is_shared=False)])
+    shared = _StubStop(13, [_StubRequest(203), _StubRequest(204)])
+
+    routes = build_shared_routes(
+        vehicles=[_StubVehicle(capacity=4), _StubVehicle(capacity=4)],
+        virtual_stops=[shared, private_b, private_a],
+        depot_lat=DEPOT_LAT,
+        depot_lng=DEPOT_LNG,
+        request_statuses=("clustered",),
+        enrich=False,
+    )
+
+    # Each private ride takes one vehicle and is the only stop on it; the shared
+    # pool is deferred (never merged onto a private vehicle).
+    assert len(routes) == 2
+    assert sorted(route.stop_ids for route in routes) == [[11], [12]]
+    assert {route.ride_ids[0] for route in routes} == {201, 202}
+    assert all(203 not in route.ride_ids for route in routes)
+    assert all(204 not in route.ride_ids for route in routes)
+
+
+def test_private_ride_is_never_merged_into_a_shared_route():
+    pytest.importorskip("ortools.constraint_solver")
+    # Enough vehicles for everyone: the shared pair must still be solved as its
+    # own pool, and the private ride must be alone on its vehicle.
+    private = _StubStop(21, [_StubRequest(301, is_shared=False)])
+    shared = _StubStop(22, [_StubRequest(302), _StubRequest(303)])
+
+    routes = build_shared_routes(
+        vehicles=[_StubVehicle(capacity=4), _StubVehicle(capacity=4)],
+        virtual_stops=[shared, private],
+        depot_lat=DEPOT_LAT,
+        depot_lng=DEPOT_LNG,
+        request_statuses=("clustered",),
+        enrich=False,
+    )
+
+    by_stop = {tuple(route.stop_ids): route for route in routes}
+    assert tuple([21]) in by_stop
+    assert by_stop[(21,)].ride_ids == [301]
+    assert by_stop[(21,)].problem == "pdp"
+    # The shared stop is served by the other vehicle, separately.
+    assert any(route.stop_ids == [22] for route in routes)
 
 
 # --- passenger-visible route -------------------------------------------------

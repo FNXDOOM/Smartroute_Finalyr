@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -33,6 +34,268 @@ CLUSTER_INTERVAL_SECONDS = 60
 DEMAND_INTERVAL_SECONDS = 300
 REBALANCE_INTERVAL_SECONDS = 300
 SIMULATE_DISPATCH_INTERVAL_SECONDS = 5
+
+# Pickup clustering is only the first gate. Keep riders with destinations in
+# the same corridor so the PDP solver does not create unreasonable detours.
+MAX_DESTINATION_SPREAD_METERS = 7000
+MAX_CARPOOL_DETOUR_METERS = 5000
+MAX_CARPOOL_DETOUR_RATIO = 1.45
+MIN_CARPOOL_PASSENGERS = 2
+MAX_CARPOOL_PASSENGERS = 3
+MAX_PICKUP_WALK_METERS = 150
+
+
+class _WalkLimitExceeded(Exception):
+    """A shared stop cannot serve every rider within the walking limit."""
+
+
+def _split_compatible_shared_group(requests: List[RideRequest]) -> List[List[RideRequest]]:
+    """Split a pickup cluster into destination-compatible carpool pools.
+
+    HDBSCAN deliberately only knows about pickup density. This second, small
+    greedy pass keeps destinations close enough that the resulting route is a
+    plausible shared trip while preserving deterministic request ordering.
+    """
+    groups: List[List[RideRequest]] = []
+    for request in sorted(requests, key=lambda item: (item.request_time, item.id)):
+        placed = False
+        for group in groups:
+            if len(group) >= MAX_CARPOOL_PASSENGERS:
+                continue
+            candidate_group = [*group, request]
+            pickup_centre = (
+                sum(item.pickup_lat for item in candidate_group) / len(candidate_group),
+                sum(item.pickup_lng for item in candidate_group) / len(candidate_group),
+            )
+            destination_centre = (
+                sum(item.dest_lat for item in candidate_group) / len(candidate_group),
+                sum(item.dest_lng for item in candidate_group) / len(candidate_group),
+            )
+            destinations_close = all(
+                _haversine_meters(
+                    request.dest_lat,
+                    request.dest_lng,
+                    other.dest_lat,
+                    other.dest_lng,
+                ) <= MAX_DESTINATION_SPREAD_METERS
+                for other in group
+            )
+            pickup_walk_ok = all(
+                _haversine_meters(item.pickup_lat, item.pickup_lng, *pickup_centre)
+                <= MAX_PICKUP_WALK_METERS
+                for item in candidate_group
+            )
+            shared_distance = (
+                _haversine_meters(request.pickup_lat, request.pickup_lng, *pickup_centre)
+                + _haversine_meters(*pickup_centre, *destination_centre)
+                + _haversine_meters(request.dest_lat, request.dest_lng, *destination_centre)
+            )
+            direct_distance = max(
+                1.0,
+                _haversine_meters(
+                    request.pickup_lat,
+                    request.pickup_lng,
+                    request.dest_lat,
+                    request.dest_lng,
+                ),
+            )
+            detour_ok = (
+                shared_distance - direct_distance <= MAX_CARPOOL_DETOUR_METERS
+                and shared_distance / direct_distance <= MAX_CARPOOL_DETOUR_RATIO
+            )
+            if pickup_walk_ok and destinations_close and detour_ok:
+                group.append(request)
+                placed = True
+                break
+        if not placed:
+            groups.append([request])
+    return groups
+
+
+def _point_to_segment_meters(lat: float, lng: float, start, end) -> float:
+    """Approximate distance from a GPS point to a route segment in meters."""
+    scale = 111_000.0
+    cos_lat = max(0.2, abs(math.cos(lat * math.pi / 180)))
+    px, py = lng * scale * cos_lat, lat * scale
+    ax, ay = start.lng * scale * cos_lat, start.lat * scale
+    bx, by = end.lng * scale * cos_lat, end.lat * scale
+    dx, dy = bx - ax, by - ay
+    if dx == 0 and dy == 0:
+        return ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    nearest_x, nearest_y = ax + t * dx, ay + t * dy
+    return ((px - nearest_x) ** 2 + (py - nearest_y) ** 2) ** 0.5
+
+
+def _try_attach_to_existing_carpool_route(
+    db: Session,
+    request: RideRequest,
+    *,
+    mode: str,
+    demo_run_id: Optional[str],
+) -> bool:
+    """Insert a new request into an unstarted carpool route when safe.
+
+    The request must be close to an existing pickup stop, have a destination
+    in the same corridor, and leave the route at three or fewer passengers.
+    The route is then rebuilt as a pickup-and-delivery problem so the driver
+    receives a real ordered itinerary instead of an appended JSON waypoint.
+    """
+    plans_query = db.query(RoutePlan).filter(
+        RoutePlan.mode == mode,
+        RoutePlan.status == "solved",
+    )
+    if mode == PRESENTATION_DEMO_MODE:
+        plans_query = plans_query.filter(RoutePlan.demo_run_id == demo_run_id)
+
+    for route_plan in plans_query.order_by(RoutePlan.created_at.desc()).all():
+        if str((route_plan.route_metadata or {}).get("problem") or "pdp") != "pdp":
+            continue
+        vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+        if not vehicle or vehicle.status not in {"active", "en_route", "idle"}:
+            continue
+        capacity = min(MAX_CARPOOL_PASSENGERS, max(1, int(vehicle.capacity or 1)))
+        passenger_ids = sorted({
+            passenger_id
+            for waypoint in route_plan.waypoints or []
+            for passenger_id in (waypoint.passenger_ids or [])
+        })
+        if len(passenger_ids) < MIN_CARPOOL_PASSENGERS or len(passenger_ids) >= capacity:
+            continue
+
+        active_requests = db.query(RideRequest).filter(
+            RideRequest.id.in_(passenger_ids),
+            RideRequest.status.in_(["assigned", "arriving"]),
+        ).all()
+        if len(active_requests) != len(passenger_ids):
+            # Do not rewrite a route that has already started or contains stale
+            # passenger assignments.
+            continue
+
+        pickup_waypoints = [
+            waypoint for waypoint in route_plan.waypoints or []
+            if waypoint.waypoint_type == "pickup" and waypoint.stop_id is not None
+        ]
+        if not pickup_waypoints:
+            continue
+
+        ordered_waypoints = sorted(route_plan.waypoints or [], key=lambda waypoint: waypoint.sequence)
+        corridor_distance = min(
+            _point_to_segment_meters(
+                request.pickup_lat,
+                request.pickup_lng,
+                start,
+                end,
+            )
+            for start, end in zip(ordered_waypoints, ordered_waypoints[1:])
+        )
+        if corridor_distance > MAX_PICKUP_WALK_METERS:
+            continue
+
+        nearest_destination_meters = min(
+            _haversine_meters(
+                request.dest_lat,
+                request.dest_lng,
+                existing.dest_lat,
+                existing.dest_lng,
+            )
+            for existing in active_requests
+        )
+        if nearest_destination_meters > MAX_DESTINATION_SPREAD_METERS:
+            continue
+
+        pickup_waypoint = min(
+            pickup_waypoints,
+            key=lambda waypoint: _haversine_meters(
+                request.pickup_lat,
+                request.pickup_lng,
+                waypoint.lat,
+                waypoint.lng,
+            ),
+        )
+        existing_stop = db.query(VirtualStop).filter(VirtualStop.id == pickup_waypoint.stop_id).first()
+        existing_walk_meters = (
+            _haversine_meters(request.pickup_lat, request.pickup_lng, existing_stop.lat, existing_stop.lng)
+            if existing_stop else float("inf")
+        )
+        new_stop = None
+        if existing_stop and existing_walk_meters <= MAX_PICKUP_WALK_METERS:
+            stop = existing_stop
+            walk_meters = existing_walk_meters
+        else:
+            # The request is on the route corridor but not at an existing curb;
+            # add a dedicated road stop and let PDP place it in the itinerary.
+            new_stop = VirtualStop(
+                cluster_id=(db.query(VirtualStop.cluster_id).order_by(VirtualStop.cluster_id.desc()).first() or (0,))[0] + 1,
+                mode=mode,
+                demo_run_id=demo_run_id,
+                h3_index=request.h3_index,
+                lat=request.pickup_lat,
+                lng=request.pickup_lng,
+                snapped_node_id="route-insertion",
+                passenger_count=0,
+            )
+            db.add(new_stop)
+            db.flush()
+            stop = new_stop
+            walk_meters = 0.0
+
+        active_stop_ids = {active.virtual_stop_id for active in active_requests if active.virtual_stop_id}
+        active_stop_ids.add(stop.id)
+        stops = db.query(VirtualStop).filter(VirtualStop.id.in_(active_stop_ids)).all()
+
+        original_status = request.status
+        request.cluster_id = stop.cluster_id
+        request.virtual_stop_id = stop.id
+        request.status = "clustered"
+        stop.passenger_count = int(stop.passenger_count or 0) + 1
+
+        rebuilt = build_shared_routes(
+            vehicles=[vehicle],
+            virtual_stops=stops,
+            depot_lat=route_plan.depot_lat,
+            depot_lng=route_plan.depot_lng,
+            request_statuses=("clustered", "assigned", "arriving"),
+            enrich=True,
+        )
+        if not rebuilt or not rebuilt[0].ride_ids or request.id not in rebuilt[0].ride_ids:
+            request.status = original_status
+            request.cluster_id = None
+            request.virtual_stop_id = None
+            if new_stop:
+                db.delete(new_stop)
+            else:
+                stop.passenger_count = max(0, int(stop.passenger_count or 0) - 1)
+            continue
+
+        route_plan.status = "superseded"
+        persisted = persist_shared_route(
+            db,
+            rebuilt[0],
+            vehicle=vehicle,
+            mode=mode,
+            created_by_user_id=None,
+            source_cluster_run_id=route_plan.source_cluster_run_id,
+            demo_run_id=demo_run_id,
+            assign_statuses=("clustered", "assigned", "arriving"),
+        )
+        create_notification(
+            db,
+            user_id=request.user_id,
+            notification_type="route_assigned",
+            title="You joined a carpool route",
+            message=f"Walk about {round(walk_meters)} m to the shared pickup stop.",
+            related_entity_type="route_plan",
+            related_entity_id=persisted.route_plan.id,
+            metadata={
+                "route_id": persisted.route_id,
+                "vehicle_id": vehicle.id,
+                "walk_meters": round(walk_meters, 1),
+            },
+        )
+        return True
+
+    return False
 
 
 @dataclass
@@ -72,6 +335,70 @@ def _finish_job_run(db: Session, job_run: JobRun, status: str, summary: Dict, er
     job_run.error_message = error_message
     job_run.finished_at = datetime.now(timezone.utc)
     db.add(job_run)
+
+
+def _create_clustered_stop(
+    db: Session,
+    members: List[RideRequest],
+    *,
+    h3_index: str,
+    cluster_id: int,
+    resolution: int,
+    mode: str,
+    demo_run_id: Optional[str],
+) -> Dict:
+    """Create one virtual stop for a group of rides and mark them clustered.
+
+    Shared by the HDBSCAN groups and by the private-ride singletons, so the two
+    paths cannot drift on stop generation, road snapping or status handling.
+    """
+    centroid_lat = sum(req.pickup_lat for req in members) / len(members)
+    centroid_lng = sum(req.pickup_lng for req in members) / len(members)
+    candidate_stops = generate_virtual_stops(members, n_stops=1)
+    stop_lat, stop_lng = candidate_stops[0]
+    road_graph = build_road_graph(centroid_lat, centroid_lng, dist=2500)
+    snapped_lat, snapped_lng, snapped_node_id = snap_to_road(road_graph, stop_lat, stop_lng)
+    max_walk_meters = max(
+        _haversine_meters(request.pickup_lat, request.pickup_lng, snapped_lat, snapped_lng)
+        for request in members
+    )
+    if max_walk_meters > MAX_PICKUP_WALK_METERS:
+        if len(members) > 1:
+            raise _WalkLimitExceeded
+        # A private ride should never force a passenger to walk to a distant
+        # shared curb. Keep the exact requested point as the safe fallback.
+        snapped_lat, snapped_lng, snapped_node_id = members[0].pickup_lat, members[0].pickup_lng, "requested-pickup"
+
+    virtual_stop = VirtualStop(
+        cluster_id=cluster_id,
+        mode=mode,
+        demo_run_id=demo_run_id,
+        h3_index=h3_index,
+        lat=snapped_lat,
+        lng=snapped_lng,
+        snapped_node_id=snapped_node_id,
+        passenger_count=len(members),
+    )
+    db.add(virtual_stop)
+    db.flush()
+
+    ride_ids: List[int] = []
+    for request in members:
+        request.cluster_id = cluster_id
+        request.virtual_stop_id = virtual_stop.id
+        request.status = "clustered"
+        ride_ids.append(request.id)
+
+    return {
+        "cluster_id": cluster_id,
+        "h3_index": h3_index,
+        "ride_request_ids": ride_ids,
+        "virtual_stop_id": virtual_stop.id,
+        "virtual_stop_lat": virtual_stop.lat,
+        "virtual_stop_lng": virtual_stop.lng,
+        "passenger_count": len(members),
+        "snapped_node_id": snapped_node_id,
+    }
 
 
 def run_cluster_job(
@@ -133,11 +460,32 @@ def run_cluster_job(
                 "noise_requests_count": 0,
             }
 
+        # Give a new carpool request first chance to join an existing route.
+        # This is what makes carpooling continuous instead of batching only
+        # requests that arrived in the same clustering tick.
+        unmatched_requests = []
+        for request in requests:
+            if request.is_shared and _try_attach_to_existing_carpool_route(
+                db,
+                request,
+                mode=mode,
+                demo_run_id=demo_run_id,
+            ):
+                continue
+            unmatched_requests.append(request)
+        requests = unmatched_requests
+
         for request in requests:
             if not request.h3_index:
                 request.h3_index = get_h3_index(request.pickup_lat, request.pickup_lng, resolution=resolution)
 
-        buckets = partition_requests(requests, resolution=resolution)
+        # Private rides are never pooled with anyone: pull them out of the
+        # HDBSCAN pool and give each its own singleton stop, so the normal
+        # dispatch step still assigns it a vehicle (a private ride for one).
+        shared_requests = [request for request in requests if request.is_shared]
+        private_requests = [request for request in requests if not request.is_shared]
+
+        buckets = partition_requests(shared_requests, resolution=resolution)
         next_cluster_id = (db.query(VirtualStop.cluster_id).order_by(VirtualStop.cluster_id.desc()).first() or (0,))[0]
         next_cluster_id += 1
         cluster_groups_payload: List[Dict] = []
@@ -150,47 +498,50 @@ def run_cluster_job(
             grouped_requests = get_cluster_groups(bucket_requests, labels)
 
             for _, members in grouped_requests.items():
-                centroid_lat = sum(req.pickup_lat for req in members) / len(members)
-                centroid_lng = sum(req.pickup_lng for req in members) / len(members)
-                candidate_stops = generate_virtual_stops(members, n_stops=1)
-                stop_lat, stop_lng = candidate_stops[0]
-                road_graph = build_road_graph(centroid_lat, centroid_lng, dist=2500)
-                snapped_lat, snapped_lng, snapped_node_id = snap_to_road(road_graph, stop_lat, stop_lng)
+                for compatible_members in _split_compatible_shared_group(members):
+                    # A carpool is only dispatched once at least two compatible
+                    # riders are available. Keep a singleton pending so it can
+                    # be matched by a later clustering/attachment pass.
+                    if len(compatible_members) < MIN_CARPOOL_PASSENGERS:
+                        continue
+                    try:
+                        created_payload = _create_clustered_stop(
+                            db,
+                            compatible_members,
+                            h3_index=bucket_h3_index,
+                            cluster_id=next_cluster_id,
+                            resolution=resolution,
+                            mode=mode,
+                            demo_run_id=demo_run_id,
+                        )
+                    except _WalkLimitExceeded:
+                        # Road snapping moved the common curb too far away.
+                        # Keep the requests pending: splitting them into
+                        # singleton shared rides would violate the 2-rider
+                        # minimum and would not be a carpool.
+                        continue
 
-                virtual_stop = VirtualStop(
+                    cluster_groups_payload.append(created_payload)
+                    clusters_formed += 1
+                    next_cluster_id += 1
+
+        for request in private_requests:
+            h3_index = request.h3_index or get_h3_index(
+                request.pickup_lat, request.pickup_lng, resolution=resolution
+            )
+            cluster_groups_payload.append(
+                _create_clustered_stop(
+                    db,
+                    [request],
+                    h3_index=h3_index,
                     cluster_id=next_cluster_id,
+                    resolution=resolution,
                     mode=mode,
                     demo_run_id=demo_run_id,
-                    h3_index=bucket_h3_index,
-                    lat=snapped_lat,
-                    lng=snapped_lng,
-                    snapped_node_id=snapped_node_id,
-                    passenger_count=len(members),
                 )
-                db.add(virtual_stop)
-                db.flush()
-
-                ride_ids: List[int] = []
-                for request in members:
-                    request.cluster_id = next_cluster_id
-                    request.virtual_stop_id = virtual_stop.id
-                    request.status = "clustered"
-                    ride_ids.append(request.id)
-
-                cluster_groups_payload.append(
-                    {
-                        "cluster_id": next_cluster_id,
-                        "h3_index": bucket_h3_index,
-                        "ride_request_ids": ride_ids,
-                        "virtual_stop_id": virtual_stop.id,
-                        "virtual_stop_lat": virtual_stop.lat,
-                        "virtual_stop_lng": virtual_stop.lng,
-                        "passenger_count": len(members),
-                        "snapped_node_id": snapped_node_id,
-                    }
-                )
-                clusters_formed += 1
-                next_cluster_id += 1
+            )
+            clusters_formed += 1
+            next_cluster_id += 1
 
         cluster_run = ClusterRun(
             run_uuid=str(uuid4()),

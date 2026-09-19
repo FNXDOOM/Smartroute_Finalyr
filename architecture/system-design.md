@@ -120,14 +120,15 @@ This is the full lifecycle of a passenger ride from request to completion.
       solve_shared_ride_pdp  — depot + one pickup node per pooled stop + one destination
                                node per ride, paired; a signed load dimension, so a seat is
                                free again at its drop-off; open-ended, ends at the last drop
-      solve_vrp              — pickups-only CVRP fallback when no PDP route exists
+      infeasible PDP pools remain clustered for a later split/retry; no pickup-only
+      passenger route is persisted
                                (routes close back at the depot)
       PATH_CHEAPEST_ARC + GUIDED_LOCAL_SEARCH, 10-15 s limit, per-vehicle capacities
          │
          ▼
     Best-effort per-leg geometry enrichment via Stadia route_many
     (geometry + one polyline per consecutive waypoint pair; routing_provider =
-     "stadia" | "local-road-matrix", problem = "pdp" | "cvrp")
+     "stadia" | "local-road-matrix", problem = "pdp")
          │
          ▼
     For each route solution:

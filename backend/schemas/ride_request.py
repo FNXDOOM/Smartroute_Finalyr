@@ -14,6 +14,8 @@ class RideRequestBase(BaseModel):
     ride_option_id: Optional[str] = Field(None, max_length=40)
     ride_option_name: Optional[str] = Field(None, max_length=80)
     ride_option_price: Optional[str] = Field(None, max_length=40)
+    # Carpool vs private; default keeps existing clients pooling.
+    is_shared: bool = True
 
 
 class RideRequestCreate(RideRequestBase):
@@ -65,6 +67,7 @@ class RideRouteStop(BaseModel):
     waypoint_type: str = Field(..., description="depot | pickup | destination")
     passenger_count: int = 0
     is_mine: bool = False
+    walk_meters: Optional[float] = None
 
 
 class RideRouteResponse(BaseModel):
@@ -83,6 +86,9 @@ class RideRouteResponse(BaseModel):
     stops: List[RideRouteStop] = Field(default_factory=list)
     my_pickup_sequence: Optional[int] = None
     my_destination_sequence: Optional[int] = None
+    my_pickup_walk_meters: Optional[float] = None
+    my_pickup_stop_lat: Optional[float] = None
+    my_pickup_stop_lng: Optional[float] = None
     my_leg_indices: List[int] = Field(default_factory=list)
     total_distance_meters: float = 0
     estimated_duration_seconds: float = 0

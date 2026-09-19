@@ -10,6 +10,10 @@ The pool is a pickup-and-delivery problem, not the pickups-only CVRP it used to
 be: every ride request contributes a destination node paired with the boarding
 stop its passenger walks to. A destination hands its demand back to the
 vehicle, so seats are only occupied between a boarding stop and its drop-off.
+
+A *private* ride (``RideRequest.is_shared`` False) is deliberately kept out of
+the shared solver: it gets a dedicated vehicle and its stop is never merged with
+any other, so "Normal" really means alone.
 """
 
 from dataclasses import dataclass, field
@@ -23,8 +27,9 @@ from models.ride_request import RideRequest
 from models.route_plan import RoutePlan
 from models.route_waypoint import RouteWaypointRecord
 from models.vehicle import Vehicle
-from services.routing.vrp_solver import solve_shared_ride_pdp, solve_vrp
+from services.routing.vrp_solver import solve_shared_ride_pdp
 from services.stadia_client import extract_route_details, route_many
+from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
 
 
@@ -35,6 +40,8 @@ ROUTE_LOCATION_WINDOW = 24
 MAX_ENRICHMENT_CHUNKS = 6
 # Fallback speed used when the router returns no duration (~30 km/h).
 FALLBACK_METRES_PER_SECOND = 8.33
+MIN_CARPOOL_PASSENGERS = 2
+MAX_CARPOOL_PASSENGERS = 3
 
 
 @dataclass
@@ -136,6 +143,79 @@ def enrich_route_geometry(points: Sequence[Dict]) -> Optional[Dict]:
     return merged if merged["geometry"] else None
 
 
+def _finalize_route(
+    *,
+    vehicle_index: int,
+    waypoints: List[Dict],
+    depot_lat: float,
+    depot_lng: float,
+    enrich: bool,
+    problem: str,
+    fallback_distance_m: float = 0.0,
+) -> Optional[BuiltRoute]:
+    """Enrich an ordered waypoint list into a persistable [BuiltRoute].
+
+    Returns None when there is nothing to drive. Ride ids, drop-off ids and stop
+    ids are derived from the waypoints so the solver and the private-ride path
+    cannot disagree on what a route serves.
+    """
+    if len(waypoints) < 2:
+        return None
+
+    details = None
+    if enrich:
+        details = enrich_route_geometry(
+            [{"lat": waypoint["lat"], "lng": waypoint["lng"]} for waypoint in waypoints]
+        )
+    if not fallback_distance_m:
+        fallback_distance_m = sum(
+            haversine_meters(
+                float(previous["lat"]),
+                float(previous["lng"]),
+                float(current["lat"]),
+                float(current["lng"]),
+            )
+            for previous, current in zip(waypoints, waypoints[1:])
+        )
+    distance_m = float((details or {}).get("distance_meters") or 0) or float(fallback_distance_m or 0)
+    duration_s = float((details or {}).get("duration_seconds") or 0) or (
+        distance_m / FALLBACK_METRES_PER_SECOND if distance_m else 0.0
+    )
+
+    ride_ids = sorted({
+        request_id
+        for waypoint in waypoints
+        for request_id in waypoint.get("passenger_ids") or []
+    })
+    destination_ride_ids = [
+        waypoint["passenger_ids"][0]
+        for waypoint in waypoints
+        if waypoint.get("waypoint_type") == "destination" and waypoint.get("passenger_ids")
+    ]
+    stop_ids = sorted({
+        waypoint["stop_id"]
+        for waypoint in waypoints
+        if waypoint.get("stop_id") is not None
+    })
+
+    return BuiltRoute(
+        vehicle_index=vehicle_index,
+        depot_lat=depot_lat,
+        depot_lng=depot_lng,
+        waypoints=waypoints,
+        ride_ids=ride_ids,
+        destination_ride_ids=destination_ride_ids,
+        stop_ids=stop_ids,
+        distance_m=distance_m,
+        duration_s=duration_s,
+        geometry=(details or {}).get("geometry") or [],
+        legs=(details or {}).get("legs") or [],
+        maneuvers=(details or {}).get("maneuvers") or [],
+        provider="stadia" if details else "local-road-matrix",
+        problem=problem,
+    )
+
+
 def build_shared_routes(
     *,
     vehicles: Sequence[Vehicle],
@@ -145,7 +225,11 @@ def build_shared_routes(
     request_statuses: Optional[Iterable[str]] = None,
     enrich: bool = True,
 ) -> List[BuiltRoute]:
-    """Solve one pooled route per vehicle over the supplied virtual stops.
+    """Solve routes over the supplied virtual stops.
+
+    Private rides are never pooled: each private stop is matched to a dedicated
+    vehicle and kept out of the shared solver, so it cannot be merged with any
+    other stop. Shared stops are solved as one pickup-and-delivery problem.
 
     ``request_statuses`` selects which requests take part (``None`` pools every
     request at a stop — the manual optimize endpoint's behaviour; the dispatch
@@ -163,13 +247,67 @@ def build_shared_routes(
     if not pooled:
         return []
 
-    capacities = [max(1, int(vehicle.capacity or 1)) for vehicle in vehicles]
+    def _is_private(requests: List[RideRequest]) -> bool:
+        # getattr default True: a request object without the flag is shared, the
+        # same default the column carries.
+        return all(getattr(request, "is_shared", True) is False for request in requests)
+
+    private_pooled = [(stop, requests) for stop, requests in pooled if _is_private(requests)]
+    # Never dispatch a singleton as a carpool. It remains clustered/pending
+    # until another compatible shared request can join it.
+    shared_pooled = [
+        (stop, requests)
+        for stop, requests in pooled
+        if not _is_private(requests) and len(requests) >= MIN_CARPOOL_PASSENGERS
+    ]
+
+    # One dedicated vehicle per private ride. If there are more private stops
+    # than free vehicles the extras are left alone (they stay "clustered" and a
+    # later dispatch with a free vehicle picks them up) — never pooled.
+    reserved_private = private_pooled[:len(vehicles)]
+    vehicle_offset = len(reserved_private)
+    remaining_vehicles = vehicles[vehicle_offset:]
+
+    built_routes: List[BuiltRoute] = []
+    for vehicle_index, (stop, requests) in enumerate(reserved_private):
+        waypoints: List[Dict] = [{
+            "stop_id": stop.id,
+            "lat": float(stop.lat),
+            "lng": float(stop.lng),
+            "waypoint_type": "pickup",
+            "passenger_ids": [request.id for request in requests],
+        }]
+        for request in requests:
+            waypoints.append({
+                "stop_id": None,
+                "lat": float(request.dest_lat),
+                "lng": float(request.dest_lng),
+                "waypoint_type": "destination",
+                "passenger_ids": [request.id],
+            })
+        route = _finalize_route(
+            vehicle_index=vehicle_index,
+            waypoints=waypoints,
+            depot_lat=depot_lat,
+            depot_lng=depot_lng,
+            enrich=enrich,
+            problem="pdp",
+        )
+        if route is not None:
+            built_routes.append(route)
+
+    if not shared_pooled or not remaining_vehicles:
+        return built_routes
+
+    # Carpool policy is intentionally stricter than the physical vehicle
+    # capacity: one shared run carries at most three passengers.
+    capacities = [min(MAX_CARPOOL_PASSENGERS, max(1, int(vehicle.capacity or 1))) for vehicle in remaining_vehicles]
     smallest_capacity = min(capacities)
 
     # Depot, one boarding node per pooled stop, one destination per request.
     node_meta: List[Dict] = [{"kind": "depot", "stop": None, "requests": []}]
     nodes: List[Dict] = [{"lat": depot_lat, "lng": depot_lng, "kind": "depot", "demand": 0}]
-    for stop, requests in pooled:
+    for stop, requests in shared_pooled:
         pickup_index = len(nodes)
         nodes.append({
             "lat": float(stop.lat),
@@ -191,44 +329,22 @@ def build_shared_routes(
     problem = "pdp"
     solution = solve_shared_ride_pdp(
         nodes=nodes,
-        num_vehicles=len(vehicles),
+        num_vehicles=len(remaining_vehicles),
         vehicle_capacity=smallest_capacity,
         vehicle_capacities=capacities,
     )
     if solution.get("status") != "solved":
-        # A pool can be infeasible (fewer seats than riders in one run). Fall
-        # back to the pickups-only CVRP this pipeline used before, so dispatch
-        # still assigns vehicles instead of silently doing nothing.
-        problem = "cvrp"
-        nodes = [{"lat": depot_lat, "lng": depot_lng, "demand": 0, "stop_id": None}]
-        node_meta = [{"kind": "depot", "stop": None, "requests": []}]
-        for stop, requests in pooled:
-            nodes.append({
-                "lat": float(stop.lat),
-                "lng": float(stop.lng),
-                "demand": len(requests),
-                "stop_id": stop.id,
-            })
-            node_meta.append({"kind": "pickup", "stop": stop, "requests": requests})
-        solution = solve_vrp(
-            stops=nodes,
-            num_vehicles=len(vehicles),
-            vehicle_capacity=smallest_capacity,
-            vehicle_capacities=capacities,
-        )
-        if solution.get("status") != "solved":
-            return []
+        # A pickup-only route is not a valid passenger route: it has no
+        # destination waypoint and would falsely mark riders as assigned.
+        # Leave the shared pool clustered so a later run can split/retry it.
+        return built_routes
 
-    built_routes: List[BuiltRoute] = []
     for route_data in solution.get("routes", []):
         vehicle_index = int(route_data["vehicle_idx"])
-        if vehicle_index >= len(vehicles):
+        if vehicle_index >= len(remaining_vehicles):
             continue
 
         waypoints: List[Dict] = []
-        ride_ids: List[int] = []
-        destination_ride_ids: List[int] = []
-        stop_ids: List[int] = []
         # Index 0 is the depot every route starts from.
         for node_index in route_data["stop_indices"][1:]:
             if node_index >= len(node_meta):
@@ -242,8 +358,6 @@ def build_shared_routes(
                     "waypoint_type": "pickup",
                     "passenger_ids": [request.id for request in meta["requests"]],
                 })
-                stop_ids.append(meta["stop"].id)
-                ride_ids.extend(request.id for request in meta["requests"])
             elif meta["kind"] == "destination":
                 request = meta["requests"][0]
                 waypoints.append({
@@ -253,48 +367,20 @@ def build_shared_routes(
                     "waypoint_type": "destination",
                     "passenger_ids": [request.id],
                 })
-                destination_ride_ids.append(request.id)
 
-        if problem == "cvrp":
-            # The pickups-only fallback keeps the shape it always had: the route
-            # closes back at the hub, which is not part of the solver's stops.
-            waypoints.append({
-                "stop_id": None,
-                "lat": depot_lat,
-                "lng": depot_lng,
-                "waypoint_type": "depot",
-                "passenger_ids": [],
-            })
-
-        if len(waypoints) < 2:
-            continue
-
-        details = None
-        if enrich:
-            details = enrich_route_geometry(
-                [{"lat": waypoint["lat"], "lng": waypoint["lng"]} for waypoint in waypoints]
-            )
-        distance_m = float((details or {}).get("distance_meters") or 0) or float(route_data.get("distance_m") or 0)
-        duration_s = float((details or {}).get("duration_seconds") or 0) or (
-            distance_m / FALLBACK_METRES_PER_SECOND if distance_m else 0.0
-        )
-
-        built_routes.append(BuiltRoute(
-            vehicle_index=vehicle_index,
+        route = _finalize_route(
+            # Offset past the vehicles reserved for private rides so the caller
+            # (which indexes its own vehicle list) still finds the right one.
+            vehicle_index=vehicle_index + vehicle_offset,
+            waypoints=waypoints,
             depot_lat=depot_lat,
             depot_lng=depot_lng,
-            waypoints=waypoints,
-            ride_ids=sorted(set(ride_ids)),
-            destination_ride_ids=destination_ride_ids,
-            stop_ids=sorted(set(stop_ids)),
-            distance_m=distance_m,
-            duration_s=duration_s,
-            geometry=(details or {}).get("geometry") or [],
-            legs=(details or {}).get("legs") or [],
-            maneuvers=(details or {}).get("maneuvers") or [],
-            provider="stadia" if details else "local-road-matrix",
+            enrich=enrich,
             problem=problem,
-        ))
+            fallback_distance_m=float(route_data.get("distance_m") or 0),
+        )
+        if route is not None:
+            built_routes.append(route)
 
     return built_routes
 
@@ -337,7 +423,7 @@ def persist_shared_route(
             "maneuvers": built.maneuvers,
             "routing_provider": built.provider,
             "problem": built.problem,
-            "return_to_depot": built.problem == "cvrp",
+            "return_to_depot": False,
             "geometry_resolved": bool(built.geometry),
         },
     )

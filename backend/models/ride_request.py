@@ -1,6 +1,15 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, Float, String, ForeignKey, DateTime
+from sqlalchemy import (
+    Column,
+    Integer,
+    Float,
+    String,
+    ForeignKey,
+    DateTime,
+    Boolean,
+    text,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base, PortableGeometry
@@ -17,6 +26,8 @@ class RideRequest(Base):
     dest_lng = Column(Float, nullable=False)
     status = Column(String, default="pending", nullable=False)  # pending | clustered | assigned | in_progress | completed | cancelled
     mode = Column("ride_mode", String, default="live", nullable=False, index=True)  # live | presentation_demo
+    # Carpool (True, default) vs private (False). A private ride is never pooled.
+    is_shared = Column(Boolean, nullable=False, default=True, server_default=text("true"), index=True)
     demo_run_id = Column(String, nullable=True, index=True)
     h3_index = Column(String, index=True, nullable=True)
     cluster_id = Column(Integer, nullable=True)

@@ -364,6 +364,19 @@ def solve_shared_ride_pdp(
     transit_cb_idx = routing.RegisterTransitCallback(distance_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_cb_idx)
 
+    # A real distance dimension is used for pickup-before-delivery precedence.
+    # The load dimension alone only describes occupancy; it is not a reliable
+    # ordering constraint for every OR-Tools version.
+    max_route_distance = max(1, sum(max(row) for row in distance_matrix))
+    routing.AddDimension(
+        transit_cb_idx,
+        0,
+        max_route_distance,
+        True,
+        "Distance",
+    )
+    distance_dimension = routing.GetDimensionOrDie("Distance")
+
     def load_callback(from_index):
         """Seats taken at a boarding stop, seats freed at a destination."""
         node = matrix_nodes[manager.IndexToNode(from_index)]
@@ -400,7 +413,7 @@ def solve_shared_ride_pdp(
             routing.VehicleVar(pickup_var) == routing.VehicleVar(destination_var)
         )
         routing.solver().Add(
-            load_dimension.CumulVar(pickup_var) <= load_dimension.CumulVar(destination_var)
+            distance_dimension.CumulVar(pickup_var) <= distance_dimension.CumulVar(destination_var)
         )
 
     params = pywrapcp.DefaultRoutingSearchParameters()

@@ -177,7 +177,7 @@ def _route_plan_response(route_plan: RoutePlan) -> RoutePlanResponse:
     return response.model_copy(update={
         "geometry": metadata.get("geometry") or [],
         "legs": [RouteLeg(**leg) for leg in (metadata.get("legs") or [])],
-        "problem": str(metadata.get("problem") or "cvrp"),
+        "problem": str(metadata.get("problem") or "pdp"),
     })
 
 

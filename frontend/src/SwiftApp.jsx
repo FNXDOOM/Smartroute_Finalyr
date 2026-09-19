@@ -3,7 +3,7 @@ import { SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/clerk-react'
 import {
   Bell, CarFront, CheckCircle2, ClipboardList, Flame, History, Home, Inbox, LayoutDashboard,
   Loader2, LogOut, Map as MapIcon, Route as RouteIcon, Settings, ShieldCheck, Sparkles,
-  TriangleAlert, User as UserIcon, X, XCircle, Info, BarChart3, Truck, Zap, Play, GraduationCap,
+  TriangleAlert, User as UserIcon, X, XCircle, Info, BarChart3, Truck, Zap, Play, GraduationCap, Users,
 } from 'lucide-react'
 import {
   loadAppBootstrap, clearAppBootstrap, setAuthTokenGetter,
@@ -460,7 +460,7 @@ export default function App() {
       return
     }
 
-    const driverOnlyViews = ['driver-home', 'driver-map', 'driver-routes']
+    const driverOnlyViews = ['driver-home', 'driver-map', 'driver-routes', 'driver-carpool']
     const adminOnlyViews = ['admin-overview', 'admin-rides', 'admin-vehicles', 'admin-cluster', 'admin-routes', 'admin-analytics', 'admin-jobs', 'admin-heatmap', 'admin-drivers']
 
     if (user.role === 'passenger' && (driverOnlyViews.includes(targetView) || adminOnlyViews.includes(targetView))) {
@@ -546,6 +546,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
         { v: 'driver-home', Icon: LayoutDashboard, label: 'Dashboard' },
         { v: 'driver-map', Icon: MapIcon, label: 'Live Map' },
         { v: 'driver-routes', Icon: RouteIcon, label: 'My Routes' },
+        { v: 'driver-carpool', Icon: Users, label: 'Carpool Run' },
       ],
     },
     {

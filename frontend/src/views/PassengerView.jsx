@@ -46,6 +46,7 @@ export default function PassengerView({ view, setView, toast }) {
   const [destinationPoint, setDestinationPoint] = useState(null)
   const [routeGeometry, setRouteGeometry] = useState([])
   const [routeEstimate, setRouteEstimate] = useState(null)
+  const [pickupWalkMeters, setPickupWalkMeters] = useState(null)
   const [suggestions, setSuggestions] = useState([])
   const [suggestionField, setSuggestionField] = useState(null)
   const [pickupConfirmed, setPickupConfirmed] = useState(false)
@@ -57,6 +58,7 @@ export default function PassengerView({ view, setView, toast }) {
   const [mapPickupMode, setMapPickupMode] = useState(false)
   const [mapPickupLoading, setMapPickupLoading] = useState(false)
   const [trafficRouting, setTrafficRouting] = useState(false)
+  const [sharedRide, setSharedRide] = useState(true)
   const pollRef = useRef(null)
   const dismissTimeoutRef = useRef(null)
   const gpsWatchRef = useRef(null)
@@ -203,6 +205,7 @@ export default function PassengerView({ view, setView, toast }) {
   }, [])
 
   const activeRideId = activeRide?.id
+  const activeRideStatus = activeRide?.status
   const activePickupLat = activeRide?.pickup_lat
   const activePickupLng = activeRide?.pickup_lng
   const activeDestinationLat = activeRide?.dest_lat
@@ -211,24 +214,48 @@ export default function PassengerView({ view, setView, toast }) {
   useEffect(() => {
     if (!activeRideId) return undefined
     let cancelled = false
-    routingApi.route(
-      { lat: activePickupLat, lng: activePickupLng },
-      { lat: activeDestinationLat, lng: activeDestinationLng },
-      { traffic: trafficRouting },
-    ).then(route => {
-      if (cancelled) return
-      setRouteEstimate(route)
-      setRouteGeometry(route?.geometry?.length > 1 ? route.geometry : [])
-    }).catch(() => {
-      if (!cancelled) setRouteGeometry([])
-    })
+    const loadRoute = async () => {
+      try {
+        const pooled = await ridesApi.getRoute(activeRideId)
+        if (cancelled) return
+        if (pooled?.geometry?.length > 1) {
+          setRouteGeometry(pooled.geometry)
+          setPickupWalkMeters(pooled.my_pickup_walk_meters ?? null)
+          setRouteEstimate({
+            geometry: pooled.geometry,
+            distanceMeters: pooled.total_distance_meters || 0,
+            durationSeconds: pooled.estimated_duration_seconds || 0,
+          })
+          return
+        }
+      } catch {
+        // No optimized route yet; use the direct preview below.
+      }
+      try {
+        const direct = await routingApi.route(
+          { lat: activePickupLat, lng: activePickupLng },
+          { lat: activeDestinationLat, lng: activeDestinationLng },
+          { traffic: trafficRouting },
+        )
+        if (cancelled) return
+        setRouteEstimate(direct)
+        setRouteGeometry(direct?.geometry?.length > 1 ? direct.geometry : [])
+        setPickupWalkMeters(null)
+      } catch {
+        if (!cancelled) {
+          setRouteGeometry([])
+          setPickupWalkMeters(null)
+        }
+      }
+    }
+    void loadRoute()
     return () => { cancelled = true }
-  }, [activeDestinationLat, activeDestinationLng, activePickupLat, activePickupLng, activeRideId, trafficRouting])
+  }, [activeDestinationLat, activeDestinationLng, activePickupLat, activePickupLng, activeRideId, activeRideStatus, trafficRouting])
 
   const clearActiveRideState = useCallback(() => {
     if (dismissTimeoutRef.current) { clearTimeout(dismissTimeoutRef.current); dismissTimeoutRef.current = null }
     setActiveRide(null); setRideVehicle(null)
-    setRouteGeometry([]); setRouteEstimate(null)
+    setRouteGeometry([]); setRouteEstimate(null); setPickupWalkMeters(null)
   }, [])
 
   useEffect(() => {
@@ -283,11 +310,13 @@ export default function PassengerView({ view, setView, toast }) {
         ride_option_id: selected,
         ride_option_name: tier?.name,
         ride_option_price: tier?.price,
+        is_shared: sharedRide,
       })
       if (dismissTimeoutRef.current) { clearTimeout(dismissTimeoutRef.current); dismissTimeoutRef.current = null }
+      setPickupWalkMeters(null)
       setActiveRide(ride)
       setTrips(prev => [ride, ...prev.filter(t => t.id !== ride.id)])
-      toast('success','Ride Requested!','Finding nearby riders to pool with…')
+      toast('success','Ride Requested!', sharedRide ? 'Finding nearby riders to pool with…' : 'Matching you with a private ride…')
     } catch(e) { toast('error','Booking failed', e?.response?.data?.detail||e?.message||'') }
     finally { setBooking(false); setGeocoding(false) }
   }
@@ -409,6 +438,10 @@ export default function PassengerView({ view, setView, toast }) {
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[#8A8A8A]">Active booking</p>
                     <p className="mt-1 truncate text-[15px] font-bold tracking-[-0.01em]">Ride #{activeRide.id} · {activeRide.ride_option_name || 'SwiftX'}</p>
+                    <p className="mt-0.5 text-[12px] font-medium text-[#6B6B6B] dark:text-[#AFAFAF]">{activeRide.is_shared === false ? 'Private ride' : 'Carpool'}</p>
+                    {activeRide.is_shared && pickupWalkMeters != null && pickupWalkMeters > 1 && (
+                      <p className="mt-1 text-[11px] font-semibold text-primary">Walk about {Math.round(pickupWalkMeters)} m to the shared pickup stop</p>
+                    )}
                   </div>
                   <StatusBadge status={activeRide.status} />
                 </div>
@@ -552,6 +585,41 @@ export default function PassengerView({ view, setView, toast }) {
           <div className="flex items-center justify-between gap-3 rounded-xl border border-[#E2E2E2] px-4 py-3 dark:border-[#333333]">
             <Label htmlFor="traffic-switch" className="cursor-pointer text-[13px] font-medium normal-case tracking-normal">Use live traffic for route and ETA</Label>
             <Switch id="traffic-switch" checked={trafficRouting} onCheckedChange={setTrafficRouting} aria-label="Use live traffic" />
+          </div>
+          <div className="rounded-xl border border-[#E2E2E2] p-4 dark:border-[#333333]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8A8A8A]">Ride type</p>
+            <div className="mt-2.5 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Ride type">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!sharedRide}
+                onClick={() => setSharedRide(false)}
+                className={cn(
+                  'rounded-lg border px-3 py-2.5 text-left transition-colors',
+                  !sharedRide
+                    ? 'border-transparent bg-primary text-primary-foreground'
+                    : 'border-input text-foreground hover:border-ring',
+                )}
+              >
+                <span className="block text-[13px] font-semibold">Normal</span>
+                <span className="mt-0.5 block text-[11px] opacity-70">A private ride just for you</span>
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={sharedRide}
+                onClick={() => setSharedRide(true)}
+                className={cn(
+                  'rounded-lg border px-3 py-2.5 text-left transition-colors',
+                  sharedRide
+                    ? 'border-transparent bg-primary text-primary-foreground'
+                    : 'border-input text-foreground hover:border-ring',
+                )}
+              >
+                <span className="block text-[13px] font-semibold">Carpool</span>
+                <span className="mt-0.5 block text-[11px] opacity-70">Share with riders going your way</span>
+              </button>
+            </div>
           </div>
 
           {/* Ride tiers — price/status first, details second */}
@@ -746,6 +814,7 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
           <InfoCard label="From" value={ride.pickup_label || `${ride.pickup_lat}, ${ride.pickup_lng}`} />
           <InfoCard label="To" value={ride.destination_label || `${ride.dest_lat}, ${ride.dest_lng}`} />
           <InfoCard label="Ride tier" value={ride.ride_option_name || 'Standard'} />
+          <InfoCard label="Ride type" value={ride.is_shared === false ? 'Private ride' : 'Carpool'} />
           {ride.ride_option_price && <InfoCard label="Fare" value={ride.ride_option_price} />}
           {ride.h3_index && <InfoCard label="H3 cell" value={ride.h3_index} mono />}
           {ride.request_time && <InfoCard label="Requested" value={new Date(ride.request_time).toLocaleString()} />}

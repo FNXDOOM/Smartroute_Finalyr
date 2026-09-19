@@ -125,13 +125,23 @@ export default function DriverView({ user, view, setView, toast }) {
     } catch { /* keep the last good list; next tick retries */ }
   }, [toast])
 
+  const refreshRoutes = useCallback(async () => {
+    try {
+      const result = await routeApi.history(10)
+      setRoutes(result?.routes || [])
+    } catch { /* keep the last good route plan; next tick retries */ }
+  }, [])
+
   useEffect(() => { const timer = setTimeout(() => { void loadData() }, 0); return () => clearTimeout(timer) }, [loadData])
 
   useEffect(() => {
-    if (view !== 'driver-home' || loading) return undefined
-    const id = setInterval(() => { void refreshRides() }, 6000)
+    if (!['driver-home', 'driver-carpool'].includes(view) || loading) return undefined
+    const id = setInterval(() => {
+      void refreshRides()
+      void refreshRoutes()
+    }, 6000)
     return () => clearInterval(id)
-  }, [view, loading, refreshRides])
+  }, [view, loading, refreshRides, refreshRoutes])
 
   // Live tracking WebSocket
   useEffect(() => {
@@ -364,6 +374,19 @@ export default function DriverView({ user, view, setView, toast }) {
     return <RoutesView routes={routes} loading={loading} onBack={()=>setView('driver-home')} onStartNav={startFullNav} />
   }
 
+  if (view === 'driver-carpool') {
+    return (
+      <CarpoolRouteView
+        routes={routes}
+        rides={rides}
+        vehicle={myVehicle}
+        loading={loading}
+        onBack={() => setView('driver-home')}
+        onOpenMap={openFullNav}
+      />
+    )
+  }
+
   // Driver home
   const firstName = user?.name?.split(' ')[0] || 'Driver'
   const incoming = rides.filter((r) => ['pending', 'clustered'].includes(r.status))
@@ -534,9 +557,15 @@ export default function DriverView({ user, view, setView, toast }) {
                       <Flag className="h-3.5 w-3.5 shrink-0 text-rose-500" /> {r.destination_label || 'Destination'}
                     </p>
                     <div className="mt-2.5 flex gap-2">
-                      <Button size="sm" className="h-8 flex-1 gap-1.5" onClick={() => acceptRide(r.id)}>
-                        <Check className="h-3.5 w-3.5" /> Accept ride
-                      </Button>
+                      {r.is_shared ? (
+                        <div className="flex flex-1 items-center rounded-md bg-primary/10 px-3 text-[11px] font-semibold text-primary">
+                          <Users className="mr-1.5 h-3.5 w-3.5" /> Waiting for a compatible carpool route
+                        </div>
+                      ) : (
+                        <Button size="sm" className="h-8 flex-1 gap-1.5" onClick={() => acceptRide(r.id)}>
+                          <Check className="h-3.5 w-3.5" /> Accept ride
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" className="h-8 gap-1 text-destructive hover:text-destructive" onClick={() => declineRide(r.id)}>
                         <X className="h-3.5 w-3.5" /> Decline
                       </Button>
@@ -1029,6 +1058,135 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
       </div>
     </div>
   )
+}
+
+function carpoolDistanceMeters(aLat, aLng, bLat, bLng) {
+  const radius = 6371000
+  const lat1 = (aLat * Math.PI) / 180
+  const lat2 = (bLat * Math.PI) / 180
+  const dLat = lat2 - lat1
+  const dLng = ((bLng - aLng) * Math.PI) / 180
+  const h = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2
+  return 2 * radius * Math.asin(Math.sqrt(h))
+}
+
+function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap }) {
+  const route = routes?.find((item) => (
+    item.vehicle_id === vehicle?.id &&
+    item.status === 'solved' &&
+    (item.problem || item.route_metadata?.problem || 'pdp') === 'pdp'
+  )) || null
+  const waypoints = route?.waypoints || []
+  const rideById = new Map((rides || []).map((ride) => [ride.id, ride]))
+  const passengerIds = [...new Set(waypoints.flatMap((waypoint) => waypoint.passenger_ids || []))]
+  const routeGeometry = route?.geometry?.length > 1
+    ? route.geometry
+    : waypoints.map((waypoint) => [waypoint.lng, waypoint.lat])
+  const center = waypoints.length
+    ? [
+        waypoints.reduce((sum, waypoint) => sum + waypoint.lat, 0) / waypoints.length,
+        waypoints.reduce((sum, waypoint) => sum + waypoint.lng, 0) / waypoints.length,
+      ]
+    : [12.9756, 77.625]
+
+  return (
+    <div className="mx-auto w-full max-w-6xl space-y-5 p-4 md:p-7">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <Button variant="ghost" size="sm" onClick={onBack} className="gap-1.5">
+            <ArrowLeft className="h-4 w-4" /> Back
+          </Button>
+          <div>
+            <p className="text-xs font-semibold text-primary">DRIVER ITINERARY</p>
+            <h1 className="mob-page-title text-xl">Carpool run</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">Stop-by-stop guidance for up to three riders.</p>
+          </div>
+        </div>
+        <Button onClick={onOpenMap} className="gap-1.5" disabled={!route}>
+          <Navigation className="h-4 w-4" /> Open live map
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_360px]">
+          <div className="h-[360px] animate-pulse rounded-2xl bg-muted" />
+          <div className="h-[360px] animate-pulse rounded-2xl bg-muted" />
+        </div>
+      ) : !route ? (
+        <Card className="border-dashed">
+          <CardContent className="space-y-2 p-8 text-center">
+            <Users className="mx-auto h-8 w-8 text-muted-foreground" />
+            <p className="font-semibold">No active carpool run</p>
+            <p className="mx-auto max-w-md text-sm text-muted-foreground">When dispatch matches two or three riders travelling the same way, their shared itinerary will appear here.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_360px]">
+          <Card className="overflow-hidden">
+            <div className="relative h-[420px] border-b">
+              <AppMap center={center} zoom={13.5} height="100%" routeGeometry={routeGeometry} waypoints={waypoints} />
+              <div className="absolute left-3 top-3 flex items-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow backdrop-blur">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Users className="h-4 w-4" /></span>
+                <div>
+                  <p className="text-xs font-bold">{passengerIds.length} / 3 passengers</p>
+                  <p className="text-[11px] text-muted-foreground">{vehicle?.license_plate || 'Assigned vehicle'}</p>
+                </div>
+              </div>
+            </div>
+            <CardContent className="grid grid-cols-3 gap-3 p-4">
+              <RouteMetric label="Stops" value={String(waypoints.length)} />
+              <RouteMetric label="Distance" value={`${((route.total_distance_meters || 0) / 1000).toFixed(1)} km`} />
+              <RouteMetric label="Mode" value="PDP" />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">Your next stops</CardTitle>
+              <CardDescription>Follow this order. Pickups are shared curb stops.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-0">
+              {waypoints.map((waypoint, index) => {
+                const ids = waypoint.passenger_ids || []
+                const isPickup = waypoint.waypoint_type === 'pickup'
+                return (
+                  <div key={`${waypoint.sequence ?? index}-${waypoint.lat}`} className="flex gap-3 border-l-2 border-border pb-4 pl-4 last:pb-0">
+                    <div className={cn('relative -ml-[23px] mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 bg-card text-xs font-bold', isPickup ? 'border-primary text-primary' : 'border-foreground')}>
+                      {index + 1}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-xs font-bold">{isPickup ? 'Pick up' : 'Drop off'}</p>
+                        <Badge variant="outline" className="text-[10px]">{isPickup ? 'BOARD' : 'EXIT'}</Badge>
+                      </div>
+                      {ids.map((id) => {
+                        const ride = rideById.get(id)
+                        const walk = isPickup && ride
+                          ? carpoolDistanceMeters(ride.pickup_lat, ride.pickup_lng, waypoint.lat, waypoint.lng)
+                          : 0
+                        return (
+                          <p key={id} className="mt-1 truncate text-sm">
+                            {ride?.pickup_label || ride?.destination_label || `Rider #${id}`}
+                            {isPickup && walk > 0 ? <span className="ml-1 text-xs text-muted-foreground">· walks {Math.round(walk)} m</span> : null}
+                          </p>
+                        )
+                      })}
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">{waypoint.lat.toFixed(5)}, {waypoint.lng.toFixed(5)}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RouteMetric({ label, value }) {
+  return <div className="rounded-lg bg-muted/60 p-3"><p className="text-[10px] font-semibold text-muted-foreground">{label}</p><p className="mt-1 text-sm font-bold">{value}</p></div>
 }
 
 const STATUS_STYLES = {

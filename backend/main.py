@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from database import engine
+from database import engine, run_startup_migrations
 from routers import auth, rides, cluster, route, routing, geocode, maps, vehicle, predict, tracking, notifications
 from routers import analytics
 from routers import jobs
@@ -25,6 +25,14 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown tasks."""
+    # Keep the schema in step with the models even if `alembic upgrade head`
+    # was skipped (additive, idempotent, Postgres-only). A database blip must
+    # not stop the API from booting - the failure is logged and the process
+    # still serves (so the health check keeps the task alive).
+    try:
+        run_startup_migrations()
+    except SQLAlchemyError as exc:
+        logging.getLogger(__name__).error("Startup schema backfill failed: %s", exc)
     # Jobs run in worker; API owns WS broadcast loop.
     # Opt-in: run jobs in API for local dev.
     if ENABLE_TRACKING_BROADCAST:

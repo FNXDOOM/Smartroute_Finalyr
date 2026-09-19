@@ -66,6 +66,7 @@ def _build_lite_schema():
         Column("dest_lng", Float, nullable=False),
         Column("status", String, server_default="pending"),
         Column("ride_mode", String, server_default="live"),
+        Column("is_shared", Integer, server_default="1"),
         Column("demo_run_id", String),
         Column("h3_index", String),
         Column("cluster_id", Integer),

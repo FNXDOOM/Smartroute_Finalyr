@@ -155,13 +155,13 @@ Subject to: each node visited exactly once
             the route is open-ended: it ends at the last drop-off, not back at the depot
 ```
 
-### CVRP fallback
-When no pickup-and-delivery solution exists — e.g. more riders pool into one run than
-there are seats — the builder retries with `solve_vrp`, the pickups-only Capacitated VRP
-this pipeline used before: stops carry `passenger_count` as demand, capacity is consumed
-permanently, and every route starts *and* ends at the depot. The fallback's closing hop
-back to the hub is persisted as a `depot` waypoint (it is not a solver stop).
-`route_plans.route_metadata.problem` records which model ran: `pdp` | `cvrp`.
+### Infeasible pool handling
+There is no pickup-only passenger fallback. Each carpool vehicle is capped at three
+passengers, and a pickup-only CVRP route has no destination
+for each passenger and would be unsafe to persist as an assigned ride. If the PDP has no
+solution, the pool remains `clustered` and is retried after matching splits it into
+smaller destination-compatible groups or a vehicle becomes available.
+`route_plans.route_metadata.problem` is therefore `pdp` for passenger routes.
 
 ### Distance matrix
 3-tier cascade in `build_stadia_distance_matrix` → `build_road_distance_matrix` → `build_distance_matrix`:
@@ -189,7 +189,7 @@ params.time_limit.seconds = 10  # hard timeout
 {
   "status": "solved",
   "routes": [
-    # PDP: depot → pickup → its drop-offs. CVRP: depot → stops → depot.
+    # PDP: depot → pickups and drop-offs. Passenger routes never use pickup-only CVRP.
     { "vehicle_idx": 0, "stop_indices": [0, 2, 5, 3], "distance_m": 4200 }
   ],
   "total_distance_m": 8500

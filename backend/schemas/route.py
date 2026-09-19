@@ -79,7 +79,7 @@ class RoutePlanResponse(BaseModel):
     # without reaching into an untyped dict.
     geometry: List[List[float]] = Field(default_factory=list)
     legs: List[RouteLeg] = Field(default_factory=list)
-    problem: str = "cvrp"
+    problem: str = "pdp"
     created_at: Optional[datetime] = None
     waypoints: List[RouteWaypointRecordResponse] = Field(default_factory=list)
 
