@@ -253,13 +253,15 @@ def build_shared_routes(
         return all(getattr(request, "is_shared", True) is False for request in requests)
 
     private_pooled = [(stop, requests) for stop, requests in pooled if _is_private(requests)]
-    # Never dispatch a singleton as a carpool. It remains clustered/pending
-    # until another compatible shared request can join it.
+    # A corridor match intentionally creates one stop per rider. Do not use
+    # the number of requests attached to an individual stop as the pooling
+    # decision; count all shared riders across the candidate route instead.
     shared_pooled = [
         (stop, requests)
         for stop, requests in pooled
-        if not _is_private(requests) and len(requests) >= MIN_CARPOOL_PASSENGERS
+        if not _is_private(requests)
     ]
+    shared_passenger_count = sum(len(requests) for _, requests in shared_pooled)
 
     # One dedicated vehicle per private ride. If there are more private stops
     # than free vehicles the extras are left alone (they stay "clustered" and a
@@ -296,7 +298,11 @@ def build_shared_routes(
         if route is not None:
             built_routes.append(route)
 
-    if not shared_pooled or not remaining_vehicles:
+    if (
+        not shared_pooled
+        or shared_passenger_count < MIN_CARPOOL_PASSENGERS
+        or not remaining_vehicles
+    ):
         return built_routes
 
     # Carpool policy is intentionally stricter than the physical vehicle
@@ -398,6 +404,7 @@ def persist_shared_route(
 ) -> PersistedRoute:
     """Persist one pooled route and hand its passengers over as assigned."""
     route_id = f"route-{vehicle.id}-{uuid4().hex[:8]}"
+    route_requests = db.query(RideRequest).filter(RideRequest.id.in_(built.ride_ids)).all()
     vehicle.assigned_route_id = route_id
     vehicle.status = "active"
 
@@ -417,6 +424,12 @@ def persist_shared_route(
             "vehicle_capacity": vehicle.capacity,
             "assigned_stop_ids": built.stop_ids,
             "assigned_dropoff_request_ids": built.destination_ride_ids,
+            # Assignment and driver acceptance are separate lifecycle events.
+            # The simulator must not move passengers until the driver accepts
+            # this route from the driver application.
+            "driver_accepted": False,
+            "driver_accepted_at": None,
+            "carpool_run": any(getattr(request, "is_shared", False) for request in route_requests),
             "source_cluster_run_id": source_cluster_run_id,
             "geometry": built.geometry,
             "legs": built.legs,

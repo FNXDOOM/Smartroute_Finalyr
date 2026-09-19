@@ -15,6 +15,7 @@ class User(Base):
     clerk_user_id = Column(String, unique=True, index=True, nullable=True)
     role = Column(String, default="passenger", nullable=False)  # passenger | driver | admin
     driver_status = Column(String, default="active", nullable=False)  # active | pending_verification | suspended
+    driver_last_seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     ride_requests = relationship("RideRequest", back_populates="user")

@@ -54,6 +54,7 @@ def _build_lite_schema():
         Column("clerk_user_id", String),
         Column("role", String, nullable=False, server_default="passenger"),
         Column("driver_status", String, nullable=False, server_default="active"),
+        Column("driver_last_seen_at", DateTime),
         Column("created_at", DateTime, default=_utcnow),
     )
     Table(

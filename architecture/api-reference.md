@@ -73,6 +73,18 @@ Apply to become a driver (or update your plate). Sets `role=driver`, `driver_sta
 - `400` — Empty plate, or plate already registered to another driver
 - `401` — Missing or invalid token
 
+### `POST /auth/driver/presence`
+
+Records that an active driver currently has the driver application open.
+Automatic dispatch uses `users.driver_last_seen_at` and a 90-second freshness
+window; this endpoint does not assign a route or change vehicle status.
+
+**Auth required:** Yes (active driver)
+
+**Responses:**
+- `200` — Updated driver profile
+- `403` — Caller is not an active driver
+
 ---
 
 ### `GET /auth/drivers/pending`
@@ -381,12 +393,13 @@ Get full detail of a cluster run including `cluster_summary` JSON.
 ---
 
 ### `POST /route/optimize`
-Solve the pooled route and assign vehicle routes (live scope). The pool is solved as a
-pickup-and-delivery problem — each pooled boarding stop plus one destination node per
-ride, so drop-offs free their seat again (see `architecture/algorithms.md` §5). If no
-when no such solution exists the pool remains clustered for a later split/retry; passenger
-routes are never assigned without destination nodes, and routes close
-back at the depot. Drivers can only optimise vehicles they own
+Solve the pooled route and create vehicle route offers (live scope). The pool is solved as a
+pickup-and-delivery problem — one pickup node per rider/assigned pickup stop plus one
+destination node per ride, so drop-offs free their seat again (see `architecture/algorithms.md`
+§5). Shared routes support two or three riders and retain separate pickup stops within the
+150m walking limit. If no solution exists the pool remains clustered for a later split/retry;
+passenger routes are never assigned without destination nodes. The selected driver must
+accept the route before it can advance. Drivers can only optimise vehicles they own
 (`vehicles.driver_user_id == self`); admins can use any vehicles.
 
 **Auth required:** Yes (admin or driver)
@@ -448,7 +461,9 @@ its hub. A pickup-and-delivery route ends at its last `destination`.
 ---
 
 ### `GET /route/history`
-List all route plans, newest first.
+List active solved route plans visible to the current user, newest first.
+Driver responses are scoped to vehicles owned by that driver. Completed carpool
+routes are repaired and hidden from the response.
 
 **Auth required:** Yes (admin or driver)
 
@@ -499,7 +514,8 @@ List all vehicles.
 ---
 
 ### `GET /vehicle/idle`
-List only idle vehicles (available for assignment).
+List only idle vehicles (available for manual assignment). Automatic dispatch
+also requires the vehicle to have an active driver with a recent heartbeat.
 
 **Auth required:** Yes (any role)
 

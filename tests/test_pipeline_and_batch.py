@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
@@ -29,6 +30,26 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
             db.refresh(user)
 
         # Create idle test vehicle if missing
+        driver = db.query(User).filter(User.email == "pipeline_driver@example.com").first()
+        if not driver:
+            driver = User(
+                clerk_user_id="test_pipeline_driver",
+                email="pipeline_driver@example.com",
+                name="Pipeline Driver",
+                password_hash="test_hash",
+                role="driver",
+                driver_status="active",
+                driver_last_seen_at=datetime.now(timezone.utc),
+            )
+            db.add(driver)
+            db.commit()
+            db.refresh(driver)
+        else:
+            driver.role = "driver"
+            driver.driver_status = "active"
+            driver.driver_last_seen_at = datetime.now(timezone.utc)
+            db.commit()
+
         vehicle = db.query(Vehicle).filter(Vehicle.license_plate == "KA-01-TEST-99").first()
         if not vehicle:
             vehicle = Vehicle(
@@ -37,6 +58,7 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
                 status="idle",
                 lat=12.9784,
                 lng=77.6408,
+                driver_user_id=driver.id,
             )
             db.add(vehicle)
             db.commit()
@@ -44,6 +66,7 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
         else:
             vehicle.status = "idle"
             vehicle.assigned_route_id = None
+            vehicle.driver_user_id = driver.id
             db.commit()
 
         # Clean any old test pending rides

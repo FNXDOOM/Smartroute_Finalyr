@@ -38,6 +38,7 @@ client.interceptors.request.use(async (config) => {
 
 export const authApi = {
   getProfile: async () => (await client.get('/auth/me')).data,
+  driverPresence: async () => (await client.post('/auth/driver/presence')).data,
   updateProfile: async (fields) => (await client.patch('/auth/me', fields)).data,
   applyDriver: async (payload, token) => (await client.post('/auth/driver/apply', payload, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)).data,
   verifyDriver: async (userId, status = 'active') => (await client.post(`/auth/driver/${userId}/verify`, { status })).data,
@@ -71,6 +72,7 @@ export const ridesApi = {
   getVehicle: async (id) => (await client.get(`/rides/${id}/vehicle`)).data,
   getRoute: async (id) => (await client.get(`/rides/${id}/route`)).data,
   updateStatus: async (id, status) => (await client.patch(`/rides/${id}/status`, { status })).data,
+  confirmPickup: async (id) => (await client.post(`/rides/${id}/confirm-pickup`)).data,
   cancel: async (id) => (await client.delete(`/rides/${id}`)).data,
 };
 
@@ -146,6 +148,10 @@ export const routeApi = {
   optimize: async (payload) => (await client.post('/route/optimize', payload)).data,
   history: async (limit = 20) => (await client.get('/route/history', { params: { limit } })).data,
   getById: async (id) => (await client.get(`/route/history/${id}`)).data,
+  accept: async (id) => (await client.post(`/route/${encodeURIComponent(id)}/accept`)).data,
+  announceCarpoolPickup: async (routeId, rideId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/announce-pickup/${rideId}`)).data,
+  confirmCarpoolPickup: async (routeId, rideId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/confirm-pickup/${rideId}`)).data,
+  confirmCarpoolDropoff: async (routeId, rideId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/confirm-dropoff/${rideId}`)).data,
 };
 
 // Analytics

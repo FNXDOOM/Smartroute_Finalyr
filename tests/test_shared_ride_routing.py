@@ -280,6 +280,30 @@ def test_builder_uses_the_pool_model_for_a_feasible_pool():
     assert built.waypoints[1]["stop_id"] is None
 
 
+def test_builder_combines_separate_corridor_pickup_stops():
+    pytest.importorskip("ortools.constraint_solver")
+    first_stop = _StubStop(71, [_StubRequest(201)])
+    second_stop = _StubStop(72, [_StubRequest(202)])
+    second_stop.lat = STOP_LAT + 0.001
+    second_stop.lng = STOP_LNG + 0.001
+
+    routes = build_shared_routes(
+        vehicles=[_StubVehicle(capacity=3)],
+        virtual_stops=[first_stop, second_stop],
+        depot_lat=DEPOT_LAT,
+        depot_lng=DEPOT_LNG,
+        request_statuses=("clustered",),
+        enrich=False,
+    )
+
+    assert len(routes) == 1
+    built = routes[0]
+    assert built.problem == "pdp"
+    assert set(built.stop_ids) == {71, 72}
+    assert set(built.ride_ids) == {201, 202}
+    assert [waypoint["waypoint_type"] for waypoint in built.waypoints].count("pickup") == 2
+
+
 def test_builder_does_not_assign_a_pickup_only_route_when_pdp_is_infeasible(monkeypatch):
     monkeypatch.setattr(
         shared_route_builder,

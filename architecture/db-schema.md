@@ -52,6 +52,7 @@ Stores all user accounts — passengers, drivers, and admins.
 | `clerk_user_id` | VARCHAR | UNIQUE, index, nullable | Clerk `sub` claim; added by compat migration + Alembic; partial unique index where NOT NULL |
 | `role` | VARCHAR | NOT NULL, default `"passenger"` | `passenger` / `driver` / `admin` |
 | `driver_status` | VARCHAR | NOT NULL, default `"active"` | `active` / `pending_verification` / `suspended` (verify endpoint also accepts admin-set values such as `rejected`) |
+| `driver_last_seen_at` | TIMESTAMPTZ | nullable | Updated by the driver heartbeat; automatic dispatch treats a driver as online for 90 seconds after this timestamp |
 | `created_at` | TIMESTAMPTZ | server default NOW() | |
 
 **Relationships:**
@@ -92,7 +93,10 @@ Every passenger ride request — from creation through completion.
 pending → clustered → assigned → arriving → in_progress → completed
                                                          ↘ cancelled
 ```
-Only `assigned → arriving → in_progress → completed` is advanced by the 5 s simulation job; `pending → clustered → assigned` is advanced by clustering / route optimization / auto-dispatch.
+For normal rides, the driver acceptance gate precedes progression. Shared rides
+are controlled by the Carpool Run workflow: each rider can become ready at an
+assigned pickup stop, the driver confirms pickup, and the driver confirms each
+drop-off. The 5 s simulation job never advances live shared rides.
 
 **Relationships:**
 - `user` → many-to-one (belongs to user)

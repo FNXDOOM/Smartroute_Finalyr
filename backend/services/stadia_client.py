@@ -1,6 +1,8 @@
 """Small server-side client for Stadia geocoding and Valhalla routing."""
 
 import json
+import time
+from functools import lru_cache
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode
 from urllib.request import Request, urlopen
@@ -66,11 +68,31 @@ def _request_bytes(url: str, *, params: dict | None = None) -> tuple[bytes, str]
 
 def fetch_stadia_style() -> dict:
     """Fetch the configured Stadia map style."""
-    data, _ = _request_bytes(f"{STADIA_TILES_URL}/{STADIA_MAP_STYLE_PATH}")
-    try:
-        return json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("Stadia map style response was invalid") from exc
+    return _fetch_stadia_style_cached()
+
+
+@lru_cache(maxsize=1)
+def _fetch_stadia_style_cached() -> dict:
+    """Fetch and cache the style, retrying transient upstream failures.
+
+    The style is shared by every map instance and changes rarely. Caching the
+    successful response avoids making every passenger/driver map mount depend
+    on a fresh Stadia request, while the short retry handles occasional 502s
+    from the upstream tile service.
+    """
+    last_error = None
+    for attempt in range(2):
+        try:
+            data, _ = _request_bytes(f"{STADIA_TILES_URL}/{STADIA_MAP_STYLE_PATH}")
+            try:
+                return json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Stadia map style response was invalid") from exc
+        except RuntimeError as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(0.2)
+    raise last_error or RuntimeError("Stadia map style request failed")
 
 
 def fetch_stadia_resource(resource_path: str) -> tuple[bytes, str]:

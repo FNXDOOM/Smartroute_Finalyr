@@ -12,6 +12,7 @@ An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HD
 - [Running the Project](#running-the-project)
 - [Authentication & Role System](#authentication--role-system)
 - [Architecture Overview](#architecture-overview)
+- [Carpooling Lifecycle](#carpooling-lifecycle)
 - [API Reference](#api-reference)
 - [Deployment (CI/CD)](#deployment-cicd)
 - [Security and Production Notes](#security-and-production-notes)
@@ -102,6 +103,7 @@ Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartroutea
 | Isolation | `ride_mode` (`live` \| `presentation_demo`) + `demo_run_id` on rides/stops/runs/plans/vehicles (Alembic `0002_demo_scope`); `PresentationDemoView` keeps demos off live fleet |
 | Payments | Razorpay Checkout (Standard) — server-created Orders, HMAC-SHA256 signature verification, verified webhooks; see [`docs/payments.md`](docs/payments.md) |
 | Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications (bearer subprotocol only; `?token=` rejected with 4401) |
+| Dispatch availability | Driver heartbeat (`driver_last_seen_at`) with a 90-second freshness window; offline drivers are excluded from automatic assignment |
 
 ---
 
@@ -323,19 +325,50 @@ Admin → Drivers Panel
 Passenger books ride (India-guarded)
         ↓
 POST /rides/request  ──→  RideRequest (status=pending, mode=live)
-        ↓  [every 60s, or POST /jobs/run/auto-dispatch|clustering]
-HDBSCAN clustering   ──→  VirtualStop + ClusterRun (status=clustered)
-        ↓  [POST /route/optimize (drivers scoped to own vehicles) or auto-dispatch]
-OR-Tools VRP (Stadia ≤25×25 → OSM Dijkstra → haversine, 10 s)  ──→  RoutePlan + RouteWaypoints (status=assigned)
+        ↓  [automatic worker every 60s, or POST /jobs/run/auto-dispatch|clustering]
+HDBSCAN + corridor matching ──→ VirtualStop + ClusterRun (status=clustered)
+        ↓  [automatic full dispatch, or POST /route/optimize manually]
+OR-Tools VRP (Stadia ≤25×25 → OSM Dijkstra → haversine, 10 s)  ──→  RoutePlan + RouteWaypoints (status=solved)
         ↓  [Hungarian algorithm inside auto-dispatch / POST /vehicle/assign]
-Vehicle assignment   ──→  Vehicle.assigned_route_id set, status=active
-        ↓  [simulation job every 5s: assigned → arriving → in_progress → completed]
-Status progression   ──→  arriving → in_progress → completed (pending/clustered never touched by sim)
+Vehicle assignment   ──→  Vehicle.assigned_route_id set; only an online active driver is eligible
+        ↓  [driver accepts the route]
+Driver acceptance    ──→  route metadata `driver_accepted=true`; vehicle becomes active
+        ↓
+Status progression   ──→  normal rides: driver-controlled; carpool rides: stop-by-stop Carpool Run workflow
         ↓  [WebSocket broadcast every 2s]
 Passenger tracking   ──→  Live map updates in browser
 ```
 
 Live and `presentation_demo` rows are isolated by `ride_mode` + `demo_run_id` (Alembic `0002_demo_scope`); demo flow uses `PresentationDemoView` + `DEMO-PRESENTATION-01`.
+
+### Carpooling Lifecycle
+
+Carpooling supports two or three riders. Matching uses H3 pickup partitioning
+followed by a global corridor search across nearby cells. Each rider keeps a
+separate pickup stop, and the route solver combines those stops with the
+required drop-offs into one pickup-and-delivery route. Pickup walking distance
+is limited to 150 metres.
+
+```text
+2–3 compatible shared rides
+        ↓
+Separate pickup stops + ordered pickup/drop-off waypoints
+        ↓
+Assign to an online driver-owned vehicle
+        ↓
+Driver accepts in Carpool Run
+        ↓
+Ask each rider to walk → rider confirms arrival → driver confirms pickup
+        ↓
+Driver confirms each drop-off
+        ↓
+Last completed rider closes the route and releases the vehicle
+```
+
+A passenger cannot join after the vehicle has started. If a driver goes offline
+before accepting, the route is released on the next dispatch cycle and the
+rides return to the matching pool. Driver presence is recorded every 30 seconds
+and remains dispatchable for 90 seconds after the last heartbeat.
 
 ---
 
@@ -345,6 +378,7 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 
 ### Authentication & Role Endpoints
 - `GET /auth/me` — return current user profile
+- `POST /auth/driver/presence` — record that an active driver has the app open
 - `PATCH /auth/me` — update profile (name, phone)
 - `POST /auth/driver/apply` — apply to become a driver (any authenticated user)
 - `GET /auth/drivers/pending` — list pending driver applications (admin only)
@@ -359,6 +393,11 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 - `GET /rides/{ride_id}/vehicle` — assigned vehicle or null
 - `POST /cluster/run` — run HDBSCAN clustering (admin/driver; `mode`/`demo_run_id` supported via jobs endpoints)
 - `POST /route/optimize` — run VRP route optimization (admin/driver; drivers scoped to own `driver_user_id` vehicles)
+- `GET /route/history` — return active routes visible to the current driver/admin
+- `POST /route/{route_id}/accept` — accept an assigned route before progression begins
+- `POST /route/{route_id}/carpool/announce-pickup/{ride_id}` — ask one rider to walk to their assigned stop
+- `POST /route/{route_id}/carpool/confirm-pickup/{ride_id}` — confirm that a ready rider boarded
+- `POST /route/{route_id}/carpool/confirm-dropoff/{ride_id}` — confirm one rider's drop-off
 
 ### Maps / Geo (Stadia-backed, India-only, auth required)
 - `GET /maps/stadia/style.json` + `GET /maps/stadia/resource/{path}` — authenticated tile proxy (no key in browser)
@@ -453,6 +492,17 @@ to loopback + private ranges (see `backend/Dockerfile` / `docker-compose.yml`) s
 - Set `ENABLE_BACKGROUND_JOBS_IN_API=false` in `.env` (only one process should handle jobs)
 - Check logs: `python worker.py` should print job execution details
 - Ensure database connectivity with `python -c "import backend.database; print('OK')"`
+
+**A route is assigned to an offline driver**
+- Automatic dispatch only considers active drivers with a heartbeat from the
+  last 90 seconds.
+- An unaccepted route owned by an offline driver is released on the next
+  dispatch cycle and returned to the matching pool.
+
+**A completed carpool route remains on the driver map**
+- Completing the final passenger closes the parent route and releases the
+  vehicle. Refresh route history after restarting the backend if an older
+  route is still visible.
 
 ### Frontend Issues
 
@@ -565,10 +615,20 @@ to loopback + private ranges (see `backend/Dockerfile` / `docker-compose.yml`) s
 **Backend**:
 ```bash
 # from project root (tests/ live at root, backend on sys.path)
-pytest tests/ -v  # verbose output
+DATABASE_URL=sqlite:///./ci_test.db pytest tests/ -v  # isolated local test DB
 pytest tests/test_health_and_ws_auth.py -v  # single file
 python scripts/test_models_schemas.py  # schema/model sanity check
 ```
+
+On Windows PowerShell:
+
+```powershell
+$env:DATABASE_URL = 'sqlite:///./ci_test.db'
+py -3.10 -m pytest -q
+```
+
+The current backend suite contains 91 tests. Frontend verification uses
+`npm run lint` and `npm run build`.
 
 **Frontend**:
 ```bash

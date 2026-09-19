@@ -1,6 +1,6 @@
 # Background Jobs
 
-Five async workers start automatically when the server starts and run continuously (`backend/services/background_jobs.py`; dedicated `backend/worker.py` process, or opt-in in-API via `ENABLE_BACKGROUND_JOBS_IN_API=true` for single-process dev).
+Scheduled async jobs run continuously (`backend/services/background_jobs.py`; dedicated `backend/worker.py` process, or opt-in in-API via `ENABLE_BACKGROUND_JOBS_IN_API=true` for single-process dev). Auto-dispatch runs on the scheduled 60-second loop and through its manual endpoint.
 
 Every dispatch query is scoped with `apply_ride_scope(query, mode, demo_run_id)` so `live` and `presentation_demo` rows never mix.
 
@@ -12,6 +12,7 @@ Jobs are managed by `backend/services/background_jobs.py`. On startup (`lifespan
 
 ```python
 loop.create_task(_run_periodic("cluster_pending_rides",    60,  run_cluster_job))
+loop.create_task(_run_periodic("auto_dispatch_pipeline",   60,  run_scheduled_auto_dispatch_job))
 loop.create_task(_run_periodic("refresh_demand_snapshots", 300, run_demand_refresh_job))
 loop.create_task(_run_periodic("rebalance_idle_vehicles",  300, run_vehicle_rebalance_job))
 loop.create_task(_run_periodic("simulate_ride_dispatch",   5,   run_simulate_ride_dispatch_job))
@@ -37,7 +38,7 @@ On server shutdown, all tasks are cancelled and awaited via `stop_background_job
 
 ### What it does
 
-Takes all `pending` ride requests and groups them into clusters with virtual pickup stops.
+Takes all `pending` ride requests and groups them into clusters with virtual pickup stops. The shared-ride path then performs a global corridor search across nearby H3 cells so compatible riders are not rejected merely because their pickup cells differ.
 
 ### Step-by-step
 
@@ -167,7 +168,11 @@ Vehicles are NOT automatically repositioned. The suggestions appear in `GET /job
 
 ### What it does
 
-Advances only the tail of the lifecycle for demo purposes (`assigned → arriving → in_progress → completed`). It never touches `pending` or `clustered` — those are advanced by clustering / route optimization / auto-dispatch. Completed vehicles return to `idle` once no active rides remain on their stop.
+Advances only eligible normal rides. Shared rides are deliberately excluded:
+their pickup confirmations, passenger readiness, and drop-off confirmations are
+controlled by the Carpool Run endpoints. Normal rides also require driver route
+acceptance before they can progress. Completed vehicles return to `idle` once
+no active rides remain.
 
 ### Transition table (exact)
 
@@ -199,7 +204,7 @@ in_progress  → completed
 - `notifications` — one per ride per cycle
 - `job_runs` — execution record
 
-> This job runs every 5 seconds so in a live demo, a freshly assigned ride will go from `assigned` → `completed` in about 15 seconds.
+> This job runs every 5 seconds for supported normal/demo simulation flows. It does not auto-complete live carpool runs.
 
 ---
 
@@ -211,7 +216,16 @@ in_progress  → completed
 
 ### What it does
 
-Runs the full end-to-end pipeline in one call: cluster pending → collect clustered stops without an active route → solve the pooled route (`shared_route_builder.build_shared_routes`: pickup & delivery only) → assign idle vehicles → persist the plan and mark rides `assigned`. An infeasible pool remains clustered rather than being assigned to a pickup-only route.
+Runs the full end-to-end pipeline in one call: cluster pending → corridor-match
+compatible shared riders → collect clustered stops without an active route →
+solve the pooled route (`shared_route_builder.build_shared_routes`: pickup and
+delivery only) → assign an online driver-owned vehicle → persist the plan and
+mark rides `assigned`. An infeasible pool remains clustered rather than being
+assigned to a pickup-only route.
+
+Before dispatch, unaccepted routes whose driver heartbeat is older than 90
+seconds are cancelled, their non-terminal rides return to `clustered`, and the
+vehicle is released. This prevents an offline driver from blocking passengers.
 
 The plans it writes carry stops but no road geometry — a client reading the plan later resolves it once (`GET /route/history/{route_id}`), and that result is cached on the plan. Demo mode uses/creates the reserved `DEMO-PRESENTATION-01` vehicle (capacity 4) so presentations never consume live fleet.
 

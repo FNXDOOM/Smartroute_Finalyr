@@ -42,12 +42,12 @@ Passenger App / Driver App / Admin Dashboard
 
 1. **Passenger Books Ride** → `POST /rides/request`
 2. **RideRequest stored** with `status=pending`
-3. **[Every 60s] Clustering Job** → Groups pending rides into virtual stops
-4. **[Admin or auto trigger] VRP Optimization** → Assigns ride groups to vehicles with waypoint sequences
-5. **Hungarian Assignment** → Matches idle drivers to optimized routes
-6. **[Every 5s] Simulation Job** → Auto-advances ride status (arriving → in_progress → completed)
-7. **WebSocket Broadcast** → Notifies passengers of vehicle arrival + tracking updates
-8. **Ride Completion** → Marks route as completed, vehicle becomes idle
+3. **[Every 60s] Clustering + corridor matching** → H3/HDBSCAN partitioning followed by cross-cell compatibility search
+4. **VRP Optimization** → Builds separate pickup stops and paired drop-offs for 2–3 compatible riders
+5. **Presence-aware Assignment** → Uses only vehicles owned by active drivers with a heartbeat in the last 90 seconds
+6. **Driver Acceptance** → The driver accepts the route before progression begins
+7. **Carpool Run** → Driver and passengers complete pickup/drop-off confirmations stop by stop
+8. **Route Completion** → Last passenger closes the route and releases the vehicle
 
 ---
 
@@ -129,22 +129,20 @@ Passenger App / Driver App / Admin Dashboard
 8. [Repeat every 5s] FE polls GET /rides/my-rides (live mode only) or subscribes to /notifications/ws for status updates
 9. [Every 60s] Worker runs clustering job (live scope)
    → Finds all pending rides in passenger's H3 cell
-   → Runs HDBSCAN to group nearby passengers
+   → Runs HDBSCAN to group nearby passengers, then searches neighboring cells for compatible corridors
    → Creates VirtualStop + ClusterRun records { status='clustered' }
    → Updates RideRequest.status='clustered', virtual_stop_id=X
-10. [Admin/driver trigger POST /route/optimize, or POST /jobs/run/auto-dispatch] Worker runs VRP optimization
+10. [Automatic dispatch every 60s, or manual POST /route/optimize / POST /jobs/run/auto-dispatch] Worker runs VRP optimization
     → Reads all clustered rides in live scope
     → Builds distance matrix (Stadia ≤25×25 → OSM Dijkstra → haversine fallback)
     → Calls OR-Tools solver with per-vehicle capacities
     → Creates RoutePlan + RouteWaypoint records (geometry via Stadia `route_many` when configured)
-    → Assigns RideRequest.status='assigned'
-11. [Hungarian assignment] Matches idle vehicles to routes (drivers only see/optimise their own `driver_user_id` vehicles)
-    → Updates Vehicle.assigned_route_id = route_id, status='active'
-12. [Every 5s] Simulation advances assigned → arriving → in_progress → completed (pending/clustered are NOT touched by sim job)
-    → Vehicle.status = 'arriving' / returns to 'idle' when its stop completes
-    → Broadcasts /tracking/ws update to passenger (vehicle location, ETA)
-    → Eventually completes ride
-13. FE: Passenger sees live vehicle tracking on map, arrival notification
+    → Creates an unaccepted route offer and assigns RideRequest.status='assigned'
+11. [Presence-aware assignment] Matches routes only to active driver-owned vehicles with a recent heartbeat
+    → Updates Vehicle.assigned_route_id; route waits for driver acceptance
+12. Driver accepts the route; normal rides use driver controls, shared rides use Carpool Run
+13. FE: Passenger sees assignment, pickup instructions, and live vehicle tracking
+14. Last drop-off marks the route completed and returns the vehicle to idle
 ```
 
 > Live vs presentation data never mix: every dispatch table carries `ride_mode` (`live` | `presentation_demo`) + `demo_run_id`. Live endpoints default to `mode=live`; the isolated demo flow uses `PresentationDemoView.jsx` + `POST /rides/demo-batch` and `POST /jobs/run/auto-dispatch?mode=presentation_demo`.
@@ -171,17 +169,13 @@ Passenger App / Driver App / Admin Dashboard
 ### Driver Receiving Assignment
 
 ```
-1. Driver is idle (Vehicle.status='idle', assigned_route_id=null)
-2. [Hungarian assignment job] Matches driver's vehicle to a RoutePlan
-3. BE: Updates Vehicle.assigned_route_id = route_123
-4. BE: Broadcasts via /tracking/ws to all subscribed admins (fleet map updates)
-5. [Every 5s] Simulation job reads the route and updates ride statuses
-6. FE (Driver View): Driver is subscribed to /tracking/ws
-   → Receives "Your vehicle is now assigned to route_123 with X waypoints"
-   → Shows upcoming pickup/dropoff sequence on map
-7. Driver hits "Start" button → Updates ride status to 'arriving'
-8. BE: Broadcasts to passenger via /notifications/ws + /tracking/ws
-9. BE: Broadcasts to admin (fleet utilization %)
+1. DriverView sends `POST /auth/driver/presence` every 30 seconds
+2. Driver is idle (Vehicle.status='idle', assigned_route_id=null)
+3. Auto-dispatch matches only active, recently online driver-owned vehicles
+4. BE: Updates Vehicle.assigned_route_id and notifies the assigned driver
+5. Driver accepts before ride progression can begin
+6. Carpool Run guides separate pickup stops and individual drop-offs
+7. Last drop-off closes the route and resets the vehicle to idle
 ```
 
 ---

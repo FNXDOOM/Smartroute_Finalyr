@@ -1,4 +1,5 @@
 from typing import List, Optional
+from datetime import datetime, timezone
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
@@ -39,7 +40,16 @@ from utils.ride_scope import (
 router = APIRouter()
 
 # Valid statuses
-VALID_RIDE_STATUSES = {"pending", "clustered", "assigned", "arriving", "in_progress", "completed", "cancelled"}
+VALID_RIDE_STATUSES = {
+    "pending",
+    "clustered",
+    "assigned",
+    "arriving",
+    "ready_for_pickup",
+    "in_progress",
+    "completed",
+    "cancelled",
+}
 
 
 @router.post("/request", response_model=RideRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -670,6 +680,43 @@ def _has_solved_route(db: Session, ride: RideRequest) -> bool:
     return any(ride.id in (waypoint.passenger_ids or []) for waypoint in candidates)
 
 
+def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
+    """Close a carpool route when its last passenger reaches the destination."""
+    if not ride.is_shared or not ride.virtual_stop_id:
+        return
+    route_plans = (
+        db.query(RoutePlan)
+        .join(RouteWaypointRecord, RouteWaypointRecord.route_plan_id == RoutePlan.id)
+        .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id, RoutePlan.status == "solved")
+        .all()
+    )
+    for route_plan in route_plans:
+        if not (route_plan.route_metadata or {}).get("carpool_run"):
+            continue
+        ride_ids = {
+            passenger_id
+            for waypoint in route_plan.waypoints
+            for passenger_id in (waypoint.passenger_ids or [])
+        }
+        if not ride_ids:
+            continue
+        unfinished = db.query(RideRequest).filter(
+            RideRequest.id.in_(ride_ids),
+            RideRequest.status.notin_(["completed", "cancelled"]),
+        ).count()
+        if unfinished:
+            continue
+        metadata = dict(route_plan.route_metadata or {})
+        metadata["carpool_run_status"] = "completed"
+        metadata["completed_at"] = datetime.now(timezone.utc).isoformat()
+        route_plan.route_metadata = metadata
+        route_plan.status = "completed"
+        vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+        if vehicle and vehicle.assigned_route_id == route_plan.route_id:
+            vehicle.assigned_route_id = None
+            vehicle.status = "idle"
+
+
 @router.get("/", response_model=List[RideRequestResponse])
 def list_ride_requests(
     ride_status: Optional[str] = Query(None, alias="status", description="Filter by ride status"),
@@ -750,12 +797,41 @@ def update_ride_request_status(
             status_code=status.HTTP_409_CONFLICT,
             detail="This carpool ride must be assigned by the shared route dispatcher.",
         )
+    if (
+        current_user.role == "driver"
+        and status_update.status in {"arriving", "ready_for_pickup", "in_progress", "completed"}
+        and ride.virtual_stop_id
+    ):
+        pickup_waypoint = db.query(RouteWaypointRecord).join(RoutePlan).filter(
+            RouteWaypointRecord.stop_id == ride.virtual_stop_id,
+            RoutePlan.status == "solved",
+        ).first()
+        route_plan = (
+            db.query(RoutePlan).filter(RoutePlan.id == pickup_waypoint.route_plan_id).first()
+            if pickup_waypoint else None
+        )
+        if route_plan and not (route_plan.route_metadata or {}).get("driver_accepted", False):
+            # Arrived/Start trip is itself an explicit driver acceptance from
+            # the active-trip card. Keep the UI flow usable even when the
+            # driver did not first open the navigation screen.
+            metadata = dict(route_plan.route_metadata or {})
+            metadata["driver_accepted"] = True
+            metadata["driver_accepted_at"] = datetime.now(timezone.utc).isoformat()
+            if metadata.get("carpool_run"):
+                metadata["carpool_run_status"] = "accepted"
+            route_plan.route_metadata = metadata
+            vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+            if vehicle:
+                vehicle.status = "active"
     if status_update.status == "cancelled":
         _detach_ride_from_route(db, ride)
     ride.status = status_update.status
+    if status_update.status == "completed":
+        _finalize_carpool_route_if_complete(db, ride)
     if current_user.role in ("admin", "driver") and status_update.status in (
         "assigned",
         "arriving",
+        "ready_for_pickup",
         "in_progress",
         "completed",
     ):
@@ -772,6 +848,42 @@ def update_ride_request_status(
         related_entity_id=ride.id,
         metadata={"old_status": old_status, "new_status": status_update.status},
     )
+    db.commit()
+    db.refresh(ride)
+    return ride
+
+
+@router.post("/{ride_id}/confirm-pickup", response_model=RideRequestResponse)
+def confirm_passenger_pickup(
+    ride_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Passenger confirms they reached the assigned carpool pickup stop."""
+    ride = db.query(RideRequest).filter(RideRequest.id == ride_id).first()
+    if not ride or ride.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ride request not found")
+    if not ride.is_shared or ride.status != "arriving":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This ride is not waiting at a carpool pickup stop")
+    ride.status = "ready_for_pickup"
+    pickup_waypoint = db.query(RouteWaypointRecord).join(RoutePlan).filter(
+        RouteWaypointRecord.stop_id == ride.virtual_stop_id,
+        RoutePlan.status == "solved",
+    ).first()
+    route_plan = db.query(RoutePlan).filter(RoutePlan.id == pickup_waypoint.route_plan_id).first() if pickup_waypoint else None
+    if route_plan:
+        vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+        if vehicle and vehicle.driver_user_id:
+            create_notification(
+                db,
+                user_id=vehicle.driver_user_id,
+                notification_type="carpool_passenger_ready",
+                title="Passenger is ready at the pickup stop",
+                message=f"Passenger for ride #{ride.id} has arrived at the assigned carpool pickup stop.",
+                related_entity_type="ride_request",
+                related_entity_id=ride.id,
+                metadata={"route_id": route_plan.route_id, "ride_id": ride.id},
+            )
     db.commit()
     db.refresh(ride)
     return ride

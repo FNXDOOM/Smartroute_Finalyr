@@ -4,7 +4,7 @@ import {
   CircleDot, Clock, CornerUpRight, Flag, Gauge, Inbox, Loader2, LocateFixed, MapPin,
   Navigation, Pause, Play, RefreshCw, Route as RouteIcon, Satellite, Users, X,
 } from 'lucide-react'
-import { ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
+import { authApi, ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
 import { useAuth } from '@clerk/clerk-react'
 import AppMap from '../components/AppMap'
 import { DEMO_PRESETS } from '../config/demoPresets.js'
@@ -32,6 +32,7 @@ const DEMO_RIDES = DEMO_PRESETS.indiranagar.riders.map((r, i) => ({
 }))
 
 const FULL_PATH = DEMO_PRESETS.indiranagar.roadPath
+const EMPTY_WAYPOINTS = []
 
 function nearestSegIndex(lng, lat, path) {
   let best = 0
@@ -65,6 +66,14 @@ function pathForRide(ride) {
   return [[77.6408, 12.9784], [ride.plng, ride.plat], [ride.dlng, ride.dlat]]
 }
 
+function pathForRoute(route) {
+  if (route?.geometry?.length > 1) return route.geometry
+  const points = (route?.waypoints || [])
+    .filter((waypoint) => waypoint?.lat != null && waypoint?.lng != null)
+    .map((waypoint) => [waypoint.lng, waypoint.lat])
+  return points.length > 1 ? points : []
+}
+
 export default function DriverView({ user, view, setView, toast }) {
   const { getToken } = useAuth()
   const [vehicles,   setVehicles]   = useState([])
@@ -80,10 +89,12 @@ export default function DriverView({ user, view, setView, toast }) {
   const [simSpeed,   setSimSpeed]   = useState(0)
   const [previewRide, setPreviewRide] = useState(null)
   const [runRide, setRunRide] = useState(null)
+  const [navRoute, setNavRoute] = useState(null)
   const simTimerRef = useRef(null)
   const simFiredRef = useRef(new Set())
   const simPathRef = useRef(null)
   const knownPendingRef = useRef(new Set())
+  const knownRideStatusRef = useRef(new Map())
   const pollInitRef = useRef(false)
   const wsRef = useRef(null)
 
@@ -96,6 +107,7 @@ export default function DriverView({ user, view, setView, toast }) {
       setRides(list)
       setRoutes(ro?.routes || [])
       knownPendingRef.current = new Set(list.filter((x) => ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
+      knownRideStatusRef.current = new Map(list.map((x) => [x.id, x.status]))
       pollInitRef.current = true
       if (Array.isArray(v) && v.length) setMyVehicle(v[0])
     } catch(e) { toast('error','Failed to load data', e?.response?.data?.detail||'') }
@@ -113,6 +125,11 @@ export default function DriverView({ user, view, setView, toast }) {
       } else {
         const current = new Set()
         list.forEach((x) => {
+          const previousStatus = knownRideStatusRef.current.get(x.id)
+          if (x.is_shared && x.status === 'ready_for_pickup' && previousStatus !== 'ready_for_pickup') {
+            toast('info', 'Passenger ready', `Ride #${x.id} is waiting at the assigned pickup stop.`)
+          }
+          knownRideStatusRef.current.set(x.id, x.status)
           if (!['pending', 'clustered'].includes(x.status)) return
           current.add(x.id)
           if (!knownPendingRef.current.has(x.id)) {
@@ -132,10 +149,26 @@ export default function DriverView({ user, view, setView, toast }) {
     } catch { /* keep the last good route plan; next tick retries */ }
   }, [])
 
+  const currentDriverRoute = myVehicle?.id
+    ? routes.find((route) => route.route_id === myVehicle.assigned_route_id && route.status === 'solved' && route.route_metadata?.carpool_run_status !== 'completed')
+      || routes.find((route) => route.vehicle_id === myVehicle.id && route.status === 'solved' && route.route_metadata?.carpool_run_status !== 'completed')
+      || null
+    : null
+
   useEffect(() => { const timer = setTimeout(() => { void loadData() }, 0); return () => clearTimeout(timer) }, [loadData])
 
+  // Presence is the dispatch availability signal. An idle vehicle whose
+  // driver has closed the app must not receive new automatic routes.
   useEffect(() => {
-    if (!['driver-home', 'driver-carpool'].includes(view) || loading) return undefined
+    let stopped = false
+    const beat = () => { if (!stopped) void authApi.driverPresence().catch(() => {}) }
+    beat()
+    const timer = setInterval(beat, 30000)
+    return () => { stopped = true; clearInterval(timer) }
+  }, [])
+
+  useEffect(() => {
+    if (!['driver-home', 'driver-map', 'driver-carpool'].includes(view) || loading) return undefined
     const id = setInterval(() => {
       void refreshRides()
       void refreshRoutes()
@@ -172,6 +205,11 @@ export default function DriverView({ user, view, setView, toast }) {
         navigator.geolocation.getCurrentPosition(resolve, reject)
       })
       await trackingApi.updateLocation(myVehicle.id, { lat: position.coords.latitude, lng: position.coords.longitude })
+      setMyVehicle((prev) => prev ? {
+        ...prev,
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+      } : prev)
       toast('success','Location updated')
     } catch(e) { toast('error','Failed to update',e?.response?.data?.detail||''); setUpdatingLoc(false) }
     finally { setUpdatingLoc(false) }
@@ -216,7 +254,7 @@ export default function DriverView({ user, view, setView, toast }) {
   }
 
 // Drive simulation for previewed or full route.
-  const toggleDriveSimulation = (overrideRide) => {
+  const toggleDriveSimulation = (overrideRide, overrideRoute) => {
     if (simActive) {
       if (simTimerRef.current) clearInterval(simTimerRef.current)
       setSimActive(false)
@@ -226,22 +264,33 @@ export default function DriverView({ user, view, setView, toast }) {
     }
 
     const resolvedRide = overrideRide !== undefined ? overrideRide : previewRide
-    // Restart when switching ride context.
+    const resolvedRoute = overrideRoute !== undefined ? overrideRoute : navRoute
+    // Restart when switching ride or persisted route context.
     const switchingContext = (resolvedRide?.id ?? null) !== (runRide?.id ?? (simPathRef.current?.rideId ?? null))
+      || (resolvedRoute?.id ?? null) !== (simPathRef.current?.routeId ?? null)
     let p = simProgress >= 1 || (switchingContext && simProgress > 0) ? 0 : simProgress
     let path
     if (p === 0) {
-      path = pathForRide(resolvedRide)
-      simPathRef.current = { path, rideId: resolvedRide?.id ?? null }
+      if (!resolvedRoute && !resolvedRide) {
+        toast('info', 'No assigned route', 'Optimize and assign a route before starting navigation.')
+        return
+      }
+      path = resolvedRoute ? pathForRoute(resolvedRoute) : pathForRide(resolvedRide)
+      if (path.length < 2) {
+        toast('info', 'No assigned route', 'Optimize and assign a route before starting navigation.')
+        return
+      }
+      simPathRef.current = { path, rideId: resolvedRide?.id ?? null, routeId: resolvedRoute?.id ?? null }
       setRunRide(resolvedRide ?? null)
+      setNavRoute(resolvedRoute ?? null)
       simFiredRef.current = new Set()
       setSimProgress(0)
       setSimCoords([path[0][0], path[0][1]])
     } else {
-      path = simPathRef.current?.path || pathForRide(resolvedRide)
+      path = simPathRef.current?.path || (resolvedRoute ? pathForRoute(resolvedRoute) : pathForRide(resolvedRide))
     }
     const totalSegments = path.length - 1
-    const single = !!resolvedRide
+    const single = !!resolvedRide && !resolvedRoute
     const boardAt = single
       ? Math.min(nearestSegIndex(resolvedRide.plng, resolvedRide.plat, path) / totalSegments, 0.9)
       : 0
@@ -252,7 +301,7 @@ export default function DriverView({ user, view, setView, toast }) {
     }
 
     setSimActive(true)
-    toast('success', single ? `Driving ${resolvedRide.name}` : 'Driver Navigation Active', single ? `${resolvedRide.pickup} → ${resolvedRide.dest}.` : 'Simulating live road traversal to Virtual Stop #1 and MG Road.')
+    toast('success', single ? `Driving ${resolvedRide.name}` : 'Driver Navigation Active', single ? `${resolvedRide.pickup} → ${resolvedRide.dest}.` : resolvedRoute ? 'Following the assigned route stops.' : 'No assigned route selected.')
     const totalSteps = 200
 
     if (simTimerRef.current) clearInterval(simTimerRef.current)
@@ -273,6 +322,8 @@ export default function DriverView({ user, view, setView, toast }) {
       setSimProgress(p)
       if (single) {
         if (p >= boardAt) fireOnce('board', 'success', `Boarded ${resolvedRide.name}`, `${resolvedRide.pickup}.`)
+      } else if (resolvedRoute) {
+        fireOnce('route-start', 'info', 'Route navigation started', 'Follow the assigned stop order on the map.')
       } else {
         // Sequential boardings at distinct pins.
         if (p >= demoBoardSeg[103] / totalSegments) fireOnce('board-priya', 'success', 'Boarded Priya Iyer', 'Stop C · 100 Feet Rd.')
@@ -314,7 +365,33 @@ export default function DriverView({ user, view, setView, toast }) {
     setSimProgress(0)
     setSimCoords([FULL_PATH[0][0], FULL_PATH[0][1]])
     setRunRide(null)
+    setNavRoute(null)
   }
+
+  // Route history is the source of truth. A completed route is removed by
+  // the API, so do not keep rendering the copy held by the map screen.
+  useEffect(() => {
+    if (loading || !navRoute?.route_id) return
+    const stillActive = routes.some((item) => (
+      item.route_id === navRoute.route_id &&
+      item.status === 'solved' &&
+      item.route_metadata?.carpool_run_status !== 'completed'
+    ))
+    if (!stillActive) {
+      const timer = setTimeout(() => {
+        if (simTimerRef.current) clearInterval(simTimerRef.current)
+        simPathRef.current = null
+        setSimActive(false)
+        setSimSpeed(0)
+        setSimProgress(0)
+        setRunRide(null)
+        setNavRoute(null)
+        setView('driver-home')
+        toast('info', 'Route completed', 'The live map was cleared because this route is no longer active.')
+      }, 0)
+      return () => clearTimeout(timer)
+    }
+  }, [loading, navRoute, routes, setView, toast])
 
 // New preview restarts from depot.
   const openPreview = (ride) => {
@@ -326,21 +403,44 @@ export default function DriverView({ user, view, setView, toast }) {
     setSimProgress(0)
     setSimCoords([FULL_PATH[0][0], FULL_PATH[0][1]])
     setRunRide(null)
+    setNavRoute(null)
     setPreviewRide(ride)
     setView('driver-map')
   }
 
-  const openFullNav = () => {
+  const openFullNav = (route = currentDriverRoute) => {
     // Discard paused single run before full drive.
     if (!simActive && runRide && simProgress > 0) resetSim()
     setPreviewRide(null)
+    setNavRoute(route || null)
     setView('driver-map')
   }
 
-  const startFullNav = () => {
+  const acceptAssignedRoute = async (route) => {
+    if (!route?.route_id) return false
+    try {
+      const accepted = await routeApi.accept(route.route_id)
+      setRoutes((prev) => prev.map((item) => (
+        item.route_id === route.route_id ? { ...item, ...accepted } : item
+      )))
+      setMyVehicle((prev) => (prev ? { ...prev, status: 'active' } : prev))
+      toast('success', 'Route accepted', 'Passengers will now see the driver progressing to their stops.')
+      return true
+    } catch (error) {
+      toast('error', 'Could not accept route', error?.response?.data?.detail || 'The route may no longer be available.')
+      return false
+    }
+  }
+
+  const startFullNav = async (route = currentDriverRoute) => {
+    if (route && !(route.route_metadata || {}).driver_accepted) {
+      const accepted = await acceptAssignedRoute(route)
+      if (!accepted) return
+    }
     setPreviewRide(null)
+    setNavRoute(route || null)
     setView('driver-map')
-    if (!simActive) toggleDriveSimulation(null)
+    if (!simActive) toggleDriveSimulation(null, route || null)
   }
 
   useEffect(() => {
@@ -361,9 +461,14 @@ export default function DriverView({ user, view, setView, toast }) {
         simSpeed={simSpeed}
         simCoords={simCoords}
         simBearing={simBearing}
-        onToggleSim={() => toggleDriveSimulation()}
-        previewRide={previewRide}
-        runRide={runRide}
+         onToggleSim={() => {
+           const route = navRoute || (previewRide ? null : currentDriverRoute)
+           if (!simActive && route) void startFullNav(route)
+           else toggleDriveSimulation(undefined, route)
+         }}
+         previewRide={previewRide}
+         runRide={runRide}
+         route={navRoute || (previewRide ? null : currentDriverRoute)}
         onClearPreview={() => setPreviewRide(null)}
         onResetSim={resetSim}
       />
@@ -383,14 +488,38 @@ export default function DriverView({ user, view, setView, toast }) {
         loading={loading}
         onBack={() => setView('driver-home')}
         onOpenMap={openFullNav}
+        onAcceptRoute={acceptAssignedRoute}
+        onAnnouncePickup={async (routeId, rideId) => {
+          try {
+            await routeApi.announceCarpoolPickup(routeId, rideId)
+            await refreshRides()
+            toast('success', 'Pickup announced', `Rider #${rideId} was asked to walk to the assigned stop.`)
+          } catch (error) { toast('error', 'Could not notify rider', error?.response?.data?.detail || '') }
+        }}
+        onConfirmPickup={async (routeId, rideId) => {
+          try {
+            await routeApi.confirmCarpoolPickup(routeId, rideId)
+            await refreshRides()
+            toast('success', 'Passenger picked up', `Ride #${rideId} is now in progress.`)
+          } catch (error) { toast('error', 'Could not confirm pickup', error?.response?.data?.detail || '') }
+        }}
+        onConfirmDropoff={async (routeId, rideId) => {
+          try {
+            await routeApi.confirmCarpoolDropoff(routeId, rideId)
+            await refreshRides()
+            await refreshRoutes()
+            toast('success', 'Passenger dropped off', `Ride #${rideId} is complete.`)
+          } catch (error) { toast('error', 'Could not confirm drop-off', error?.response?.data?.detail || '') }
+        }}
       />
     )
   }
 
   // Driver home
   const firstName = user?.name?.split(' ')[0] || 'Driver'
-  const incoming = rides.filter((r) => ['pending', 'clustered'].includes(r.status))
-  const activeTrips = rides.filter((r) => ['assigned', 'arriving', 'in_progress'].includes(r.status))
+  const normalRides = rides.filter((r) => r.is_shared === false)
+  const incoming = normalRides.filter((r) => ['pending', 'clustered'].includes(r.status))
+  const activeTrips = normalRides.filter((r) => ['assigned', 'arriving', 'in_progress'].includes(r.status))
   const usingDemoManifest = rides.length === 0
   // Pooled thresholds for boardings and drops.
   const demoDropAt = { 1: 1.01, 2: 9 / 11, 3: 10 / 11 }
@@ -707,17 +836,6 @@ export default function DriverView({ user, view, setView, toast }) {
             </CardContent>
           </Card>
 
-          <Card className="border-primary/25 bg-primary/[0.04]">
-            <CardContent className="flex gap-3 p-4">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                <Navigation className="h-4 w-4 text-primary" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-[13px] font-bold">Indiranagar → MG Road ready</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">4.2 km · 3 pooled stops · optimized route loaded. Start navigation when you leave the depot.</p>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>
@@ -742,49 +860,43 @@ function StatCard({ icon: Icon, label, value, sub }) {
 }
 
 // Live navigation map
-function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simProgress, simSpeed, simCoords, simBearing, onToggleSim, previewRide, runRide, onClearPreview, onResetSim }) {
-  // Active ride wins; route follows its path.
+function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActive, simProgress, simSpeed, simCoords, simBearing, onToggleSim, previewRide, runRide, onClearPreview, onResetSim }) {
+  // A persisted assigned route is the source of truth. A single ride is only
+  // used for the driver's preview action.
   const contextRide = (simActive || simProgress > 0) && runRide ? runRide : previewRide
-  // Memoized paths to avoid pin flicker.
-  const activePath = useMemo(() => pathForRide(contextRide), [contextRide])
+  const activePath = useMemo(() => route ? pathForRoute(route) : contextRide ? pathForRide(contextRide) : [], [route, contextRide])
+  const routeWaypoints = route?.waypoints || EMPTY_WAYPOINTS
+  const initialPoint = routeWaypoints[0] || null
+  const vehicleLat = simActive ? simCoords[1] : (myVehicle?.lat ?? initialPoint?.lat ?? 12.9784)
+  const vehicleLng = simActive ? simCoords[0] : (myVehicle?.lng ?? initialPoint?.lng ?? 77.6408)
   const vehicle = {
     id: myVehicle?.id || 99,
     license_plate: myVehicle?.license_plate || 'KA-01-TEST-99',
-    status: simActive ? 'active' : 'idle',
-    lat: simCoords[1],
-    lng: simCoords[0],
-    bearing: simBearing,
+    status: simActive ? 'active' : (myVehicle?.status || 'idle'),
+    lat: vehicleLat,
+    lng: vehicleLng,
+    bearing: simActive ? simBearing : (myVehicle?.bearing || 0),
   }
 
   const waypoints = useMemo(() => (
-    contextRide?.plat != null && contextRide?.dlat != null
+    routeWaypoints.length
+      ? routeWaypoints
+      : contextRide?.plat != null && contextRide?.dlat != null
       ? [
           { lat: 12.9784, lng: 77.6408, waypoint_type: 'depot', label: 'Depot' },
           { lat: contextRide.plat, lng: contextRide.plng, waypoint_type: 'pickup', label: `${contextRide.name} pickup` },
           { lat: contextRide.dlat, lng: contextRide.dlng, waypoint_type: 'destination', label: `${contextRide.name} dropoff` },
         ]
-      : [
-          { lat: 12.9784, lng: 77.6408, waypoint_type: 'depot', label: 'Depot' },
-          { lat: 12.97650, lng: 77.64100, waypoint_type: 'pickup', label: 'Stop C · Priya' },
-          { lat: 12.97400, lng: 77.64110, waypoint_type: 'pickup', label: 'Stop B · Rohan' },
-          { lat: 12.97190, lng: 77.64124, waypoint_type: 'pickup', label: 'Stop A · Ananya' },
-          { lat: 12.97490, lng: 77.60800, waypoint_type: 'waypoint', label: 'Drop · Rohan' },
-          { lat: 12.97340, lng: 77.60750, waypoint_type: 'waypoint', label: 'Drop · Priya' },
-          { lat: 12.97560, lng: 77.60660, waypoint_type: 'destination', label: 'MG Road · Ananya' },
-        ]
-  ), [contextRide])
+      : []
+  ), [contextRide, routeWaypoints])
 
-  // Center on previewed leg; follow GPS when driving.
-  const mapCenter = simActive
-    ? [simCoords[1], simCoords[0]]
-    : contextRide?.plat != null && contextRide?.dlat != null
-      ? [(contextRide.plat + contextRide.dlat) / 2, (contextRide.plng + contextRide.dlng) / 2]
-      : [simCoords[1], simCoords[0]]
-  const mapZoom = contextRide && !simActive ? 14.5 : 14
+  // Center on the real vehicle; AppMap fits the persisted route when idle.
+  const mapCenter = [vehicleLat, vehicleLng]
+  const mapZoom = route ? 13.5 : contextRide && !simActive ? 14.5 : 14
 
-  const boardAt = contextRide?.plat != null
+  const boardAt = contextRide?.plat != null && activePath.length > 1
     ? Math.min(nearestSegIndex(contextRide.plng, contextRide.plat, activePath) / (activePath.length - 1), 0.9)
-    : Math.min(3 / (activePath.length - 1), 0.9)
+    : 0
   const totalKm = contextRide?.stopOrder === 2 ? 3.6 : contextRide?.stopOrder === 3 ? 3.9 : 4.2
   let navInstruction
   let nextStopLabel
@@ -806,25 +918,20 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
       nextStopLabel = `${String(contextRide.pickup).split(',')[0]}${contextRide.stopOrder ? ` · Stop ${contextRide.stopOrder}` : ''}`
       nextStopShort = destShort
     }
+  } else if (route) {
+    const nextWaypoint = routeWaypoints[Math.min(Math.floor(simProgress * routeWaypoints.length), Math.max(0, routeWaypoints.length - 1))]
+    const nextLabel = nextWaypoint?.label || `${nextWaypoint?.waypoint_type === 'pickup' ? 'Pickup' : 'Drop-off'} stop`
+    navInstruction = simProgress >= 1 ? 'Assigned route completed' : `Proceed to ${nextLabel}`
+    nextStopLabel = nextLabel
+    nextStopShort = nextLabel
   } else {
-    const bC = demoBoardSeg[103] / 11
-    const bB = demoBoardSeg[102] / 11
-    const bA = demoBoardSeg[101] / 11
-    if (simProgress >= 10 / 11) { nextStopLabel = 'MG Road Metro · Ananya'; nextStopShort = 'MG Road' }
-    else if (simProgress >= 9 / 11) { nextStopLabel = 'Brigade Rd · Priya'; nextStopShort = 'Brigade Rd' }
-    else if (simProgress >= bA) { nextStopLabel = 'Church St · Rohan'; nextStopShort = 'Church St' }
-    else if (simProgress >= bB) { nextStopLabel = 'Stop A · Ananya boarding'; nextStopShort = 'Stop A' }
-    else if (simProgress >= bC) { nextStopLabel = 'Stop B · Rohan boarding'; nextStopShort = 'Stop B' }
-    else { nextStopLabel = 'Stop C · Priya boarding'; nextStopShort = 'Stop C' }
-    if (simProgress < bC) navInstruction = 'Head South on 100 Feet Rd towards Stop C · Priya'
-    else if (simProgress < bB) navInstruction = 'Board Priya, continue South to Stop B · Rohan'
-    else if (simProgress < bA) navInstruction = 'Board Rohan, continue South to Stop A · Ananya'
-    else if (simProgress < 9 / 11) navInstruction = 'All aboard — head West on Trinity Corridor towards Church Street'
-    else if (simProgress < 10 / 11) navInstruction = 'Drop Rohan, continue to Brigade Road Junction'
-    else navInstruction = 'Final leg: arriving MG Road Metro Station'
+    navInstruction = 'No assigned route'
+    nextStopLabel = 'Assign a route to begin'
+    nextStopShort = 'assigned route'
   }
   const ManeuverIcon = simProgress > 0.3 && simProgress < 0.7 && !contextRide ? CornerUpRight : ArrowUp
-  const kmLeft = (Math.round((1 - simProgress) * totalKm * 10) / 10).toFixed(1)
+  const routeKm = route?.total_distance_meters ? route.total_distance_meters / 1000 : totalKm
+  const kmLeft = (Math.round((1 - simProgress) * routeKm * 10) / 10).toFixed(1)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -849,7 +956,7 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={onToggleSim} className="gap-1.5">
             {simActive ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            {simActive ? 'Pause drive' : 'Start GPS drive'}
+            {simActive ? 'Pause drive' : route && !(route.route_metadata || {}).driver_accepted ? 'Accept & start drive' : 'Start GPS drive'}
           </Button>
           <Button size="sm" variant="outline" onClick={onUpdateLoc} disabled={updating} className="gap-1.5">
             {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LocateFixed className="h-3.5 w-3.5" />}
@@ -864,14 +971,14 @@ function LiveMapView({ myVehicle, onBack, onUpdateLoc, updating, simActive, simP
 
       {/* Map */}
       <div className="relative min-h-[420px] min-w-0 flex-1 overflow-hidden rounded-2xl border">
-        {runRide && (simActive || simProgress > 0) ? (
+          {route && (simActive || simProgress > 0) ? (
           <div className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 shadow backdrop-blur">
             <Badge className="gap-1">
               <MapPin className="h-3 w-3" />
-              Driving {runRide.stopOrder ? `stop ${runRide.stopOrder}` : 'ride'} · {runRide.name} · {Math.round(simProgress * 100)}%
+               Driving assigned route · {Math.round(simProgress * 100)}%
             </Badge>
             <span className="max-w-[420px] truncate text-xs text-muted-foreground">
-              {runRide.pickup} → {runRide.dest}
+               {route.waypoints?.length || 0} ordered stops · {((route.total_distance_meters || 0) / 1000).toFixed(1)} km
             </span>
             {!simActive && simProgress > 0 && (
               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={onResetSim}>
@@ -943,7 +1050,12 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
 
   const list = routes?.length ? routes : []
   const activeRoute = list.find((r) => (r.id ?? r.route_id) === selectedId) || list[0] || null
-  const stopCount = activeRoute?.waypoints?.length || 5
+  const stopCount = activeRoute?.waypoints?.length || 0
+  const routeWaypoints = activeRoute?.waypoints || []
+  const routeGeometry = pathForRoute(activeRoute)
+  const routeCenter = routeWaypoints[0]
+    ? [routeWaypoints[0].lat, routeWaypoints[0].lng]
+    : [12.9784, 77.6408]
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 p-4 md:p-7">
@@ -957,8 +1069,8 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
             <p className="text-xs text-muted-foreground">Optimized multi-stop plan for this shift</p>
           </div>
         </div>
-        <Button size="sm" onClick={onStartNav} className="gap-1.5">
-          <Navigation className="h-3.5 w-3.5" /> Start Navigation
+          <Button size="sm" onClick={() => onStartNav(activeRoute)} disabled={!activeRoute} className="gap-1.5">
+          <Navigation className="h-3.5 w-3.5" /> Accept & Start Navigation
         </Button>
       </div>
 
@@ -970,12 +1082,9 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
             <Card className="border-primary/30">
               <CardContent className="space-y-1.5 p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[13px] font-bold">Indiranagar → MG Road Multi-Stop</p>
-                  <Badge>Active route</Badge>
+                  <p className="text-[13px] font-bold">No assigned routes</p>
                 </div>
-                <p className="text-xs text-muted-foreground">Vehicle KA-01-TEST-99 · 4.2 km · 3 pickups + 3 drops</p>
-                <p className="text-[11px] text-muted-foreground">Optimized by OR-Tools CVRP</p>
-                <p className="pt-1 text-[11px] text-muted-foreground">Demo preview — run optimization to generate live routes.</p>
+                <p className="text-xs text-muted-foreground">Routes will appear here after dispatch assigns one to your vehicle.</p>
               </CardContent>
             </Card>
           ) : (
@@ -1010,7 +1119,7 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <CardTitle className="text-sm">Route Map & Waypoints</CardTitle>
-                <CardDescription>{stopCount} stops · live traffic aware</CardDescription>
+                <CardDescription>{stopCount ? `${stopCount} stops · live route geometry` : 'No route selected'}</CardDescription>
               </div>
               <Badge variant="secondary" className="gap-1"><RouteIcon className="h-3 w-3" /> {stopCount} stops</Badge>
             </div>
@@ -1018,17 +1127,11 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
           <CardContent className="space-y-3">
             <div className="relative overflow-hidden rounded-lg border">
               <AppMap
-                center={[12.9756, 77.6250]}
+                center={routeCenter}
                 zoom={13}
                 height={260}
-                routeGeometry={DEMO_PRESETS.indiranagar.roadPath}
-                waypoints={activeRoute?.waypoints || [
-                  { lat: 12.9784, lng: 77.6408, waypoint_type: 'depot', label: 'Depot' },
-                  { lat: 12.97650, lng: 77.64100, waypoint_type: 'pickup', label: 'Stop C · Priya' },
-                  { lat: 12.97400, lng: 77.64110, waypoint_type: 'pickup', label: 'Stop B · Rohan' },
-                  { lat: 12.97190, lng: 77.64124, waypoint_type: 'pickup', label: 'Stop A · Ananya' },
-                  { lat: 12.9756, lng: 77.6066, waypoint_type: 'destination', label: 'MG Road' },
-                ]}
+                routeGeometry={routeGeometry}
+                waypoints={routeWaypoints}
                 style={{ borderRadius: 0 }}
               />
             </div>
@@ -1040,17 +1143,17 @@ function RoutesView({ routes, loading, onBack, onStartNav }) {
               ]}
             />
             <div className="space-y-0">
-              {['Depot · Indiranagar Hub', 'Board Priya · Stop C (100 Feet Rd)', 'Board Rohan · Stop B (100 Feet Rd)', 'Board Ananya · Stop A (100 Feet Rd)', 'Drop Rohan · Church Street', 'Drop Priya · Brigade Road', 'Drop Ananya · MG Road Metro'].map((label, i, arr) => (
-                <div key={label} className="flex gap-3">
+              {routeWaypoints.map((waypoint, i, arr) => (
+                <div key={`${waypoint.sequence ?? i}-${waypoint.lat}`} className="flex gap-3">
                   <div className="flex flex-col items-center">
                     <span className={cn('mt-1 h-2.5 w-2.5 rounded-full', i === 0 ? 'bg-muted-foreground' : i === arr.length - 1 ? 'bg-black dark:bg-white' : 'bg-foreground')} />
                     {i < arr.length - 1 && <span className="w-px flex-1 bg-border" />}
                   </div>
-                  <p className="pb-3 text-xs font-medium">{label}</p>
+                  <p className="pb-3 text-xs font-medium">{waypoint.label || `${waypoint.waypoint_type} · ${waypoint.lat.toFixed(5)}, ${waypoint.lng.toFixed(5)}`}</p>
                 </div>
               ))}
             </div>
-            <Button className="w-full gap-1.5" onClick={onStartNav}>
+            <Button className="w-full gap-1.5" onClick={() => onStartNav(activeRoute)} disabled={!activeRoute}>
               <Play className="h-4 w-4" /> Launch Interactive Simulation
             </Button>
           </CardContent>
@@ -1071,10 +1174,12 @@ function carpoolDistanceMeters(aLat, aLng, bLat, bLng) {
   return 2 * radius * Math.asin(Math.sqrt(h))
 }
 
-function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap }) {
+function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, onAcceptRoute, onAnnouncePickup, onConfirmPickup, onConfirmDropoff }) {
   const route = routes?.find((item) => (
     item.vehicle_id === vehicle?.id &&
     item.status === 'solved' &&
+    item.route_metadata?.carpool_run &&
+    item.route_metadata?.carpool_run_status !== 'completed' &&
     (item.problem || item.route_metadata?.problem || 'pdp') === 'pdp'
   )) || null
   const waypoints = route?.waypoints || []
@@ -1103,8 +1208,8 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap }
             <p className="mt-0.5 text-sm text-muted-foreground">Stop-by-stop guidance for up to three riders.</p>
           </div>
         </div>
-        <Button onClick={onOpenMap} className="gap-1.5" disabled={!route}>
-          <Navigation className="h-4 w-4" /> Open live map
+        <Button onClick={() => route?.route_metadata?.driver_accepted ? onOpenMap(route) : onAcceptRoute(route)} className="gap-1.5" disabled={!route}>
+          <Navigation className="h-4 w-4" /> {route?.route_metadata?.driver_accepted ? 'Open live map' : 'Accept carpool run'}
         </Button>
       </div>
 
@@ -1117,8 +1222,12 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap }
         <Card className="border-dashed">
           <CardContent className="space-y-2 p-8 text-center">
             <Users className="mx-auto h-8 w-8 text-muted-foreground" />
-            <p className="font-semibold">No active carpool run</p>
-            <p className="mx-auto max-w-md text-sm text-muted-foreground">When dispatch matches two or three riders travelling the same way, their shared itinerary will appear here.</p>
+            <p className="font-semibold">No active carpool run for this vehicle</p>
+            <p className="mx-auto max-w-md text-sm text-muted-foreground">
+              {vehicle?.license_plate
+                ? `No carpool route is currently assigned to ${vehicle.license_plate}. New assignments will appear here after dispatch and driver acceptance.`
+                : 'A vehicle must be assigned to this driver before carpool runs can appear here.'}
+            </p>
           </CardContent>
         </Card>
       ) : (
@@ -1166,10 +1275,27 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap }
                           ? carpoolDistanceMeters(ride.pickup_lat, ride.pickup_lng, waypoint.lat, waypoint.lng)
                           : 0
                         return (
-                          <p key={id} className="mt-1 truncate text-sm">
-                            {ride?.pickup_label || ride?.destination_label || `Rider #${id}`}
-                            {isPickup && walk > 0 ? <span className="ml-1 text-xs text-muted-foreground">· walks {Math.round(walk)} m</span> : null}
-                          </p>
+                          <div key={id} className="mt-1 space-y-1">
+                            <p className="truncate text-sm">
+                              {ride?.pickup_label || ride?.destination_label || `Rider #${id}`}
+                              {isPickup && walk > 0 ? <span className="ml-1 text-xs text-muted-foreground">· walks {Math.round(walk)} m</span> : null}
+                            </p>
+                            {ride && <div className="flex flex-wrap items-center gap-1.5">
+                              <StatusBadge status={ride.status} />
+                              {isPickup && ride.status === 'assigned' && (
+                                <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onAnnouncePickup(route.route_id, id)}>Ask rider to walk</Button>
+                              )}
+                              {isPickup && ride.status === 'arriving' && (
+                                <span className="text-[11px] text-muted-foreground">Waiting for rider confirmation</span>
+                              )}
+                              {isPickup && ride.status === 'ready_for_pickup' && (
+                                <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onConfirmPickup(route.route_id, id)}>Confirm pickup</Button>
+                              )}
+                              {!isPickup && ride.status === 'in_progress' && (
+                                <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onConfirmDropoff(route.route_id, id)}>Confirm drop-off</Button>
+                              )}
+                            </div>}
+                          </div>
                         )
                       })}
                       <p className="mt-0.5 text-[11px] text-muted-foreground">{waypoint.lat.toFixed(5)}, {waypoint.lng.toFixed(5)}</p>
@@ -1193,6 +1319,7 @@ const STATUS_STYLES = {
   completed: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
   in_progress: 'border-foreground/30 bg-foreground text-background',
   arriving: 'border-foreground/30 bg-foreground text-background',
+  ready_for_pickup: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
   assigned: 'border-foreground/30 bg-foreground text-background',
   active: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
   en_route: 'border-foreground/30 bg-foreground text-background',

@@ -75,6 +75,9 @@ def create_db_tables(bind_engine=None):
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_status VARCHAR NOT NULL DEFAULT 'active'"
             ))
             connection.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_last_seen_at TIMESTAMPTZ"
+            ))
+            connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
                 "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
             ))
@@ -131,6 +134,9 @@ def create_db_tables(bind_engine=None):
             if "driver_status" not in columns:
                 with target_engine.begin() as connection:
                     connection.execute(text("ALTER TABLE users ADD COLUMN driver_status VARCHAR NOT NULL DEFAULT 'active'"))
+            if "driver_last_seen_at" not in _sqlite_columns("users"):
+                with target_engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE users ADD COLUMN driver_last_seen_at DATETIME"))
             # Indexes independently of whether columns were newly added.
             if "clerk_user_id" in _sqlite_columns("users"):
                 with target_engine.begin() as connection:
@@ -239,6 +245,9 @@ def run_startup_migrations(bind_engine=None) -> None:
             ))
             connection.execute(text(
                 "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_status VARCHAR NOT NULL DEFAULT 'active'"
+            ))
+            connection.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_last_seen_at TIMESTAMPTZ"
             ))
             connection.execute(text(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "

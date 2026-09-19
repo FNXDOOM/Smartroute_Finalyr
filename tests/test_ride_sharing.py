@@ -7,7 +7,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from database import SessionLocal
 from models.user import User
 from models.ride_request import RideRequest
-from services.background_jobs import _split_compatible_shared_group, run_cluster_job
+from services.background_jobs import (
+    _find_cross_cell_corridor_groups,
+    _split_compatible_shared_group,
+    run_cluster_job,
+)
 
 
 def _user(db):
@@ -83,6 +87,41 @@ def test_shared_pool_accepts_two_riders():
 
     groups = _split_compatible_shared_group(requests)
     assert [len(group) for group in groups] == [2]
+
+
+def test_cross_cell_corridor_match_keeps_each_rider_in_the_group():
+    common_destination = (13.027276, 77.731848)
+    requests = [
+        type(
+            "Request",
+            (),
+            {
+                "id": 279,
+                "request_time": datetime(2026, 9, 19, tzinfo=timezone.utc),
+                "pickup_lat": 12.997038,
+                "pickup_lng": 77.669131,
+                "dest_lat": common_destination[0],
+                "dest_lng": common_destination[1],
+            },
+        )(),
+        type(
+            "Request",
+            (),
+            {
+                "id": 280,
+                "request_time": datetime(2026, 9, 19, 0, 1, tzinfo=timezone.utc),
+                "pickup_lat": 13.008374,
+                "pickup_lng": 77.69529,
+                "dest_lat": common_destination[0],
+                "dest_lng": common_destination[1],
+            },
+        )(),
+    ]
+
+    groups, matched_ids = _find_cross_cell_corridor_groups(requests)
+
+    assert [len(group) for group in groups] == [2]
+    assert matched_ids == {279, 280}
 
 
 def test_private_rides_never_pool_and_shared_rides_do():

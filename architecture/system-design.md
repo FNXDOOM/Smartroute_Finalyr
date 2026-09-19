@@ -89,8 +89,13 @@ This is the full lifecycle of a passenger ride from request to completion.
    → groups rides by hexagonal cell (resolution 9)
         │
         ▼
+   Global corridor search across neighboring H3 cells
+   → finds compatible pickup-to-destination corridors beyond a single cell
+   → enforces the 150m maximum rider walk distance
+        │
+        ▼
    HDBSCAN Clusterer (per H3 bucket)
-   → groups nearby passengers within each cell
+   → performs the first-pass grouping of nearby passengers within each cell
    → noise points (isolated riders) marked with label -1
         │
         ▼
@@ -117,12 +122,13 @@ This is the full lifecycle of a passenger ride from request to completion.
          │
          ▼
     OR-Tools shared-ride routing (both called through shared_route_builder.py):
-      solve_shared_ride_pdp  — depot + one pickup node per pooled stop + one destination
-                               node per ride, paired; a signed load dimension, so a seat is
-                               free again at its drop-off; open-ended, ends at the last drop
+      solve_shared_ride_pdp  — depot + one pickup node per rider/assigned pickup stop + one
+                               destination node per ride, paired; a signed load dimension,
+                               so a seat is free again at its drop-off; open-ended, ends at
+                               the last drop
       infeasible PDP pools remain clustered for a later split/retry; no pickup-only
       passenger route is persisted
-                               (routes close back at the depot)
+      shared routes contain 2–3 riders, with separate pickup stops retained in route order
       PATH_CHEAPEST_ARC + GUIDED_LOCAL_SEARCH, 10-15 s limit, per-vehicle capacities
          │
          ▼
@@ -134,14 +140,15 @@ This is the full lifecycle of a passenger ride from request to completion.
     For each route solution:
       RoutePlan saved (route_id, vehicle_id, distance, duration, metadata + geometry/legs/maneuvers)
       RouteWaypointRecords saved (ordered stop sequence)
-      Vehicle updated (assigned_route_id, status = "active")
+      Vehicle updated (assigned_route_id); the route remains an unaccepted driver offer
       RideRequests updated (status = "assigned")
-      Notifications fired → all passengers on that route
+      Notifications fired → assigned driver and all passengers on that route
 
 4. VEHICLE ASSIGNMENT (manual POST /vehicle/assign)
         │
         ▼
    Fetch idle vehicles + route candidates
+   Automatic dispatch additionally requires an online driver heartbeat within 90 seconds
         │
         ▼
    Build cost matrix (haversine: vehicle current pos → route depot)
@@ -151,7 +158,7 @@ This is the full lifecycle of a passenger ride from request to completion.
    → globally optimal one-to-one assignment
         │
         ▼
-   Vehicles updated (assigned_route_id, status = "active")
+   Vehicles updated (assigned_route_id); driver must accept before the route can advance
 
 5. LIVE TRACKING (POST /tracking/vehicles/{id}/location)
         │
@@ -166,7 +173,10 @@ This is the full lifecycle of a passenger ride from request to completion.
                         → in_progress → completed
     pending → clustered happens in clustering / auto-dispatch only.
     clustered → assigned happens in route optimization / auto-dispatch only.
-    assigned → arriving → in_progress → completed is driven by the simulation job (every 5s, live + demo scopes; completes a demo ride in ~25 s) and by driver Start/Arriving/Complete buttons.
+    Normal rides progress through driver acceptance and driver controls.
+    Live shared rides are controlled by the Carpool Run workflow: driver acceptance,
+    per-rider pickup confirmation, boarding, individual drop-off confirmation, and
+    final route completion. The simulation job never advances live shared rides.
     Each transition fires a notification to the passenger.
     Live and presentation_demo rows are isolated by ride_mode + demo_run_id (see alembic 0002_demo_scope); live queries default to mode=live.
 ```

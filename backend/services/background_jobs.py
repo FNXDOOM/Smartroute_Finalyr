@@ -16,6 +16,7 @@ from models.job_run import JobRun
 from models.ride_request import RideRequest
 from models.route_plan import RoutePlan
 from models.route_waypoint import RouteWaypointRecord
+from models.user import User
 from models.vehicle import Vehicle
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 from models.virtual_stop import VirtualStop
@@ -31,9 +32,11 @@ from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE, apply_ride_scope, validate_ride_mode
 
 CLUSTER_INTERVAL_SECONDS = 60
+AUTO_DISPATCH_INTERVAL_SECONDS = 60
 DEMAND_INTERVAL_SECONDS = 300
 REBALANCE_INTERVAL_SECONDS = 300
 SIMULATE_DISPATCH_INTERVAL_SECONDS = 5
+DRIVER_PRESENCE_TIMEOUT_SECONDS = 90
 
 # Pickup clustering is only the first gate. Keep riders with destinations in
 # the same corridor so the PDP solver does not create unreasonable detours.
@@ -110,6 +113,92 @@ def _split_compatible_shared_group(requests: List[RideRequest]) -> List[List[Rid
         if not placed:
             groups.append([request])
     return groups
+
+
+def _point_to_segment_coords_meters(
+    lat: float,
+    lng: float,
+    start_lat: float,
+    start_lng: float,
+    end_lat: float,
+    end_lng: float,
+) -> float:
+    """Approximate distance from a coordinate to a coordinate segment."""
+    scale = 111_000.0
+    cos_lat = max(0.2, abs(math.cos(lat * math.pi / 180)))
+    px, py = lng * scale * cos_lat, lat * scale
+    ax, ay = start_lng * scale * cos_lat, start_lat * scale
+    bx, by = end_lng * scale * cos_lat, end_lat * scale
+    dx, dy = bx - ax, by - ay
+    if dx == 0 and dy == 0:
+        return ((px - ax) ** 2 + (py - ay) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+    nearest_x, nearest_y = ax + t * dx, ay + t * dy
+    return ((px - nearest_x) ** 2 + (py - nearest_y) ** 2) ** 0.5
+
+
+def _pickup_corridor_distance_meters(request: RideRequest, other: RideRequest) -> float:
+    """Return the nearer directional pickup-to-destination corridor distance."""
+    request_to_other_route = _point_to_segment_coords_meters(
+        request.pickup_lat,
+        request.pickup_lng,
+        other.pickup_lat,
+        other.pickup_lng,
+        other.dest_lat,
+        other.dest_lng,
+    )
+    other_to_request_route = _point_to_segment_coords_meters(
+        other.pickup_lat,
+        other.pickup_lng,
+        request.pickup_lat,
+        request.pickup_lng,
+        request.dest_lat,
+        request.dest_lng,
+    )
+    return min(request_to_other_route, other_to_request_route)
+
+
+def _find_cross_cell_corridor_groups(
+    requests: List[RideRequest],
+) -> tuple[List[List[RideRequest]], set[int]]:
+    """Find shared riders whose pickups lie along one another's route corridor.
+
+    H3 is intentionally a fast spatial pre-filter, not a hard carpool boundary.
+    This pass runs over the remaining shared requests so a rider in a nearby
+    cell can join when their pickup lies within the 150 m corridor of another
+    rider's pickup-to-destination route.
+    """
+    groups: List[List[RideRequest]] = []
+    matched_ids: set[int] = set()
+    for request in sorted(requests, key=lambda item: (item.request_time, item.id)):
+        if request.id in matched_ids:
+            continue
+        for group in groups:
+            if len(group) >= MAX_CARPOOL_PASSENGERS:
+                continue
+            destinations_close = all(
+                _haversine_meters(
+                    request.dest_lat,
+                    request.dest_lng,
+                    other.dest_lat,
+                    other.dest_lng,
+                ) <= MAX_DESTINATION_SPREAD_METERS
+                for other in group
+            )
+            corridor_ok = all(
+                _pickup_corridor_distance_meters(request, other) <= MAX_PICKUP_WALK_METERS
+                for other in group
+            )
+            if destinations_close and corridor_ok:
+                group.append(request)
+                matched_ids.add(request.id)
+                break
+        else:
+            groups.append([request])
+
+    qualified_groups = [group for group in groups if len(group) >= MIN_CARPOOL_PASSENGERS]
+    qualified_ids = {request.id for group in qualified_groups for request in group}
+    return qualified_groups, qualified_ids
 
 
 def _point_to_segment_meters(lat: float, lng: float, start, end) -> float:
@@ -491,6 +580,12 @@ def run_cluster_job(
         cluster_groups_payload: List[Dict] = []
         noise_count = 0
         clusters_formed = 0
+        clustered_shared_ids: set[int] = set()
+
+        # H3 keeps the normal clustering pass fast, but neighboring H3 cells
+        # must not be a hard boundary. The local H3 pass runs first; the
+        # corridor pass below only sees requests that did not form a local
+        # compatible group.
 
         for bucket_h3_index, bucket_requests in buckets.items():
             labels = cluster_passengers(bucket_requests, min_cluster_size=min_cluster_size)
@@ -522,8 +617,32 @@ def run_cluster_job(
                         continue
 
                     cluster_groups_payload.append(created_payload)
+                    clustered_shared_ids.update(request.id for request in compatible_members)
                     clusters_formed += 1
                     next_cluster_id += 1
+
+        unmatched_shared_requests = [
+            request for request in shared_requests if request.id not in clustered_shared_ids
+        ]
+        corridor_groups, _ = _find_cross_cell_corridor_groups(unmatched_shared_requests)
+        for corridor_group in corridor_groups:
+            for request in corridor_group:
+                h3_index = request.h3_index or get_h3_index(
+                    request.pickup_lat, request.pickup_lng, resolution=resolution
+                )
+                cluster_groups_payload.append(
+                    _create_clustered_stop(
+                        db,
+                        [request],
+                        h3_index=h3_index,
+                        cluster_id=next_cluster_id,
+                        resolution=resolution,
+                        mode=mode,
+                        demo_run_id=demo_run_id,
+                    )
+                )
+                next_cluster_id += 1
+            clusters_formed += 1
 
         for request in private_requests:
             h3_index = request.h3_index or get_h3_index(
@@ -785,6 +904,58 @@ def run_auto_dispatch_pipeline(
         raise ValueError("demo_run_id is required for presentation_demo mode")
     job_run = _start_job_run(db, "auto_dispatch_pipeline", triggered_by_user_id, is_scheduled)
     try:
+        # Do not leave rides stranded on a route whose driver went offline
+        # before accepting it. Release those offers before building the next
+        # dispatch plan so another online driver can receive them.
+        if mode == LIVE_MODE:
+            presence_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DRIVER_PRESENCE_TIMEOUT_SECONDS)
+            stale_routes = (
+                db.query(RoutePlan)
+                .join(Vehicle, Vehicle.id == RoutePlan.vehicle_id)
+                .join(User, User.id == Vehicle.driver_user_id)
+                .filter(
+                    RoutePlan.mode == LIVE_MODE,
+                    RoutePlan.status == "solved",
+                    (
+                        User.driver_last_seen_at.is_(None)
+                        | (User.driver_last_seen_at < presence_cutoff)
+                    ),
+                )
+                .all()
+            )
+            stale_routes = [
+                route for route in stale_routes
+                if not (route.route_metadata or {}).get("driver_accepted", False)
+            ]
+            for stale_route in stale_routes:
+                ride_ids = {
+                    ride_id
+                    for waypoint in stale_route.waypoints
+                    for ride_id in (waypoint.passenger_ids or [])
+                }
+                for ride in db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).all() if ride_ids else []:
+                    if ride.status not in {"completed", "cancelled"}:
+                        ride.status = "clustered"
+                        if ride.user_id:
+                            create_notification(
+                                db,
+                                user_id=ride.user_id,
+                                notification_type="route_reassigned",
+                                title="Finding an available driver",
+                                message="Your previous driver was unavailable. We are assigning your ride to an available driver.",
+                                related_entity_type="ride_request",
+                                related_entity_id=ride.id,
+                                metadata={"previous_route_id": stale_route.route_id},
+                            )
+                stale_route.status = "cancelled"
+                metadata = dict(stale_route.route_metadata or {})
+                metadata["cancelled_reason"] = "driver_offline_before_acceptance"
+                stale_route.route_metadata = metadata
+                vehicle = stale_route.vehicle
+                if vehicle and vehicle.assigned_route_id == stale_route.route_id:
+                    vehicle.assigned_route_id = None
+                    vehicle.status = "idle"
+
         # Step 1: cluster pending requests
         cluster_res = run_cluster_job(
             db,
@@ -848,6 +1019,16 @@ def run_auto_dispatch_pipeline(
             vehicle_scope = vehicle_scope.filter(Vehicle.id == demo_vehicle.id)
         else:
             vehicle_scope = vehicle_scope.filter(Vehicle.mode == LIVE_MODE)
+            # A vehicle is dispatchable only when its assigned driver has
+            # recently opened the driver app. Vehicle ``idle`` alone is not
+            # proof that anyone is available to accept the route.
+            presence_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DRIVER_PRESENCE_TIMEOUT_SECONDS)
+            vehicle_scope = vehicle_scope.join(User, User.id == Vehicle.driver_user_id).filter(
+                User.role == "driver",
+                User.driver_status == "active",
+                User.driver_last_seen_at.isnot(None),
+                User.driver_last_seen_at >= presence_cutoff,
+            )
         idle_vehicles = vehicle_scope.filter(
             (Vehicle.status == "idle") | (Vehicle.assigned_route_id.is_(None))
         ).order_by(Vehicle.id.asc()).all()
@@ -906,6 +1087,24 @@ def run_auto_dispatch_pipeline(
                     related_entity_id=persisted.route_plan.id,
                     metadata={"route_id": persisted.route_id, "vehicle_id": actual_vehicle.id},
                 )
+            if actual_vehicle.driver_user_id:
+                create_notification(
+                    db,
+                    user_id=actual_vehicle.driver_user_id,
+                    notification_type="route_assigned",
+                    title="New route assigned",
+                    message=(
+                        f"Carpool run {persisted.route_id} is ready for your vehicle "
+                        f"{actual_vehicle.license_plate}. Open Carpool Run to accept it."
+                    ),
+                    related_entity_type="route_plan",
+                    related_entity_id=persisted.route_plan.id,
+                    metadata={
+                        "route_id": persisted.route_id,
+                        "vehicle_id": actual_vehicle.id,
+                        "carpool_run": bool((persisted.route_plan.route_metadata or {}).get("carpool_run")),
+                    },
+                )
             routes_count += 1
 
         _finish_job_run(db, job_run, "success", {
@@ -945,6 +1144,26 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
 
         updates_count = 0
         for ride in active_rides:
+            # Shared routes are controlled stop-by-stop from the carpool run
+            # screen. Passenger readiness and driver pickup/drop-off events
+            # must never be simulated by the generic timer.
+            if ride.is_shared:
+                continue
+            # A solved route is only an offer to the driver. Do not simulate
+            # arrival, trip progress, or completion until the assigned driver
+            # explicitly accepts the route.
+            waypoint = db.query(RouteWaypointRecord).filter(
+                RouteWaypointRecord.stop_id == ride.virtual_stop_id
+            ).first()
+            route_plan = None
+            if waypoint:
+                route_plan = db.query(RoutePlan).filter(
+                    RoutePlan.id == waypoint.route_plan_id,
+                    RoutePlan.status == "solved",
+                ).first()
+            if not route_plan or not (route_plan.route_metadata or {}).get("driver_accepted", False):
+                continue
+
             old_status = ride.status
             new_status = transitions.get(old_status)
             if new_status:
@@ -964,11 +1183,7 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
 
                 # If done, free vehicle if idle
                 if new_status == "completed" and ride.virtual_stop_id:
-                    waypoint = db.query(RouteWaypointRecord).filter(
-                        RouteWaypointRecord.stop_id == ride.virtual_stop_id
-                    ).first()
                     if waypoint:
-                        route_plan = db.query(RoutePlan).filter(RoutePlan.id == waypoint.route_plan_id).first()
                         if route_plan and route_plan.vehicle_id:
                             veh = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
                             if veh:
@@ -996,26 +1211,36 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
         raise
 
 
+def run_scheduled_auto_dispatch_job(db: Session) -> Dict:
+    """Run live dispatch from the worker and mark it as scheduled."""
+    return run_auto_dispatch_pipeline(db, is_scheduled=True)
+
+
 async def _run_periodic(name: str, interval_seconds: int, runner):
     """Run a background job repeatedly at the configured interval."""
+    def run_once() -> None:
+        # Job runners are synchronous and can perform database, routing, and
+        # solver work. Keep them off FastAPI's event loop so auth/profile and
+        # passenger requests remain responsive while auto-dispatch runs.
+        db = SessionLocal()
+        try:
+            runner(db)
+        finally:
+            db.close()
+
     STATE.active_tasks.append(name)
     try:
         while True:
-            db = SessionLocal()
-            try:
-                # Job runners take db first
-                runner(db)
-                now = datetime.now(timezone.utc)
-                if name == "cluster_pending_rides":
-                    STATE.last_cluster_run_at = now
-                elif name == "refresh_demand_snapshots":
-                    STATE.last_demand_run_at = now
-                elif name == "rebalance_idle_vehicles":
-                    STATE.last_rebalance_run_at = now
-                elif name == "simulate_ride_dispatch":
-                    STATE.last_dispatch_run_at = now
-            finally:
-                db.close()
+            await asyncio.to_thread(run_once)
+            now = datetime.now(timezone.utc)
+            if name in {"cluster_pending_rides", "auto_dispatch_pipeline"}:
+                STATE.last_cluster_run_at = now
+            elif name == "refresh_demand_snapshots":
+                STATE.last_demand_run_at = now
+            elif name == "rebalance_idle_vehicles":
+                STATE.last_rebalance_run_at = now
+            elif name == "simulate_ride_dispatch":
+                STATE.last_dispatch_run_at = now
             await asyncio.sleep(interval_seconds)
     except asyncio.CancelledError:
         pass
@@ -1032,7 +1257,11 @@ def start_background_jobs() -> None:
     STATE.running = True
     loop = asyncio.get_running_loop()
     _TASKS.clear()
-    _TASKS.append(loop.create_task(_run_periodic("cluster_pending_rides", CLUSTER_INTERVAL_SECONDS, run_cluster_job)))
+    # Live rides must progress through the complete pipeline automatically:
+    # cluster -> corridor match -> PDP route -> idle vehicle assignment.
+    # Keep the standalone clustering endpoint for manual/admin diagnostics,
+    # but do not leave production rides stranded in `clustered`.
+    _TASKS.append(loop.create_task(_run_periodic("auto_dispatch_pipeline", AUTO_DISPATCH_INTERVAL_SECONDS, run_scheduled_auto_dispatch_job)))
     _TASKS.append(loop.create_task(_run_periodic("refresh_demand_snapshots", DEMAND_INTERVAL_SECONDS, run_demand_refresh_job)))
     _TASKS.append(loop.create_task(_run_periodic("rebalance_idle_vehicles", REBALANCE_INTERVAL_SECONDS, run_vehicle_rebalance_job)))
     _TASKS.append(loop.create_task(_run_periodic("simulate_ride_dispatch", SIMULATE_DISPATCH_INTERVAL_SECONDS, run_simulate_ride_dispatch_job)))

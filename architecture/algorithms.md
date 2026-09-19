@@ -10,7 +10,7 @@ How each AI and optimization algorithm works, why it was chosen, and exactly whe
 **Library:** `h3` (Uber)
 
 ### What it does
-Divides the map into a uniform hexagonal grid. Each ride request is assigned to the H3 cell that contains its pickup coordinates. Rides in the same cell are processed together before clustering.
+Divides the map into a uniform hexagonal grid. Each ride request is assigned to the H3 cell that contains its pickup coordinates. H3 is a fast first-pass partition, not a hard carpool boundary: after local clustering, the dispatch pipeline searches neighboring cells for compatible pickup-to-destination corridors.
 
 ### Why hexagons
 Hexagons have equal distance from center to all 6 neighbors (unlike squares where diagonal neighbors are further). This gives more consistent clustering behavior across directions.
@@ -90,7 +90,9 @@ kmedoids.fit(coords)
 stop_lat, stop_lng = coords[kmedoids.medoid_indices_[0]]
 ```
 
-`n_stops=1` per cluster — one virtual stop serves all passengers in a cluster.
+`n_stops=1` per initial pickup cluster. The later corridor/PDP stage may retain
+separate pickup stops for individual riders when they are within the 150 m walk
+limit but do not share the exact same curb location.
 
 ### Fallback
 If `sklearn_extra` is unavailable, falls back to geometric centroid (`coords.mean(axis=0)`).
@@ -135,15 +137,15 @@ If OSMnx is not installed or the download fails, `snap_to_road` returns the orig
 
 ### What it does
 A vehicle pool is a **pickup-and-delivery problem**, not pickups-only: every pooled ride
-request contributes a destination node paired with the boarding stop its passenger walks
-to. `solve_shared_ride_pdp` assigns boarding stops *and* drop-offs to vehicles and orders
+request contributes a destination node paired with that rider's assigned pickup stop.
+`solve_shared_ride_pdp` assigns individual pickup stops *and* drop-offs to vehicles and orders
 the whole run, so a pooled route can serve more passengers in one trip than the vehicle's
 capacity allows at any single moment — a seat is free again the moment its rider alights.
 
 ### Problem formulation
 ```
 Nodes:    depot (index 0)
-          + one pickup node per pooled boarding stop (demand = riders there)
+          + one pickup node per rider/assigned pickup stop (demand = 1)
           + one destination node per ride request (demand 1, pair_index → its pickup)
 Vehicles: each with its own capacity constraint
 Load:     a signed dimension — +n at a pickup, -1 per rider dropped off
@@ -162,6 +164,10 @@ for each passenger and would be unsafe to persist as an assigned ride. If the PD
 solution, the pool remains `clustered` and is retried after matching splits it into
 smaller destination-compatible groups or a vehicle becomes available.
 `route_plans.route_metadata.problem` is therefore `pdp` for passenger routes.
+
+Carpool matching accepts two riders as the minimum viable pool and three as the
+maximum. A passenger may join only before the existing route is accepted/started;
+once it is underway, the request waits for another compatible route.
 
 ### Distance matrix
 3-tier cascade in `build_stadia_distance_matrix` → `build_road_distance_matrix` → `build_distance_matrix`:

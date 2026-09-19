@@ -23,7 +23,7 @@ class RideRequestCreate(RideRequestBase):
 
 
 class RideRequestStatusUpdate(BaseModel):
-    status: str = Field(..., max_length=20, description="pending | clustered | assigned | in_progress | completed | cancelled")
+    status: str = Field(..., max_length=30, description="pending | clustered | assigned | arriving | ready_for_pickup | in_progress | completed | cancelled")
 
 
 class RideRequestResponse(RideRequestBase):

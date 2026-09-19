@@ -317,6 +317,18 @@ export default function AppMap({
     let cancelled = false
     let map = null
     let resizeObserver = null
+    const resizeTimers = []
+
+    const resizeMap = () => {
+      if (cancelled || !map) return
+      // Driver navigation is inside a flex layout whose final size can settle
+      // after the map has been constructed. A frame-delayed resize keeps the
+      // WebGL viewport aligned with the visible container instead of painting
+      // only a stale strip of tiles.
+      requestAnimationFrame(() => {
+        if (!cancelled && map) map.resize()
+      })
+    }
 
     const initialize = async () => {
       let token
@@ -363,13 +375,33 @@ export default function AppMap({
         return
       }
 
-      resizeObserver = new ResizeObserver(() => map?.resize())
+      resizeObserver = new ResizeObserver(resizeMap)
       resizeObserver.observe(container)
-      requestAnimationFrame(() => map?.resize())
+      resizeMap()
+      resizeTimers.push(
+        window.setTimeout(resizeMap, 50),
+        window.setTimeout(resizeMap, 250),
+        window.setTimeout(resizeMap, 750),
+      )
 
       map.on('error', (e) => {
-        if (!map.isStyleLoaded()) {
-          setMapError('Stadia map resources could not be loaded. Check the backend proxy and Stadia API key.')
+        const rawMessage = e?.error?.message || e?.error?.status || e?.message || ''
+        const message = String(rawMessage).toLowerCase()
+        // Style loading and tile loading emit the same MapLibre event. Do not
+        // hide tile/source failures just because the style shell loaded: that
+        // produces a blank map with only controls and attribution visible.
+        if (!cancelled && (
+          !map.isStyleLoaded() ||
+          message.includes('tile') ||
+          message.includes('source') ||
+          message.includes('401') ||
+          message.includes('403') ||
+          message.includes('404') ||
+          message.includes('502') ||
+          message.includes('failed') ||
+          message.includes('network')
+        )) {
+          setMapError('Map tiles could not be loaded. Check the backend map proxy, authentication token, and Stadia API key.')
         }
         console.warn('MapLibre event:', e?.error || e)
       })
@@ -378,6 +410,7 @@ export default function AppMap({
       map.on('click', event => onMapClickRef.current?.(event.lngLat.lat, event.lngLat.lng))
 
       map.on('load', () => {
+        resizeMap()
         setMapError('')
         if (document.documentElement.classList.contains('dark')) applyDarkMapTheme(map)
 
@@ -394,6 +427,7 @@ export default function AppMap({
     return () => {
       cancelled = true
       resizeObserver?.disconnect()
+      resizeTimers.forEach((timer) => window.clearTimeout(timer))
       cleanupMap(map, animationRef, routeAnimationRef, markersRef)
       mapRef.current = null
     }
@@ -474,7 +508,7 @@ export default function AppMap({
 
   const cssHeight = typeof height === 'number' ? `${height}px` : height
   return (
-    <div ref={containerRef} style={{ width: '100%', height: cssHeight, position: 'relative', borderRadius: 'inherit', overflow: 'hidden', ...style }}>
+    <div ref={containerRef} style={{ width: '100%', minWidth: 0, height: cssHeight, minHeight: 0, position: 'relative', borderRadius: 'inherit', overflow: 'hidden', ...style }}>
       <style>{`
         .sr-drop { animation: sr-drop-in .45s cubic-bezier(.34,1.56,.64,1) both; }
         @keyframes sr-drop-in { 0% { transform: scale(0) translateY(-10px); opacity: 0 } 60% { transform: scale(1.15) translateY(0); opacity: 1 } 100% { transform: scale(1) } }

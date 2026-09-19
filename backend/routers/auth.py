@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
@@ -78,6 +79,22 @@ def login_local_user(login_in: UserLogin, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserResponse)
 def read_current_user(current_user: User = Depends(get_current_user)):
     """Current user profile."""
+    return current_user
+
+
+@router.post("/driver/presence", response_model=UserResponse)
+def update_driver_presence(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Record that an active driver has the driver app open."""
+    if current_user.role != "driver":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Driver access required")
+    if current_user.driver_status != "active":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Driver is not active")
+    current_user.driver_last_seen_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(current_user)
     return current_user
 
 

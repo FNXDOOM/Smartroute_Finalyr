@@ -29,7 +29,7 @@ const RIDE_TIERS = [
 ]
 
 const RIDE_STAGES = ['pending', 'clustered', 'assigned', 'arriving', 'in_progress', 'completed']
-const RIDE_STAGE_LABELS = { pending: 'Requested', clustered: 'Clustered', assigned: 'Assigned', arriving: 'Arriving', in_progress: 'In transit', completed: 'Delivered' }
+const RIDE_STAGE_LABELS = { pending: 'Requested', clustered: 'Clustered', assigned: 'Assigned', arriving: 'Arriving', ready_for_pickup: 'At pickup', in_progress: 'In transit', completed: 'Delivered' }
 
 export default function PassengerView({ view, setView, toast }) {
   const [trips,    setTrips]    = useState([])
@@ -331,6 +331,18 @@ export default function PassengerView({ view, setView, toast }) {
     } catch(e) { toast('error','Cannot cancel', e?.response?.data?.detail||'') }
   }
 
+  const confirmPickup = async () => {
+    if (!activeRide) return
+    try {
+      const ride = await ridesApi.confirmPickup(activeRide.id)
+      setActiveRide(ride)
+      setTrips(prev => prev.map(t => t.id === ride.id ? ride : t))
+      toast('success', 'Pickup confirmed', 'Your driver has been notified that you are at the assigned stop.')
+    } catch (error) {
+      toast('error', 'Could not confirm pickup', error?.response?.data?.detail || '')
+    }
+  }
+
   // Only active trips take over Home booking card.
   const openTrip = useCallback((trip) => {
     if (['completed', 'cancelled'].includes(trip.status)) {
@@ -358,7 +370,7 @@ export default function PassengerView({ view, setView, toast }) {
   const mapVehicle = rideVehicle
   // Simulate driver marker from ride stage.
   const simDriver = (!mapVehicle && activeRide && activeRide.pickup_lat != null && activeRide.dest_lat != null
-    && ['assigned', 'arriving', 'in_progress'].includes(activeRide.status))
+    && ['assigned', 'arriving', 'ready_for_pickup', 'in_progress'].includes(activeRide.status))
     ? (() => {
         const st = activeRide.status
         if (st === 'in_progress') {
@@ -393,7 +405,7 @@ export default function PassengerView({ view, setView, toast }) {
       ? {
           key: `${mapVehicle.id}:${activeRide.status}:${routeGeometry.length}`,
           vehicleId: mapVehicle.id,
-          path: ['pending', 'clustered', 'assigned', 'arriving'].includes(activeRide.status)
+          path: ['pending', 'clustered', 'assigned', 'arriving', 'ready_for_pickup'].includes(activeRide.status)
             ? [[mapVehicle.lng, mapVehicle.lat], [activeRide.pickup_lng, activeRide.pickup_lat]]
             : routeGeometry,
           durationMs: activeRide.status === 'in_progress' ? 18000 : 8000,
@@ -414,7 +426,7 @@ export default function PassengerView({ view, setView, toast }) {
     ? [(pickupPoint.lat + destinationPoint.lat) / 2, (pickupPoint.lng + destinationPoint.lng) / 2]
     : (gpsActive || !!pickup.trim()) ? [pickupPoint.lat, pickupPoint.lng] : [12.9784, 77.6408]
 
-  const activeStageIndex = activeRide ? RIDE_STAGES.indexOf(activeRide.status) : -1
+  const activeStageIndex = activeRide ? RIDE_STAGES.indexOf(activeRide.status === 'ready_for_pickup' ? 'arriving' : activeRide.status) : -1
   const activeProgress = activeRide ? Math.max(0, Math.min(100, ((activeStageIndex + 1) / RIDE_STAGES.length) * 100)) : 0
 
   return (
@@ -497,6 +509,14 @@ export default function PassengerView({ view, setView, toast }) {
 
                 {isRideActive ? (
                   <div className="flex flex-col gap-2">
+                    {activeRide.is_shared && activeRide.status === 'arriving' && (
+                      <Button className="w-full" size="sm" onClick={confirmPickup}>
+                        <CheckCircle2 className="h-3.5 w-3.5" /> I’m at the assigned pickup stop
+                      </Button>
+                    )}
+                    {activeRide.is_shared && activeRide.status === 'ready_for_pickup' && (
+                      <p className="rounded-lg bg-primary/10 px-3 py-2 text-center text-xs font-semibold text-primary">Driver notified. Please wait at the assigned pickup stop.</p>
+                    )}
                     {/* Razorpay fare payment — backend-verified; success only
                         after POST /payments/verify confirms it. */}
                     <RazorpayPayment
@@ -847,7 +867,7 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
   const destCoords = ride ? { lat: ride.dest_lat, lng: ride.dest_lng, label: ride.destination_label } : null
   // Same driver simulation as Home.
   const simDriver = (!vehicle && ride && ride.pickup_lat != null && ride.dest_lat != null
-    && ['assigned', 'arriving', 'in_progress'].includes(ride.status))
+    && ['assigned', 'arriving', 'ready_for_pickup', 'in_progress'].includes(ride.status))
     ? (() => {
       if (ride.status === 'in_progress') {
         const path = routeGeometry?.length > 1
@@ -874,7 +894,7 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
       ? {
         key: `${displayVehicle.id}:${ride?.status}:${routeGeometry.length}`,
         vehicleId: displayVehicle.id,
-        path: ['pending', 'clustered', 'assigned', 'arriving'].includes(ride?.status)
+        path: ['pending', 'clustered', 'assigned', 'arriving', 'ready_for_pickup'].includes(ride?.status)
           ? [[displayVehicle.lng, displayVehicle.lat], [ride.pickup_lng, ride.pickup_lat]]
           : routeGeometry,
         durationMs: ride?.status === 'in_progress' ? 18000 : 8000,
