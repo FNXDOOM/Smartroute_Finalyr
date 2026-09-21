@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { ridesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
 import { useWebSocket } from '../hooks/useWebSocket.js'
-import AppMap from '../components/AppMap'
+import AppMap from '../components/AppMapLazy'
 import RazorpayPayment from '../components/RazorpayPayment'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'

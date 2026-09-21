@@ -10,7 +10,7 @@ import {
   ridesApi, vehiclesApi, clusterApi, routeApi,
   analyticsApi, jobsApi, predictApi, authApi,
 } from '../services/api.js'
-import AppMap from '../components/AppMap'
+import AppMap from '../components/AppMapLazy'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'

@@ -5,7 +5,7 @@ import {
   Users, Zap,
 } from 'lucide-react'
 import { ridesApi, jobsApi, geocodeApi, routingApi } from '../services/api.js'
-import AppMap from '../components/AppMap'
+import AppMap from '../components/AppMapLazy'
 import { DEMO_PRESETS, DEMO_STAGES, createDemoRunId } from '../config/demoPresets.js'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'

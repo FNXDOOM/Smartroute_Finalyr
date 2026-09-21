@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { authApi, ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
 import { useAuth } from '@clerk/clerk-react'
-import AppMap from '../components/AppMap'
+import AppMap from '../components/AppMapLazy'
 import { DEMO_PRESETS } from '../config/demoPresets.js'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
