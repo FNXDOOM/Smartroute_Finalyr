@@ -13,8 +13,7 @@ from schemas.predict import (
     DemandHeatmapResponse,
     DemandPredictionResult,
 )
-from services.clustering.h3_partitioner import get_h3_index
-from services.prediction.feature_engineering import get_h3_center
+from services.clustering.h3_partitioner import get_h3_center, get_h3_index
 from services.prediction.demand_model import build_heatmap_cells, predict_zone_demand
 from utils.auth_utils import get_current_user
 from utils.ride_scope import LIVE_MODE

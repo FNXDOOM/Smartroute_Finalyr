@@ -10,6 +10,7 @@ import {
   ridesApi, vehiclesApi, clusterApi, routeApi,
   analyticsApi, jobsApi, predictApi, authApi,
 } from '../services/api.js'
+import { apiErrorMessage } from '../services/api.js'
 import AppMap from '../components/AppMapLazy'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -23,36 +24,9 @@ import { Slider } from '@/components/ui/slider'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { KpiStat, DensityBar, MapLegend } from '@/components/dashboard-shared'
+import { KpiStat, DensityBar, MapLegend, StatusBadge } from '@/components/dashboard-shared'
 
 // Shared bits
-// Status styles for rides, vehicles, jobs.
-const STATUS_STYLES = {
-  pending: 'border-border bg-muted text-foreground',
-  clustered: 'border-border bg-muted text-foreground',
-  clustered_status: 'border-border bg-muted text-foreground',
-  assigned: 'border-foreground/30 bg-foreground text-background',
-  arriving: 'border-foreground/30 bg-foreground text-background',
-  in_progress: 'border-foreground/30 bg-foreground text-background',
-  completed: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
-  solved: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
-  cancelled: 'border-destructive/30 bg-destructive/10 text-destructive',
-  idle: 'border-border bg-muted text-muted-foreground',
-  active: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
-  en_route: 'border-foreground/30 bg-foreground text-background',
-  offline: 'border-destructive/30 bg-destructive/10 text-destructive',
-  no_pending_requests: 'border-border bg-muted text-muted-foreground',
-}
-
-function StatusBadge({ status }) {
-  const key = status || 'pending'
-  return (
-    <Badge variant="outline" className={cn('shrink-0 uppercase tracking-wide', STATUS_STYLES[key] || STATUS_STYLES.pending)}>
-      {String(key).replace(/_/g, ' ')}
-    </Badge>
-  )
-}
-
 function StatCard({ icon: Icon, label, value, sub }) {
   return (
     <Card className="shadow-none transition-[border-color,box-shadow] duration-200 hover:border-[#D6D6D6] hover:shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
@@ -179,7 +153,7 @@ function OverviewPanel({ user, setView, toast }) {
       toast('success', 'Dispatch complete', `${res.clusters_formed || 0} groups formed · ${res.routes_optimized || 0} routes planned · ${res.assigned_rides || 0} rides assigned.`)
       load()
     } catch (e) {
-      toast('error', 'Dispatch failed', e?.response?.data?.detail || '')
+      toast('error', 'Dispatch failed', apiErrorMessage(e, ''))
     } finally {
       setDispatching(false)
     }
@@ -302,7 +276,7 @@ function RidesPanel({ setView, toast }) {
       const r = await ridesApi.getAll({ limit: 50 })
       setRides(Array.isArray(r) ? r : [])
     } catch (e) {
-      toast('error', 'Failed to load rides', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load rides', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -315,7 +289,7 @@ function RidesPanel({ setView, toast }) {
       setRides((p) => p.map((r) => (r.id === id ? { ...r, status } : r)))
       toast('success', `Ride #${id} → ${status.replace(/_/g, ' ')}`)
     } catch (e) {
-      toast('error', 'Update failed', e?.response?.data?.detail || '')
+      toast('error', 'Update failed', apiErrorMessage(e, ''))
     }
   }
 
@@ -421,7 +395,7 @@ function VehiclesPanel({ setView, toast }) {
       setVehicles(Array.isArray(v) ? v : [])
       setPendingCount(Array.isArray(pending) ? pending.length : 0)
     } catch (e) {
-      toast('error', 'Failed to load fleet', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load fleet', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -437,7 +411,7 @@ function VehiclesPanel({ setView, toast }) {
       setForm({ license_plate: '', capacity: '4', lat: '12.9784', lng: '77.6408' })
       load()
     } catch (e) {
-      toast('error', 'Could not add vehicle', e?.response?.data?.detail || '')
+      toast('error', 'Could not add vehicle', apiErrorMessage(e, ''))
     } finally {
       setCreating(false)
     }
@@ -449,7 +423,7 @@ function VehiclesPanel({ setView, toast }) {
       setVehicles((p) => p.map((v) => (v.id === id ? { ...v, status } : v)))
       toast('success', `Vehicle #${id} is now ${status}`)
     } catch (e) {
-      toast('error', 'Update failed', e?.response?.data?.detail || '')
+      toast('error', 'Update failed', apiErrorMessage(e, ''))
     }
   }
 
@@ -548,7 +522,7 @@ function ClusterPanel({ setView, toast }) {
       const h = await clusterApi.history()
       setHistory(h?.runs || [])
     } catch (e) {
-      toast('error', 'Failed to load grouping history', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load grouping history', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -562,7 +536,7 @@ function ClusterPanel({ setView, toast }) {
       toast('success', 'Grouping done', `${res.clusters_formed} groups from ${res.total_processed_requests} waiting rides.`)
       load()
     } catch (e) {
-      toast('error', 'Grouping failed', e?.response?.data?.detail || '')
+      toast('error', 'Grouping failed', apiErrorMessage(e, ''))
     } finally {
       setRunning(false)
     }
@@ -760,7 +734,7 @@ function RoutesPanel({ setView, toast }) {
       setVehicles(Array.isArray(ve) ? ve : [])
       setClusters(cl?.runs || [])
     } catch (e) {
-      toast('error', 'Failed to load routes', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load routes', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -785,7 +759,7 @@ function RoutesPanel({ setView, toast }) {
       toast('success', 'Routes planned', `${res.routes?.length || 0} routes · ${res.unassigned_stops?.length || 0} stops left over.`)
       load()
     } catch (e) {
-      toast('error', 'Planning failed', e?.response?.data?.detail || '')
+      toast('error', 'Planning failed', apiErrorMessage(e, ''))
     } finally {
       setRunning(false)
     }
@@ -912,7 +886,7 @@ function AnalyticsPanel({ setView, toast }) {
       setOverview(ov)
       setDaily(da?.points || [])
     } catch (e) {
-      toast('error', 'Failed to load analytics', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load analytics', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -1049,7 +1023,7 @@ function JobsPanel({ setView, toast }) {
       const [st, ru, sg] = await Promise.all([jobsApi.status(), jobsApi.runs(), jobsApi.rebalanceSuggestions()])
       setStatus(st); setRuns(ru || []); setSuggestions(sg || [])
     } catch (e) {
-      toast('error', 'Failed to load jobs', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load jobs', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -1064,7 +1038,7 @@ function JobsPanel({ setView, toast }) {
       toast('success', 'Job started', res?.message || (res?.clusters_formed !== undefined ? `${res.clusters_formed} groups formed` : 'Done'))
       setTimeout(load, 1500)
     } catch (e) {
-      toast('error', 'Job failed', e?.response?.data?.detail || '')
+      toast('error', 'Job failed', apiErrorMessage(e, ''))
     } finally {
       setRunning(null)
     }
@@ -1178,7 +1152,7 @@ function HeatmapPanel({ setView, toast }) {
       setCells(list)
       if (list.length === 0) toast('info', 'No demand data', 'Book some rides first to generate data.')
     } catch (e) {
-      toast('error', 'Failed to load heatmap', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load heatmap', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -1289,7 +1263,7 @@ function PendingDriversPanel({ setView, toast }) {
       const data = await authApi.getPendingDrivers()
       setPending(Array.isArray(data) ? data : [])
     } catch (e) {
-      toast('error', 'Failed to load applicants', e?.response?.data?.detail || '')
+      toast('error', 'Failed to load applicants', apiErrorMessage(e, ''))
     } finally {
       setLoading(false)
     }
@@ -1305,7 +1279,7 @@ function PendingDriversPanel({ setView, toast }) {
         status === 'active' ? 'Driver approved' : status === 'rejected' ? 'Driver rejected' : `Driver ${status}`,
         `Applicant #${userId} updated.`)
     } catch (e) {
-      toast('error', 'Action failed', e?.response?.data?.detail || '')
+      toast('error', 'Action failed', apiErrorMessage(e, ''))
     } finally {
       setVerifying((p) => { const n = { ...p }; delete n[userId]; return n })
     }

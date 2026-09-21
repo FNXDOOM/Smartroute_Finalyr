@@ -37,7 +37,7 @@ from routers.route import (
     depart_carpool_route,
     mark_carpool_arrived,
 )
-from services.background_jobs import _try_attach_to_existing_carpool_route
+from services.carpool_matching import attach_to_existing_run
 from services.clustering import h3_partitioner
 from services.clustering.h3_partitioner import get_h3_index, neighbouring_h3_cells
 from services.routing.shared_route_builder import BuiltRoute, persist_shared_route
@@ -329,7 +329,7 @@ def test_accepted_route_is_closed_to_new_riders():
         db.commit()
         db.refresh(new_ride)
 
-        attached = _try_attach_to_existing_carpool_route(
+        attached = attach_to_existing_run(
             db, new_ride, mode=LIVE_MODE, demo_run_id=None
         )
 

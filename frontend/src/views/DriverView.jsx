@@ -5,6 +5,7 @@ import {
   Navigation, Pause, Play, RefreshCw, Route as RouteIcon, Satellite, Users, X,
 } from 'lucide-react'
 import { authApi, ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
+import { apiErrorMessage } from '../services/api.js'
 import { useAuth } from '@clerk/clerk-react'
 import AppMap from '../components/AppMapLazy'
 import { DEMO_PRESETS } from '../config/demoPresets.js'
@@ -15,7 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { MapLegend } from '@/components/dashboard-shared'
+import { MapLegend, StatusBadge } from '@/components/dashboard-shared'
 
 const DEMO_RIDES = DEMO_PRESETS.indiranagar.riders.map((r, i) => ({
   id: r.id,
@@ -110,7 +111,7 @@ export default function DriverView({ user, view, setView, toast }) {
       knownRideStatusRef.current = new Map(list.map((x) => [x.id, x.status]))
       pollInitRef.current = true
       if (Array.isArray(v) && v.length) setMyVehicle(v[0])
-    } catch(e) { toast('error','Failed to load data', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed to load data', apiErrorMessage(e, '')) }
     setLoading(false)
   }, [toast])
 
@@ -211,7 +212,7 @@ export default function DriverView({ user, view, setView, toast }) {
         lng: position.coords.longitude,
       } : prev)
       toast('success','Location updated')
-    } catch(e) { toast('error','Failed to update',e?.response?.data?.detail||''); setUpdatingLoc(false) }
+    } catch(e) { toast('error','Failed to update',apiErrorMessage(e, '')); setUpdatingLoc(false) }
     finally { setUpdatingLoc(false) }
   }
 
@@ -227,7 +228,7 @@ export default function DriverView({ user, view, setView, toast }) {
         } catch { /* non-fatal: vehicle keeps its last status */ }
       }
       toast('success', `Ride #${rideId} → ${status.replace(/_/g, ' ')}`)
-    } catch(e) { toast('error','Failed', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Failed', apiErrorMessage(e, '')) }
   }
 
 // Accept ride: activate vehicle, notify passenger.
@@ -242,7 +243,7 @@ export default function DriverView({ user, view, setView, toast }) {
       await ridesApi.updateStatus(rideId, 'assigned')
       setRides((prev) => prev.map((r) => (r.id === rideId ? { ...r, status: 'assigned' } : r)))
       toast('success', `Ride #${rideId} accepted`, myVehicle ? `Passenger notified · ${myVehicle.license_plate} is on the way` : 'Passenger notified')
-    } catch(e) { toast('error','Could not accept', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Could not accept', apiErrorMessage(e, '')) }
   }
 
   const declineRide = async (rideId) => {
@@ -250,7 +251,7 @@ export default function DriverView({ user, view, setView, toast }) {
       await ridesApi.updateStatus(rideId, 'cancelled')
       setRides((prev) => prev.map((r) => (r.id === rideId ? { ...r, status: 'cancelled' } : r)))
       toast('info', `Ride #${rideId} declined`, 'The passenger was notified')
-    } catch(e) { toast('error','Could not decline', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Could not decline', apiErrorMessage(e, '')) }
   }
 
 // Drive simulation for previewed or full route.
@@ -427,7 +428,7 @@ export default function DriverView({ user, view, setView, toast }) {
       toast('success', 'Route accepted', 'Passengers will now see the driver progressing to their stops.')
       return true
     } catch (error) {
-      toast('error', 'Could not accept route', error?.response?.data?.detail || 'The route may no longer be available.')
+      toast('error', 'Could not accept route', apiErrorMessage(error, 'The route may no longer be available.'))
       return false
     }
   }
@@ -494,28 +495,28 @@ export default function DriverView({ user, view, setView, toast }) {
             await routeApi.announceCarpoolPickup(routeId, rideId)
             await refreshRides()
             toast('success', 'Pickup announced', `Rider #${rideId} was asked to walk to the assigned stop.`)
-          } catch (error) { toast('error', 'Could not notify rider', error?.response?.data?.detail || '') }
+          } catch (error) { toast('error', 'Could not notify rider', apiErrorMessage(error, '')) }
         }}
         onConfirmPickup={async (routeId, rideId) => {
           try {
             await routeApi.confirmCarpoolPickup(routeId, rideId)
             await refreshRides()
             toast('success', 'Passenger picked up', `Ride #${rideId} is now in progress.`)
-          } catch (error) { toast('error', 'Could not confirm pickup', error?.response?.data?.detail || '') }
+          } catch (error) { toast('error', 'Could not confirm pickup', apiErrorMessage(error, '')) }
         }}
         onMarkArrived={async (routeId, rideId) => {
           try {
             await routeApi.markCarpoolArrived(routeId, rideId)
             await refreshRides()
             toast('success', 'Arrival logged', `Rider #${rideId} was told you are at the stop.`)
-          } catch (error) { toast('error', 'Could not log arrival', error?.response?.data?.detail || '') }
+          } catch (error) { toast('error', 'Could not log arrival', apiErrorMessage(error, '')) }
         }}
         onDepart={async (routeId) => {
           try {
             const result = await routeApi.departCarpool(routeId)
             await refreshRides()
             toast('success', 'Trip started', `${result?.ride_ids?.length || 0} rider(s) are on the move.`)
-          } catch (error) { toast('error', 'Could not start the trip', error?.response?.data?.detail || '') }
+          } catch (error) { toast('error', 'Could not start the trip', apiErrorMessage(error, '')) }
         }}
         onCompleteRun={async (routeId) => {
           try {
@@ -523,7 +524,7 @@ export default function DriverView({ user, view, setView, toast }) {
             await refreshRides()
             await refreshRoutes()
             toast('success', 'Carpool run completed', 'Your vehicle is back in the pool.')
-          } catch (error) { toast('error', 'Could not complete the run', error?.response?.data?.detail || '') }
+          } catch (error) { toast('error', 'Could not complete the run', apiErrorMessage(error, '')) }
         }}
         onConfirmDropoff={async (routeId, rideId) => {
           try {
@@ -531,7 +532,7 @@ export default function DriverView({ user, view, setView, toast }) {
             await refreshRides()
             await refreshRoutes()
             toast('success', 'Passenger dropped off', `Ride #${rideId} is complete.`)
-          } catch (error) { toast('error', 'Could not confirm drop-off', error?.response?.data?.detail || '') }
+          } catch (error) { toast('error', 'Could not confirm drop-off', apiErrorMessage(error, '')) }
         }}
       />
     )
@@ -1358,30 +1359,6 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, 
 
 function RouteMetric({ label, value }) {
   return <div className="rounded-lg bg-muted/60 p-3"><p className="text-[10px] font-semibold text-muted-foreground">{label}</p><p className="mt-1 text-sm font-bold">{value}</p></div>
-}
-
-const STATUS_STYLES = {
-  completed: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
-  in_progress: 'border-foreground/30 bg-foreground text-background',
-  arriving: 'border-foreground/30 bg-foreground text-background',
-  ready_for_pickup: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
-  assigned: 'border-foreground/30 bg-foreground text-background',
-  active: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',
-  en_route: 'border-foreground/30 bg-foreground text-background',
-  idle: 'border-border bg-muted text-muted-foreground',
-  pending: 'border-border bg-muted text-foreground',
-  clustered: 'border-border bg-muted text-foreground',
-  cancelled: 'border-destructive/30 bg-destructive/10 text-destructive',
-  offline: 'border-destructive/30 bg-destructive/10 text-destructive',
-}
-
-function StatusBadge({ status }) {
-  const key = status || 'pending'
-  return (
-    <Badge variant="outline" className={cn('shrink-0 uppercase tracking-wide', STATUS_STYLES[key] || STATUS_STYLES.pending)}>
-      {String(key).replace(/_/g, ' ')}
-    </Badge>
-  )
 }
 
 // Stage buttons advance trip, notify passenger.

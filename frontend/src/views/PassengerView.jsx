@@ -5,6 +5,7 @@ import {
   Clock, Crown, Loader2, LocateFixed, MapPin, Navigation, Search, Users, X,
 } from 'lucide-react'
 import { ridesApi, geocodeApi, routingApi, createTrackingWS } from '../services/api.js'
+import { apiErrorMessage } from '../services/api.js'
 import { useWebSocket } from '../hooks/useWebSocket.js'
 import AppMap from '../components/AppMapLazy'
 import RazorpayPayment from '../components/RazorpayPayment'
@@ -163,7 +164,7 @@ export default function PassengerView({ view, setView, toast }) {
       const point = await geocodeApi.search(query.trim())
       chooseSuggestion(field, point)
     } catch (error) {
-      setLocationError(error?.response?.data?.detail || error?.message || 'Location not found')
+      setLocationError(apiErrorMessage(error, error?.message) || 'Location not found')
     } finally {
       setGeocoding(false)
     }
@@ -317,7 +318,7 @@ export default function PassengerView({ view, setView, toast }) {
       setActiveRide(ride)
       setTrips(prev => [ride, ...prev.filter(t => t.id !== ride.id)])
       toast('success','Ride Requested!', sharedRide ? 'Finding nearby riders to pool with…' : 'Matching you with a private ride…')
-    } catch(e) { toast('error','Booking failed', e?.response?.data?.detail||e?.message||'') }
+    } catch(e) { toast('error','Booking failed', apiErrorMessage(e, e?.message)||'') }
     finally { setBooking(false); setGeocoding(false) }
   }
 
@@ -328,7 +329,7 @@ export default function PassengerView({ view, setView, toast }) {
       clearActiveRideState()
       setTrips(prev => prev.map(t => t.id===activeRide.id?{...t,status:'cancelled'}:t))
       toast('info','Ride cancelled')
-    } catch(e) { toast('error','Cannot cancel', e?.response?.data?.detail||'') }
+    } catch(e) { toast('error','Cannot cancel', apiErrorMessage(e, '')) }
   }
 
   const confirmPickup = async () => {
@@ -339,7 +340,7 @@ export default function PassengerView({ view, setView, toast }) {
       setTrips(prev => prev.map(t => t.id === ride.id ? ride : t))
       toast('success', 'Pickup confirmed', 'Your driver has been notified that you are at the assigned stop.')
     } catch (error) {
-      toast('error', 'Could not confirm pickup', error?.response?.data?.detail || '')
+      toast('error', 'Could not confirm pickup', apiErrorMessage(error, ''))
     }
   }
 

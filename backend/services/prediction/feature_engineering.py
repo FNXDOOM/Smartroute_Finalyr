@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, Tuple
-
-from services.clustering.h3_partitioner import get_h3_index
+from typing import Dict
 
 
 @dataclass(frozen=True)
@@ -49,21 +47,3 @@ def features_to_dict(features: DemandFeatures) -> Dict[str, int]:
     }
 
 
-def ensure_h3_index(latitude: float, longitude: float, resolution: int) -> str:
-    """Return an H3 index for a coordinate or validate a supplied index."""
-    return get_h3_index(latitude, longitude, resolution=resolution)
-
-
-def get_h3_center(h3_index: str) -> Tuple[float, float]:
-    """Return the center coordinate of an H3 cell."""
-    try:
-        import h3
-        if hasattr(h3, "cell_to_latlng"):
-            lat, lng = h3.cell_to_latlng(h3_index)
-            return float(lat), float(lng)
-        if hasattr(h3, "h3_to_geo"):
-            lat, lng = h3.h3_to_geo(h3_index)
-            return float(lat), float(lng)
-    except Exception:
-        pass
-    return 0.0, 0.0

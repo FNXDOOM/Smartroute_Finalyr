@@ -5,6 +5,24 @@ const appBootstrapRequests = new Map();
 
 export const setAuthTokenGetter = (getter) => { authTokenGetter = getter; };
 
+/**
+ * The message a failed request should surface.
+ *
+ * Every call site used to read `error?.response?.data?.detail` itself, which
+ * both duplicated the error shape and rendered FastAPI's validation errors
+ * (a list of per-field objects) as "[object Object]". Callers pass a fallback
+ * for the case where the backend said nothing useful.
+ */
+export function apiErrorMessage(error, fallback = '') {
+  const detail = error?.response?.data?.detail;
+  if (Array.isArray(detail)) {
+    const parts = detail.map((item) => item?.msg).filter(Boolean);
+    return parts.length ? parts.join(', ') : fallback;
+  }
+  if (typeof detail === 'string' && detail) return detail;
+  return fallback;
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '');
 const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 

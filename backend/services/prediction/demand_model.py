@@ -15,10 +15,8 @@ from services.prediction.feature_engineering import (
     build_demand_features,
     features_to_dict,
 )
+from services.prediction.model_contract import FEATURE_ORDER, MODEL_PATH
 from utils.ride_scope import LIVE_MODE
-
-MODEL_PATH = Path(__file__).resolve().parents[3] / "ml" / "models" / "demand_model.pkl"
-FEATURE_ORDER = ["hour", "day_of_week", "h3_zone", "historical_count", "is_weekend"]
 
 
 @lru_cache(maxsize=1)

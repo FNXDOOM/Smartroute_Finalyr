@@ -5,6 +5,7 @@ import {
   Users, Zap,
 } from 'lucide-react'
 import { ridesApi, jobsApi, geocodeApi, routingApi } from '../services/api.js'
+import { apiErrorMessage } from '../services/api.js'
 import AppMap from '../components/AppMapLazy'
 import { DEMO_PRESETS, DEMO_STAGES, createDemoRunId } from '../config/demoPresets.js'
 import { cn } from '@/lib/utils'
@@ -291,7 +292,7 @@ export default function PresentationDemoView({ toast }) {
       const point = await geocodeApi.search(query.trim())
       await applyDemoLocation(field, point)
     } catch (error) {
-      setLocationError(error?.response?.data?.detail || error?.message || 'Location not found')
+      setLocationError(apiErrorMessage(error, error?.message) || 'Location not found')
     } finally {
       setLocationBusy(false)
     }

@@ -35,6 +35,53 @@ PortableGeometry = (
 )
 
 
+# -- additive Postgres backfill ----------------------------------------------
+# ``create_all`` skips tables that already exist, so a column added to a model
+# is absent from an old table until it is backfilled. The statements live here
+# once: both the create path (right after create_all) and the startup path
+# execute the same ordered list, so adding a column means editing one place
+# instead of keeping two hand-written copies in step.
+_RIDE_SCOPED_TABLES = ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles")
+
+
+def _ride_scoped_backfill(table: str):
+    """The per-table columns shared by every ride-scoped table."""
+    return (
+        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ride_mode VARCHAR NOT NULL DEFAULT 'live'",
+        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS demo_run_id VARCHAR",
+        f"CREATE INDEX IF NOT EXISTS ix_{table}_ride_mode ON {table} (ride_mode)",
+        f"CREATE INDEX IF NOT EXISTS ix_{table}_demo_run_id ON {table} (demo_run_id)",
+    )
+
+
+def postgres_backfill_statements(*, table_exists, column_exists):
+    """Yield the additive Postgres backfill DDL, in the order it must run.
+
+    ``table_exists``/``column_exists`` gate the statements so a fresh or
+    half-built database is skipped rather than hard-erroring, and so the legacy
+    ``mode`` -> ``ride_mode`` rename runs before the column is added.
+    """
+    if table_exists("users"):
+        yield "ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR"
+        yield "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_status VARCHAR NOT NULL DEFAULT 'active'"
+        yield "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_last_seen_at TIMESTAMPTZ"
+        yield (
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
+            "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
+        )
+    if table_exists("vehicles"):
+        yield "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_user_id INTEGER"
+        yield "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id ON vehicles (driver_user_id)"
+    for table in _RIDE_SCOPED_TABLES:
+        if not table_exists(table):
+            continue
+        if not column_exists(table, "ride_mode") and column_exists(table, "mode"):
+            yield f"ALTER TABLE {table} RENAME COLUMN mode TO ride_mode"
+        yield from _ride_scoped_backfill(table)
+    if table_exists("ride_requests"):
+        yield "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT true"
+        yield "CREATE INDEX IF NOT EXISTS ix_ride_requests_is_shared ON ride_requests (is_shared)"
+        yield "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS carpool_status VARCHAR"
 
 
 def drop_db_tables(bind_engine=None):
@@ -67,54 +114,19 @@ def create_db_tables(bind_engine=None):
 
     # Backfill columns; create_all skips existing tables.
     if target_engine.dialect.name == "postgresql":
+        inspector = inspect(target_engine)
+
+        def _column_exists(table: str, column: str) -> bool:
+            return column in {item["name"] for item in inspector.get_columns(table)}
+
         with target_engine.begin() as connection:
-            connection.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR"
-            ))
-            connection.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_status VARCHAR NOT NULL DEFAULT 'active'"
-            ))
-            connection.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_last_seen_at TIMESTAMPTZ"
-            ))
-            connection.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
-                "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
-            ))
-            connection.execute(text(
-                "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_user_id INTEGER"
-            ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id "
-                "ON vehicles (driver_user_id)"
-            ))
-            for table in ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles"):
-                columns = {column["name"] for column in inspect(target_engine).get_columns(table)}
-                if "ride_mode" not in columns and "mode" in columns:
-                    connection.execute(text(f"ALTER TABLE {table} RENAME COLUMN mode TO ride_mode"))
-                connection.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ride_mode VARCHAR NOT NULL DEFAULT 'live'"
-                ))
-                connection.execute(text(
-                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS demo_run_id VARCHAR"
-                ))
-                connection.execute(text(
-                    f"CREATE INDEX IF NOT EXISTS ix_{table}_ride_mode ON {table} (ride_mode)"
-                ))
-                connection.execute(text(
-                    f"CREATE INDEX IF NOT EXISTS ix_{table}_demo_run_id ON {table} (demo_run_id)"
-                ))
-            # Shared/carpool flag (added after the ride_mode migration).
-            connection.execute(text(
-                "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT true"
-            ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_ride_requests_is_shared ON ride_requests (is_shared)"
-            ))
-            # Per-rider carpool stage (added after the shared-ride flag).
-            connection.execute(text(
-                "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS carpool_status VARCHAR"
-            ))
+            # create_all just created/verified every table, so only the column
+            # checks matter here.
+            for statement in postgres_backfill_statements(
+                table_exists=lambda _table: True,
+                column_exists=_column_exists,
+            ):
+                connection.execute(text(statement))
     elif target_engine.dialect.name == "sqlite":
         from sqlalchemy.exc import NoSuchTableError
 
@@ -218,7 +230,6 @@ def create_db_tables(bind_engine=None):
 #     cannot hard-error here;
 #   * the legacy ``mode`` -> ``ride_mode`` rename is applied when needed, so old
 #     values are not silently dropped.
-_RIDE_SCOPED_TABLES = ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles")
 # Arbitrary constant shared by every process that runs this function.
 _STARTUP_MIGRATION_LOCK_KEY = 0x5A1D0001
 
@@ -248,57 +259,11 @@ def run_startup_migrations(bind_engine=None) -> None:
             text("SELECT pg_advisory_xact_lock(:key)"),
             {"key": _STARTUP_MIGRATION_LOCK_KEY},
         )
-        if _pg_table_exists(connection, "users"):
-            connection.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR"
-            ))
-            connection.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_status VARCHAR NOT NULL DEFAULT 'active'"
-            ))
-            connection.execute(text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_last_seen_at TIMESTAMPTZ"
-            ))
-            connection.execute(text(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
-                "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
-            ))
-        if _pg_table_exists(connection, "vehicles"):
-            connection.execute(text(
-                "ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_user_id INTEGER"
-            ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_vehicles_driver_user_id ON vehicles (driver_user_id)"
-            ))
-        for table in _RIDE_SCOPED_TABLES:
-            if not _pg_table_exists(connection, table):
-                continue
-            if (
-                not _pg_column_exists(connection, table, "ride_mode")
-                and _pg_column_exists(connection, table, "mode")
-            ):
-                connection.execute(text(f"ALTER TABLE {table} RENAME COLUMN mode TO ride_mode"))
-            connection.execute(text(
-                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS ride_mode VARCHAR NOT NULL DEFAULT 'live'"
-            ))
-            connection.execute(text(
-                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS demo_run_id VARCHAR"
-            ))
-            connection.execute(text(
-                f"CREATE INDEX IF NOT EXISTS ix_{table}_ride_mode ON {table} (ride_mode)"
-            ))
-            connection.execute(text(
-                f"CREATE INDEX IF NOT EXISTS ix_{table}_demo_run_id ON {table} (demo_run_id)"
-            ))
-        if _pg_table_exists(connection, "ride_requests"):
-            connection.execute(text(
-                "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT true"
-            ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_ride_requests_is_shared ON ride_requests (is_shared)"
-            ))
-            connection.execute(text(
-                "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS carpool_status VARCHAR"
-            ))
+        for statement in postgres_backfill_statements(
+            table_exists=lambda table: _pg_table_exists(connection, table),
+            column_exists=lambda table, column: _pg_column_exists(connection, table, column),
+        ):
+            connection.execute(text(statement))
 
 
 def get_db():

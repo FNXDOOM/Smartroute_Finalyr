@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle2, CreditCard, Loader2, TriangleAlert } from 'lucide-react'
 import { paymentsApi } from '../services/api.js'
+import { apiErrorMessage } from '../services/api.js'
 import { openRazorpayCheckout } from '../services/razorpay.js'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -43,7 +44,7 @@ export default function RazorpayPayment({
         ride_option_id: rideOptionId,
       })
     } catch (err) {
-      setError(err?.response?.data?.detail || 'Could not start the payment. Please try again.')
+      setError(apiErrorMessage(err, 'Could not start the payment. Please try again.'))
       setPhase('failed')
       return
     }

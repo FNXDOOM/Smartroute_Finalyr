@@ -22,6 +22,7 @@ from schemas.tracking import (
 )
 from services import route_plan_meta
 from services.notifications import create_notification, create_notifications_for_users
+from services.websocket_hub import accept_connection, fan_out
 from services.stadia_client import extract_route_details, map_match
 from utils.auth_utils import get_current_user, get_user_from_token, get_websocket_token
 from config import ALLOWED_ORIGINS
@@ -46,63 +47,55 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket, user_id: int, role: str):
         """Register a WebSocket connection."""
         # Flutter omits bearer; accept without subprotocol.
-        offered = {
-            part.strip().lower()
-            for part in websocket.headers.get("sec-websocket-protocol", "").split(",")
-            if part.strip()
-        }
-        if "bearer" in offered:
-            await websocket.accept(subprotocol="bearer")
-        else:
-            await websocket.accept()
+        await accept_connection(websocket, "bearer")
         self.active_connections.append(TrackingConnection(websocket, user_id, role))
 
     def disconnect(self, websocket: WebSocket):
         """Remove a WebSocket connection."""
         self.active_connections = [entry for entry in self.active_connections if entry.websocket is not websocket]
 
+    async def _send_snapshot(self, entry: TrackingConnection, db: Session, vehicles, events) -> None:
+        visible_vehicle_ids, visible_ride_ids = _visible_tracking_ids(db, entry)
+        visible_vehicles = vehicles if entry.role == "admin" else [
+            vehicle for vehicle in vehicles if vehicle.id in visible_vehicle_ids
+        ]
+        visible_events = events if entry.role == "admin" else [
+            event for event in events
+            if event.vehicle_id in visible_vehicle_ids or event.ride_request_id in visible_ride_ids
+        ]
+        await entry.websocket.send_text(json.dumps({
+            "type": "tracking_snapshot",
+            "vehicles": [_serialize_vehicle(vehicle) for vehicle in visible_vehicles],
+            "events": [_serialize_event(event) for event in visible_events],
+        }, default=str))
+
     async def broadcast_snapshot(self, db: Session, vehicles: list[Vehicle], events: list[TrackingEvent]):
         """Broadcast the latest tracking snapshot to all clients."""
-        dead = []
-        for entry in self.active_connections:
-            try:
-                visible_vehicle_ids, visible_ride_ids = _visible_tracking_ids(db, entry)
-                visible_vehicles = vehicles if entry.role == "admin" else [
-                    vehicle for vehicle in vehicles if vehicle.id in visible_vehicle_ids
-                ]
-                visible_events = events if entry.role == "admin" else [
-                    event for event in events
-                    if event.vehicle_id in visible_vehicle_ids or event.ride_request_id in visible_ride_ids
-                ]
-                await entry.websocket.send_text(json.dumps({
-                    "type": "tracking_snapshot",
-                    "vehicles": [_serialize_vehicle(vehicle) for vehicle in visible_vehicles],
-                    "events": [_serialize_event(event) for event in visible_events],
-                }, default=str))
-            except Exception:
-                dead.append(entry.websocket)
-        for websocket in dead:
-            self.disconnect(websocket)
+        for entry in await fan_out(
+            self.active_connections,
+            lambda connection: self._send_snapshot(connection, db, vehicles, events),
+        ):
+            self.disconnect(entry.websocket)
+
+    async def _send_vehicle_update(self, entry: TrackingConnection, db: Session, vehicle: dict, event: dict) -> None:
+        visible_vehicle_ids, _ = _visible_tracking_ids(db, entry)
+        if entry.role != "admin" and vehicle["id"] not in visible_vehicle_ids:
+            return
+        await entry.websocket.send_text(json.dumps({
+            "type": "vehicle_location_update",
+            "vehicle": vehicle,
+            "event": event,
+        }, default=str))
 
     async def broadcast_vehicle_update(self, vehicle: dict, event: dict):
         """Broadcast one vehicle update to all connected clients."""
         db = SessionLocal()
         try:
-            dead = []
-            for entry in self.active_connections:
-                try:
-                    visible_vehicle_ids, _ = _visible_tracking_ids(db, entry)
-                    if entry.role != "admin" and vehicle["id"] not in visible_vehicle_ids:
-                        continue
-                    await entry.websocket.send_text(json.dumps({
-                        "type": "vehicle_location_update",
-                        "vehicle": vehicle,
-                        "event": event,
-                    }, default=str))
-                except Exception:
-                    dead.append(entry.websocket)
-            for websocket in dead:
-                self.disconnect(websocket)
+            for entry in await fan_out(
+                self.active_connections,
+                lambda connection: self._send_vehicle_update(connection, db, vehicle, event),
+            ):
+                self.disconnect(entry.websocket)
         finally:
             db.close()
 

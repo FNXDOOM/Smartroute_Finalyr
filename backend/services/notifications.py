@@ -9,6 +9,7 @@ from fastapi import WebSocket
 from sqlalchemy.orm import Session
 
 from models.notification import Notification
+from services.websocket_hub import accept_connection, fan_out
 
 
 class NotificationConnectionManager:
@@ -20,16 +21,7 @@ class NotificationConnectionManager:
 
     async def connect(self, websocket: WebSocket, user_id: int, subprotocol: str | None = None):
         """Register a WebSocket connection."""
-        # Echo subprotocol only if client offered it.
-        offered = {
-            part.strip().lower()
-            for part in websocket.headers.get("sec-websocket-protocol", "").split(",")
-            if part.strip()
-        }
-        if subprotocol and subprotocol.lower() in offered:
-            await websocket.accept(subprotocol=subprotocol)
-        else:
-            await websocket.accept()
+        await accept_connection(websocket, subprotocol)
         self.connections_by_user.setdefault(user_id, []).append(websocket)
 
     def disconnect(self, websocket: WebSocket, user_id: int):
@@ -44,16 +36,10 @@ class NotificationConnectionManager:
 
     async def send_to_user(self, user_id: int, message: str):
         """Send a payload to every connection owned by a user."""
-        connections = self.connections_by_user.get(user_id)
+        connections = list(self.connections_by_user.get(user_id) or [])
         if not connections:
             return
-        dead = []
-        for connection in connections:
-            try:
-                await connection.send_text(message)
-            except Exception:
-                dead.append(connection)
-        for connection in dead:
+        for connection in await fan_out(connections, lambda ws: ws.send_text(message)):
             self.disconnect(connection, user_id)
 
 

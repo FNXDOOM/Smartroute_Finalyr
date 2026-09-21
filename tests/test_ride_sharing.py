@@ -7,10 +7,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from database import SessionLocal
 from models.user import User
 from models.ride_request import RideRequest
-from services.background_jobs import (
-    _find_cross_cell_corridor_groups,
-    _split_compatible_shared_group,
-    run_cluster_job,
+from services.background_jobs import run_cluster_job
+from services.carpool_matching import (
+    find_cross_cell_corridor_groups,
+    split_compatible_shared_group,
 )
 
 
@@ -63,7 +63,7 @@ def test_shared_pool_is_capped_at_three_riders():
         for index in range(4)
     ]
 
-    groups = _split_compatible_shared_group(requests)
+    groups = split_compatible_shared_group(requests)
 
     assert [len(group) for group in groups] == [3, 1]
 
@@ -85,7 +85,7 @@ def test_shared_pool_accepts_two_riders():
         for index in range(2)
     ]
 
-    groups = _split_compatible_shared_group(requests)
+    groups = split_compatible_shared_group(requests)
     assert [len(group) for group in groups] == [2]
 
 
@@ -118,7 +118,7 @@ def test_cross_cell_corridor_match_keeps_each_rider_in_the_group():
         )(),
     ]
 
-    groups, matched_ids = _find_cross_cell_corridor_groups(requests)
+    groups, matched_ids = find_cross_cell_corridor_groups(requests)
 
     assert [len(group) for group in groups] == [2]
     assert matched_ids == {279, 280}

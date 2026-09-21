@@ -1,4 +1,3 @@
-import os
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,12 +11,18 @@ from routers import auth, rides, cluster, route, routing, geocode, maps, vehicle
 from routers import analytics
 from routers import jobs
 from routers import payments
-from config import ALLOWED_ORIGINS, APP_ENV, ENABLE_TRACKING_BROADCAST, ENABLE_BACKGROUND_JOBS_IN_API
+from config import (
+    ALLOWED_ORIGINS,
+    APP_ENV,
+    ENABLE_TRACKING_BROADCAST,
+    ENABLE_BACKGROUND_JOBS_IN_API,
+    LOG_LEVEL,
+)
 from utils.rate_limit import RateLimitBodyGuardMiddleware
 from services.background_jobs import start_background_jobs, stop_background_jobs
 
 logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    level=LOG_LEVEL,
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 

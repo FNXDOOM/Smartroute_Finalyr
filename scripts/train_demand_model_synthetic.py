@@ -18,6 +18,7 @@ from sklearn.metrics import mean_absolute_error
 
 from backend.services.prediction.feature_engineering import encode_h3_index
 from backend.services.clustering.h3_partitioner import get_h3_index
+from backend.services.prediction.model_contract import FEATURE_ORDER, MODEL_PATH
 
 # Config: city centre and spread
 
@@ -27,9 +28,6 @@ SPREAD_DEGREES = 0.15          # ~15 km radius
 N_DAYS         = 180           # 6 months of synthetic history
 N_ZONES        = 40            # number of synthetic H3 hotspot zones
 H3_RESOLUTION  = 9
-
-MODEL_PATH = ROOT / "ml" / "models" / "demand_model.pkl"
-FEATURE_ORDER = ["hour", "day_of_week", "h3_zone", "historical_count", "is_weekend"]
 
 rng = np.random.default_rng(42)
 

@@ -40,6 +40,9 @@ CLERK_ALLOW_NATIVE_CLIENTS = os.getenv("CLERK_ALLOW_NATIVE_CLIENTS", "false").lo
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
 APP_ENV = os.getenv("APP_ENV", "development").lower()
 PROCESS_ROLE = os.getenv("PROCESS_ROLE", "api").lower()
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+# Only read by the demo seeder; kept here so it is parsed in one place.
+SEED_ADMIN_PASSWORD = os.getenv("SEED_ADMIN_PASSWORD", "").strip()
 ENABLE_TRACKING_BROADCAST = os.getenv("ENABLE_TRACKING_BROADCAST", "true").lower() == "true"
 # Opt-in: run dispatch jobs in API for local dev.
 ENABLE_BACKGROUND_JOBS_IN_API = os.getenv("ENABLE_BACKGROUND_JOBS_IN_API", "false").lower() == "true"
