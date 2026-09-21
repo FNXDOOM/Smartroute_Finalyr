@@ -35,6 +35,9 @@ class RideRequestResponse(RideRequestBase):
     h3_index: Optional[str] = None
     cluster_id: Optional[int] = None
     virtual_stop_id: Optional[int] = None
+    # Fine per-rider carpool stage (see utils/carpool_status.py). Null for
+    # private rides. Additive: clients that only read ``status`` are unaffected.
+    carpool_status: Optional[str] = None
     request_time: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -92,3 +95,9 @@ class RideRouteResponse(BaseModel):
     my_leg_indices: List[int] = Field(default_factory=list)
     total_distance_meters: float = 0
     estimated_duration_seconds: float = 0
+    # Carpool lifecycle surfaced to the passenger: whether the assigned driver
+    # has accepted the run yet, the route's own state, and this rider's fine
+    # carpool stage (utils/carpool_status.py).
+    driver_accepted: bool = False
+    route_status: str = "solved"
+    carpool_status: Optional[str] = None

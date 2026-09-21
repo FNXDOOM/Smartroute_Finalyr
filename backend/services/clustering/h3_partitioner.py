@@ -10,6 +10,20 @@ def get_h3_index(lat: float, lng: float, resolution: int = 9) -> str:
     raise AttributeError("H3 library missing latlng_to_cell or geo_to_h3")
 
 
+def neighbouring_h3_cells(cell: str, k: int = 1) -> set:
+    """The cell itself plus every cell within ``k`` rings of it.
+
+    Route matching must not treat a single H3 cell as a hard boundary, so the
+    clustering pass expands each cell to its neighbours. Degrades to the cell
+    alone if the installed H3 build exposes no ring API.
+    """
+    if hasattr(h3, "grid_disk"):
+        return set(h3.grid_disk(cell, k))
+    elif hasattr(h3, "k_ring"):
+        return set(h3.k_ring(cell, k))
+    return {cell}
+
+
 def partition_requests(ride_requests: list, resolution: int = 9) -> dict:
     """
     Partition ride requests into H3 hexagonal cells.

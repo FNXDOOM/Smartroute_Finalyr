@@ -125,7 +125,7 @@ def test_cross_cell_corridor_match_keeps_each_rider_in_the_group():
 
 
 def test_private_rides_never_pool_and_shared_rides_do():
-    """A private ride gets its own stop; nearby shared rides pool into one."""
+    """Shared riders pool into one cluster but each keeps a dedicated stop."""
     db = SessionLocal()
     user_id = None
     try:
@@ -155,8 +155,14 @@ def test_private_rides_never_pool_and_shared_rides_do():
         private_stops = {ride.virtual_stop_id for ride in private}
         assert len(private_stops) == len(private), "private rides must not share a stop"
 
+        # Riders pooled together still keep a separate pickup stop each.
         shared_stops = {ride.virtual_stop_id for ride in shared}
-        assert len(shared_stops) == 1, "nearby shared rides should pool, got %s" % shared_stops
+        assert len(shared_stops) == len(shared), (
+            "every shared rider needs a dedicated stop, got %s" % shared_stops
+        )
+        assert len({ride.cluster_id for ride in shared}) == 1, (
+            "nearby shared riders should still form one pool"
+        )
     finally:
         # The dispatch job reads every clustered ride in the database, so
         # leaving these behind would break unrelated tests (and the next run).

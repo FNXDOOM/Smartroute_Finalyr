@@ -28,6 +28,15 @@ from schemas.tracking import VehicleSnapshot
 from services.notifications import create_notification
 from services.routing.shared_route_builder import resolve_route_geometry
 from utils.auth_utils import get_current_user
+from utils.carpool_status import (
+    CARPOOL_CANCELLED,
+    CARPOOL_CLUSTERED,
+    CARPOOL_COMPLETED,
+    CARPOOL_PASSENGER_CONFIRMED,
+    CARPOOL_PENDING,
+    set_carpool_stage,
+    sync_carpool_from_status,
+)
 from utils.geo import haversine_meters, is_india_location
 from services.clustering.h3_partitioner import get_h3_index
 from utils.ride_scope import (
@@ -89,6 +98,7 @@ def create_ride_request(
         ride_option_name=ride_in.ride_option_name,
         ride_option_price=ride_in.ride_option_price,
     )
+    set_carpool_stage(new_request, CARPOOL_PENDING)
     db.add(new_request)
     db.flush()
     create_notification(
@@ -132,6 +142,7 @@ def create_batch_ride_requests(
             ride_option_name=item.ride_option_name or "SwiftX",
             ride_option_price=item.ride_option_price or "₹12–15",
         )
+        set_carpool_stage(req, CARPOOL_PENDING)
         db.add(req)
         db.flush()
         create_notification(
@@ -238,6 +249,7 @@ def create_demo_clustered_riders(
             ride_option_name="SwiftX",
             ride_option_price="₹12–15",
         )
+        set_carpool_stage(req, CARPOOL_PENDING)
         db.add(req)
         db.flush()
         create_notification(
@@ -295,6 +307,7 @@ def create_demo_shared_batch(
             ride_option_name=item.ride_option_name or "SwiftX",
             ride_option_price=item.ride_option_price or "₹12–15",
         )
+        set_carpool_stage(req, CARPOOL_PENDING)
         db.add(req)
         db.flush()
         create_notification(
@@ -610,6 +623,9 @@ def get_ride_route(
         my_leg_indices=my_leg_indices,
         total_distance_meters=float(route_plan.total_distance_meters or 0),
         estimated_duration_seconds=float(route_plan.estimated_duration_seconds or 0),
+        driver_accepted=bool((route_plan.route_metadata or {}).get("driver_accepted")),
+        route_status=str(route_plan.status or "solved"),
+        carpool_status=ride.carpool_status,
     )
 
 
@@ -660,7 +676,13 @@ def _detach_ride_from_route(db: Session, ride: RideRequest) -> None:
             db.query(RideRequest).filter(
                 RideRequest.id.in_(set(remaining)),
                 RideRequest.status.in_(["assigned", "arriving"]),
-            ).update({RideRequest.status: "clustered"}, synchronize_session=False)
+            ).update(
+                {
+                    RideRequest.status: "clustered",
+                    RideRequest.carpool_status: CARPOOL_CLUSTERED,
+                },
+                synchronize_session=False,
+            )
         else:
             route_plan.status = "cancelled"
             vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
@@ -684,6 +706,9 @@ def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
     """Close a carpool route when its last passenger reaches the destination."""
     if not ride.is_shared or not ride.virtual_stop_id:
         return
+    # autoflush is off, so flush the status change that triggered this call or
+    # the unfinished count below reads the previous state.
+    db.flush()
     route_plans = (
         db.query(RoutePlan)
         .join(RouteWaypointRecord, RouteWaypointRecord.route_plan_id == RoutePlan.id)
@@ -706,6 +731,11 @@ def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
         ).count()
         if unfinished:
             continue
+        # Every rider is off. Close the fine carpool stage for the whole route
+        # too, so a rider dropped off earlier also reaches COMPLETED.
+        for member in db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).all():
+            if member.is_shared and member.status == "completed":
+                member.carpool_status = CARPOOL_COMPLETED
         metadata = dict(route_plan.route_metadata or {})
         metadata["carpool_run_status"] = "completed"
         metadata["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -826,6 +856,8 @@ def update_ride_request_status(
     if status_update.status == "cancelled":
         _detach_ride_from_route(db, ride)
     ride.status = status_update.status
+    # Keep the fine carpool axis in step with a coarse status write.
+    sync_carpool_from_status(ride)
     if status_update.status == "completed":
         _finalize_carpool_route_if_complete(db, ride)
     if current_user.role in ("admin", "driver") and status_update.status in (
@@ -865,7 +897,7 @@ def confirm_passenger_pickup(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ride request not found")
     if not ride.is_shared or ride.status != "arriving":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This ride is not waiting at a carpool pickup stop")
-    ride.status = "ready_for_pickup"
+    set_carpool_stage(ride, CARPOOL_PASSENGER_CONFIRMED)
     pickup_waypoint = db.query(RouteWaypointRecord).join(RoutePlan).filter(
         RouteWaypointRecord.stop_id == ride.virtual_stop_id,
         RoutePlan.status == "solved",
@@ -916,7 +948,10 @@ def cancel_ride_request(
         )
 
     _detach_ride_from_route(db, ride)
-    ride.status = "cancelled"
+    if ride.is_shared:
+        set_carpool_stage(ride, CARPOOL_CANCELLED)
+    else:
+        ride.status = "cancelled"
     create_notification(
         db,
         user_id=ride.user_id,

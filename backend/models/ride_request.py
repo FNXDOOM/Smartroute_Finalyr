@@ -28,6 +28,10 @@ class RideRequest(Base):
     mode = Column("ride_mode", String, default="live", nullable=False, index=True)  # live | presentation_demo
     # Carpool (True, default) vs private (False). A private ride is never pooled.
     is_shared = Column(Boolean, nullable=False, default=True, server_default=text("true"), index=True)
+    # Per-rider carpool stage (see utils/carpool_status.py): the fine-grained
+    # position within the carpool lifecycle. Null for private rides; kept in
+    # sync with ``status`` so older clients that only read ``status`` work.
+    carpool_status = Column(String, nullable=True, index=True)
     demo_run_id = Column(String, nullable=True, index=True)
     h3_index = Column(String, index=True, nullable=True)
     cluster_id = Column(Integer, nullable=True)

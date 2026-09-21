@@ -68,6 +68,7 @@ def _build_lite_schema():
         Column("status", String, server_default="pending"),
         Column("ride_mode", String, server_default="live"),
         Column("is_shared", Integer, server_default="1"),
+        Column("carpool_status", String),
         Column("demo_run_id", String),
         Column("h3_index", String),
         Column("cluster_id", Integer),

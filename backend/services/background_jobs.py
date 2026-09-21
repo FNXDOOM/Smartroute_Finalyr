@@ -20,7 +20,11 @@ from models.user import User
 from models.vehicle import Vehicle
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 from models.virtual_stop import VirtualStop
-from services.clustering.h3_partitioner import get_h3_index, partition_requests
+from services.clustering.h3_partitioner import (
+    get_h3_index,
+    neighbouring_h3_cells,
+    partition_requests,
+)
 from services.clustering.hdbscan_clusterer import cluster_passengers, get_cluster_groups
 from services.prediction.demand_model import predict_zone_demand
 from services.prediction.feature_engineering import get_h3_center
@@ -28,6 +32,11 @@ from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
 from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
 from services.notifications import create_notification, create_notifications_for_users
+from utils.carpool_status import (
+    CARPOOL_CLUSTERED,
+    CARPOOL_SEARCHING,
+    set_carpool_stage,
+)
 from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE, apply_ride_scope, validate_ride_mode
 
@@ -240,6 +249,12 @@ def _try_attach_to_existing_carpool_route(
     for route_plan in plans_query.order_by(RoutePlan.created_at.desc()).all():
         if str((route_plan.route_metadata or {}).get("problem") or "pdp") != "pdp":
             continue
+        metadata = route_plan.route_metadata or {}
+        # A rider may join a route only before the driver has accepted (or
+        # started/finished) it. Once accepted, the rider must wait for another
+        # compatible route rather than silently changing a live itinerary.
+        if metadata.get("driver_accepted") or metadata.get("carpool_run_status") in {"accepted", "completed"}:
+            continue
         vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
         if not vehicle or vehicle.status not in {"active", "en_route", "idle"}:
             continue
@@ -334,9 +349,10 @@ def _try_attach_to_existing_carpool_route(
         stops = db.query(VirtualStop).filter(VirtualStop.id.in_(active_stop_ids)).all()
 
         original_status = request.status
+        original_carpool_status = request.carpool_status
         request.cluster_id = stop.cluster_id
         request.virtual_stop_id = stop.id
-        request.status = "clustered"
+        set_carpool_stage(request, CARPOOL_CLUSTERED)
         stop.passenger_count = int(stop.passenger_count or 0) + 1
 
         rebuilt = build_shared_routes(
@@ -349,6 +365,7 @@ def _try_attach_to_existing_carpool_route(
         )
         if not rebuilt or not rebuilt[0].ride_ids or request.id not in rebuilt[0].ride_ids:
             request.status = original_status
+            request.carpool_status = original_carpool_status
             request.cluster_id = None
             request.virtual_stop_id = None
             if new_stop:
@@ -475,7 +492,10 @@ def _create_clustered_stop(
     for request in members:
         request.cluster_id = cluster_id
         request.virtual_stop_id = virtual_stop.id
-        request.status = "clustered"
+        if getattr(request, "is_shared", False):
+            set_carpool_stage(request, CARPOOL_CLUSTERED)
+        else:
+            request.status = "clustered"
         ride_ids.append(request.id)
 
     return {
@@ -488,6 +508,41 @@ def _create_clustered_stop(
         "passenger_count": len(members),
         "snapped_node_id": snapped_node_id,
     }
+
+
+def _create_per_rider_stops(
+    db: Session,
+    members: List[RideRequest],
+    *,
+    cluster_id: int,
+    resolution: int,
+    mode: str,
+    demo_run_id: Optional[str],
+) -> List[Dict]:
+    """One dedicated pickup stop per rider, all sharing one cluster id.
+
+    Riders pooled onto the same route do not have to share a curb: each one gets
+    its own stop within the walking limit of its own pickup (falling back to the
+    exact pickup when road snapping would exceed it). The PDP solver then orders
+    those stops onto the single route.
+    """
+    payloads: List[Dict] = []
+    for member in members:
+        member_cell = member.h3_index or get_h3_index(
+            member.pickup_lat, member.pickup_lng, resolution=resolution
+        )
+        payloads.append(
+            _create_clustered_stop(
+                db,
+                [member],
+                h3_index=member_cell,
+                cluster_id=cluster_id,
+                resolution=resolution,
+                mode=mode,
+                demo_run_id=demo_run_id,
+            )
+        )
+    return payloads
 
 
 def run_cluster_job(
@@ -552,6 +607,13 @@ def run_cluster_job(
         # Give a new carpool request first chance to join an existing route.
         # This is what makes carpooling continuous instead of batching only
         # requests that arrived in the same clustering tick.
+        #
+        # A shared request that has not been pooled yet is actively being
+        # matched, so its fine carpool stage says "searching" while the coarse
+        # status stays "pending" for older clients.
+        for request in requests:
+            if request.is_shared:
+                set_carpool_stage(request, CARPOOL_SEARCHING)
         unmatched_requests = []
         for request in requests:
             if request.is_shared and _try_attach_to_existing_carpool_route(
@@ -587,7 +649,20 @@ def run_cluster_job(
         # corridor pass below only sees requests that did not form a local
         # compatible group.
 
-        for bucket_h3_index, bucket_requests in buckets.items():
+        for bucket_h3_index in sorted(buckets):
+            # H3 is a fast spatial pre-filter, not a hard boundary. Build the
+            # candidate set from this cell plus its immediate neighbours, and
+            # skip riders a previous bucket already placed, so a rider near a
+            # cell edge can still pool with someone on the other side.
+            bucket_requests = [
+                request
+                for cell in sorted(neighbouring_h3_cells(bucket_h3_index))
+                for request in buckets.get(cell, [])
+                if request.id not in clustered_shared_ids
+            ]
+            if not bucket_requests:
+                continue
+
             labels = cluster_passengers(bucket_requests, min_cluster_size=min_cluster_size)
             noise_count += int((labels == -1).sum())
             grouped_requests = get_cluster_groups(bucket_requests, labels)
@@ -599,24 +674,17 @@ def run_cluster_job(
                     # be matched by a later clustering/attachment pass.
                     if len(compatible_members) < MIN_CARPOOL_PASSENGERS:
                         continue
-                    try:
-                        created_payload = _create_clustered_stop(
-                            db,
-                            compatible_members,
-                            h3_index=bucket_h3_index,
-                            cluster_id=next_cluster_id,
-                            resolution=resolution,
-                            mode=mode,
-                            demo_run_id=demo_run_id,
-                        )
-                    except _WalkLimitExceeded:
-                        # Road snapping moved the common curb too far away.
-                        # Keep the requests pending: splitting them into
-                        # singleton shared rides would violate the 2-rider
-                        # minimum and would not be a carpool.
-                        continue
+                    # One dedicated stop per rider, all under one cluster id.
+                    created_payloads = _create_per_rider_stops(
+                        db,
+                        compatible_members,
+                        cluster_id=next_cluster_id,
+                        resolution=resolution,
+                        mode=mode,
+                        demo_run_id=demo_run_id,
+                    )
 
-                    cluster_groups_payload.append(created_payload)
+                    cluster_groups_payload.extend(created_payloads)
                     clustered_shared_ids.update(request.id for request in compatible_members)
                     clusters_formed += 1
                     next_cluster_id += 1
@@ -935,7 +1003,10 @@ def run_auto_dispatch_pipeline(
                 }
                 for ride in db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).all() if ride_ids else []:
                     if ride.status not in {"completed", "cancelled"}:
-                        ride.status = "clustered"
+                        if ride.is_shared:
+                            set_carpool_stage(ride, CARPOOL_CLUSTERED)
+                        else:
+                            ride.status = "clustered"
                         if ride.user_id:
                             create_notification(
                                 db,

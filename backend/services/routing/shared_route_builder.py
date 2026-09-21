@@ -29,6 +29,7 @@ from models.route_waypoint import RouteWaypointRecord
 from models.vehicle import Vehicle
 from services.routing.vrp_solver import solve_shared_ride_pdp
 from services.stadia_client import extract_route_details, route_many
+from utils.carpool_status import CARPOOL_ASSIGNED, set_carpool_stage
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
 
@@ -462,7 +463,12 @@ def persist_shared_route(
         if not ride:
             continue
         if allowed is None or ride.status in allowed:
-            ride.status = "assigned"
+            # Shared rides move on the carpool axis too, so the passenger can
+            # see the finer stage; private rides only have the coarse status.
+            if getattr(ride, "is_shared", False):
+                set_carpool_stage(ride, CARPOOL_ASSIGNED)
+            else:
+                ride.status = "assigned"
         ride_ids.append(ride.id)
         passenger_user_ids.append(ride.user_id)
 
