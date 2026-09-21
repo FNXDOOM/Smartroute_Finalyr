@@ -162,17 +162,19 @@ def decode_clerk_token(token: str) -> dict:
 
 
 def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
-    """Get or provision User from Clerk JWT."""
+    """Get or provision User from Clerk JWT.
+
+    The token carries identity only. Role and driver status live in the database
+    and are written by the admin approval flow, because a token claim can be
+    forged or self-edited: Clerk's ``public_metadata`` is writable by the signed
+    in user unless the instance restricts it, and reading authorization out of it
+    would let any passenger promote themselves to admin.
+    """
     clerk_user_id = payload.get("sub")
     if not clerk_user_id:
         raise HTTPException(
             status_code=401, detail="Clerk token missing subject claim", headers={"WWW-Authenticate": "Bearer"}
         )
-
-    # Role/status from JWT claims, if present
-    metadata = payload.get("metadata") or payload.get("public_metadata") or {}
-    token_role = metadata.get("role") or payload.get("role")
-    token_driver_status = metadata.get("driver_status") or payload.get("driver_status")
 
     user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
     changed = False
@@ -203,27 +205,16 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
                 user = existing
                 changed = True
         if user is None:
-            email = email or f"{clerk_user_id}@clerk.local"
-            name = name or "Clerk User"
-            initial_role = token_role if token_role in {"passenger", "driver", "admin"} else "passenger"
-            initial_driver_status = token_driver_status or ("pending_verification" if initial_role == "driver" else "active")
             user = User(
-                name=name,
-                email=email,
+                name=name or "Clerk User",
+                email=email or f"{clerk_user_id}@clerk.local",
                 password_hash=secrets.token_urlsafe(32),
                 clerk_user_id=clerk_user_id,
-                role=initial_role,
-                driver_status=initial_driver_status,
+                role="passenger",
+                driver_status="active",
             )
             db.add(user)
             changed = True
-    # Sync role from JWT claims, if provided.
-    if token_role and token_role in {"passenger", "driver", "admin"} and user.role != token_role:
-        user.role = token_role
-        changed = True
-    if token_driver_status and user.driver_status != token_driver_status:
-        user.driver_status = token_driver_status
-        changed = True
     if changed:
         try:
             db.commit()
@@ -259,6 +250,21 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return get_user_from_token(token, db)
 
 
+def ensure_active_driver(user: User) -> User:
+    """Block a driver whose account is not approved and active.
+
+    Endpoints that check ``role`` inline instead of using :func:`require_roles`
+    must call this too, or suspending a driver changes nothing they can do.
+    Admins are unaffected — they act in their own capacity, not as a driver.
+    """
+    if user.role == "driver" and user.driver_status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Driver account is pending verification or inactive",
+        )
+    return user
+
+
 def require_roles(allowed_roles: set | list):
     """Factory creating a FastAPI dependency that enforces role membership."""
     allowed = set(allowed_roles)
@@ -270,13 +276,8 @@ def require_roles(allowed_roles: set | list):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access denied. Requires one of roles: {', '.join(sorted(allowed))}",
             )
-        # For driver endpoints, verify driver account is active
-        if current_user.role == "driver" and "driver" in allowed and "passenger" not in allowed:
-            if current_user.driver_status != "active":
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Driver account is pending verification or inactive",
-                )
+        if "driver" in allowed:
+            ensure_active_driver(current_user)
         return current_user
 
     return dependency

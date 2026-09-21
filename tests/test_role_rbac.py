@@ -32,23 +32,117 @@ def test_default_user_provisions_as_passenger():
         db.close()
 
 
-def test_custom_jwt_role_claim_honored():
+def test_jwt_role_claim_cannot_grant_a_role():
+    """A token claim must never carry authorization.
+
+    Clerk's public_metadata is writable by the signed-in user on a default
+    instance, so honouring a role claim there is a self-service admin grant.
+    """
     db = TestingSessionLocal()
     try:
         payload = {
-            "sub": "test_clerk_driver_888",
-            "email": "driver888@example.com",
-            "name": "Test Driver",
-            "metadata": {
-                "role": "driver",
-                "driver_status": "pending_verification",
-            },
+            "sub": "test_clerk_claimer_888",
+            "email": "claimer888@example.com",
+            "name": "Claim Runner",
+            "metadata": {"role": "admin", "driver_status": "active"},
+            "public_metadata": {"role": "admin", "driver_status": "active"},
         }
         user = get_or_create_user_from_payload(payload, db)
-        assert user.role == "driver"
-        assert user.driver_status == "pending_verification"
+        assert user.role == "passenger"
     finally:
         db.close()
+
+
+def test_jwt_role_claim_cannot_escalate_an_existing_user():
+    db = TestingSessionLocal()
+    try:
+        base = {
+            "sub": "test_clerk_escalator_777",
+            "email": "escalator777@example.com",
+            "name": "Escalator",
+        }
+        user = get_or_create_user_from_payload(base, db)
+        assert user.role == "passenger"
+
+        escalated = dict(base, public_metadata={"role": "admin", "driver_status": "active"})
+        again = get_or_create_user_from_payload(escalated, db)
+        assert again.id == user.id
+        assert again.role == "passenger"
+        assert again.driver_status == "active"
+    finally:
+        db.close()
+
+
+def test_rejected_driver_application_is_not_granted_the_role():
+    from routers.auth import verify_driver
+    from schemas.user import DriverVerifyRequest
+
+    db = TestingSessionLocal()
+    try:
+        admin = User(
+            id=900,
+            name="Admin",
+            email="admin900@example.com",
+            password_hash="test_hash",
+            role="admin",
+            driver_status="active",
+        )
+        applicant = User(
+            id=901,
+            name="Applicant",
+            email="applicant901@example.com",
+            password_hash="test_hash",
+            role="passenger",
+            driver_status="pending_verification",
+        )
+        db.add_all([admin, applicant])
+        db.commit()
+
+        verify_driver(
+            user_id=applicant.id,
+            verify_in=DriverVerifyRequest(status="rejected"),
+            db=db,
+            current_user=admin,
+        )
+        db.refresh(applicant)
+        assert applicant.driver_status == "rejected"
+        assert applicant.role == "passenger"
+
+        verify_driver(
+            user_id=applicant.id,
+            verify_in=DriverVerifyRequest(status="active"),
+            db=db,
+            current_user=admin,
+        )
+        db.refresh(applicant)
+        assert applicant.role == "driver"
+    finally:
+        db.close()
+
+
+def test_suspended_driver_is_blocked_even_on_a_mixed_allowlist():
+    """require_roles used to skip the status check whenever passengers were also
+    allowed, which is how a suspended driver kept operating."""
+    mixed_guard = require_roles(["driver", "passenger"])
+    suspended = User(
+        id=104,
+        name="Suspended Sam",
+        email="sam@example.com",
+        role="driver",
+        driver_status="suspended",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        mixed_guard(suspended)
+    assert exc_info.value.status_code == 403
+    assert "pending verification" in exc_info.value.detail
+
+    active = User(id=105, name="Active Amy", email="amy@example.com", role="driver", driver_status="active")
+    assert mixed_guard(active) == active
+
+    # Admins act in their own capacity and are not gated on driver status.
+    admin_guard = require_roles(["driver", "admin"])
+    admin = User(id=106, name="Admin", email="admin106@example.com", role="admin", driver_status=None)
+    assert admin_guard(admin) == admin
 
 
 def test_require_roles_dependency_guard():

@@ -27,7 +27,7 @@ from schemas.ride_request import (
 from schemas.tracking import VehicleSnapshot
 from services.notifications import create_notification
 from services.routing.shared_route_builder import resolve_route_geometry
-from utils.auth_utils import get_current_user
+from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.carpool_status import (
     CARPOOL_CANCELLED,
     CARPOOL_CLUSTERED,
@@ -702,6 +702,36 @@ def _has_solved_route(db: Session, ride: RideRequest) -> bool:
     return any(ride.id in (waypoint.passenger_ids or []) for waypoint in candidates)
 
 
+def _vehicle_serving_ride(db: Session, ride: RideRequest) -> Optional[Vehicle]:
+    """The vehicle whose live route carries this ride, or None if unrouted.
+
+    A run in ``needs_reoptimization`` is still being driven, so it counts as
+    live here; treating it as unassigned would let another driver write over the
+    driver who is currently serving the rider.
+    """
+    if not ride.virtual_stop_id:
+        return None
+    candidates = (
+        db.query(RouteWaypointRecord)
+        .join(RoutePlan)
+        .filter(
+            RouteWaypointRecord.stop_id == ride.virtual_stop_id,
+            RoutePlan.status.in_(("solved", "needs_reoptimization")),
+        )
+        .all()
+    )
+    match = next(
+        (waypoint for waypoint in candidates if ride.id in (waypoint.passenger_ids or [])),
+        None,
+    )
+    if not match:
+        return None
+    route_plan = db.query(RoutePlan).filter(RoutePlan.id == match.route_plan_id).first()
+    if not route_plan:
+        return None
+    return db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+
+
 def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
     """Close a carpool route when its last passenger reaches the destination."""
     if not ride.is_shared or not ride.virtual_stop_id:
@@ -804,6 +834,18 @@ def update_ride_request_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this ride status",
         )
+
+    if current_user.role == "driver":
+        ensure_active_driver(current_user)
+        # A driver advances rides carried by their own vehicle — the same rule the
+        # dedicated carpool endpoints enforce. An unrouted ride has no serving
+        # driver to compare against, so the manual dispatch flows still work.
+        serving_vehicle = _vehicle_serving_ride(db, ride)
+        if serving_vehicle and serving_vehicle.driver_user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the driver assigned to this ride can update its status",
+            )
 
     if ride.user_id == current_user.id and current_user.role == "passenger" and status_update.status != "cancelled":
         raise HTTPException(

@@ -213,15 +213,22 @@ def verify_driver(
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
 
-    target.role = "driver"
-    target.driver_status = verify_in.status or "active"
+    decision = verify_in.status or "active"
+    target.driver_status = decision
+    if decision == "active":
+        target.role = "driver"
+    elif decision == "rejected" and target.role == "driver":
+        # A declined application must not leave the applicant holding the role.
+        target.role = "passenger"
+    # `suspended` keeps the role so an admin can reinstate it, and every driver
+    # endpoint refuses the account while the status says so.
     db.commit()
     db.refresh(target)
 
     if target.clerk_user_id:
         # Sync confirmed driver state.
         vehicle = db.query(Vehicle).filter(Vehicle.driver_user_id == target.id).first()
-        confirmed_metadata = {"role": "driver", "driver_status": target.driver_status}
+        confirmed_metadata = {"role": target.role, "driver_status": target.driver_status}
         if vehicle:
             confirmed_metadata["license_plate"] = vehicle.license_plate
         sync_clerk_user_metadata(target.clerk_user_id, confirmed_metadata)

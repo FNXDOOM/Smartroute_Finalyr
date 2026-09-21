@@ -290,21 +290,21 @@ Delete one presentation run (rides, virtual stops, route plans, waypoints, track
 ---
 
 ### `PATCH /rides/{ride_id}/status`
-Update ride status. Validates against allowed statuses. Passengers may only set `cancelled` on their own rides.
+Update ride status. Validates against allowed statuses. Passengers may only set `cancelled` on their own rides. A driver may only advance a ride that a live route carries on their own vehicle; unrouted rides stay editable so the manual dispatch flows keep working. Admins are unrestricted.
 
-**Auth required:** Yes (passenger for own rides → `cancelled` only, driver/admin for any)
+**Auth required:** Yes (passenger for own rides → `cancelled` only, driver for rides on their own vehicle, admin for any)
 
 **Request body:**
 ```json
 { "status": "completed" }
 ```
 
-Valid values: `pending`, `clustered`, `assigned`, `arriving`, `in_progress`, `completed`, `cancelled`
+Valid values: `pending`, `clustered`, `assigned`, `arriving`, `ready_for_pickup`, `in_progress`, `completed`, `cancelled`
 
 **Responses:**
 - `200` — Updated ride + notification fired to passenger
 - `400` — Invalid status string
-- `403` — Not authorized
+- `403` — Not authorized (not the owner, or a driver who does not serve this ride)
 - `404` — Ride not found
 
 ---

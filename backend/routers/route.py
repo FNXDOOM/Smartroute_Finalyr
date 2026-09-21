@@ -27,7 +27,7 @@ from services.routing.shared_route_builder import (
     resolve_route_geometry,
 )
 from services.notifications import create_notification, create_notifications_for_users
-from utils.auth_utils import get_current_user
+from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.carpool_status import (
     CARPOOL_BOARDED,
     CARPOOL_COMPLETED,
@@ -55,6 +55,7 @@ def optimize_routes(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can optimize routes",
         )
+    ensure_active_driver(current_user)
 
     if not payload.vehicle_ids:
         raise HTTPException(
@@ -320,6 +321,7 @@ def accept_route(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can accept routes",
         )
+    ensure_active_driver(current_user)
 
     route_plan = db.query(RoutePlan).filter(
         RoutePlan.route_id == route_id,

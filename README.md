@@ -253,9 +253,17 @@ Driver registers via Driver Portal (email-code verified if required)
 
 Admin opens Overview → Pending Driver Verifications widget
   └─ POST /auth/driver/{id}/verify { status: "active" }  (also "suspended" / "rejected")
-  └─ DB updated + Clerk publicMetadata synced to confirmed driver
-  └─ Driver now sees full DriverView dashboard
+  └─ active    → role="driver", driver_status="active"   → full DriverView dashboard
+  └─ suspended → keeps role="driver" but driver_status="suspended", blocked at every driver endpoint
+  └─ rejected  → returned to role="passenger"; they must re-apply to be considered again
+  └─ DB updated + Clerk publicMetadata synced to the resulting role/status
 ```
+
+> **Roles live in the database.** A Clerk JWT is treated as identity only — its
+> `role` / `driver_status` claims (including `publicMetadata`, which a user can
+> usually write about themselves) never grant or change a role server-side. The
+> metadata sync exists so the Clerk dashboard and the client's optimistic UI
+> agree, not to authorize anything.
 
 ### Environment Variables for Auth
 
@@ -279,10 +287,14 @@ Admin opens Overview → Pending Driver Verifications widget
 | `driver` | `pending_verification` | Verification gate only — no dashboard access |
 | `driver` | `active` | Full driver dashboard, fleet map, ride management |
 | `driver` | `suspended` | Verification gate — access blocked |
-| `driver` | `rejected` | Verification gate — must be re-approved (re-apply to return to pending) |
+| `driver` | `rejected` | Role is returned to `passenger` on rejection, so this state is not reachable — re-apply to be considered again |
 | `admin` | `active` | All passenger + driver + admin panels |
 
-> **First admin:** `PATCH /auth/users/{id}/role` is admin-only, so bootstrap the first admin with `UPDATE users SET role='admin' WHERE email='you@example.com';` or by setting `{ "role": "admin" }` in the user's Clerk public metadata (requires the session-token JWT template to expose it) and signing in again.
+> **First admin:** `PATCH /auth/users/{id}/role` is admin-only, so bootstrap the
+> first admin directly in the database:
+> `UPDATE users SET role='admin' WHERE email='you@example.com';`
+> Setting `role` in Clerk `publicMetadata` does **not** work — the backend
+> ignores authorization claims in tokens.
 >
 > **Re-registration:** signing in with the same email but a new Clerk identity links to the existing *passenger* row instead of crashing. Same-email `driver`/`admin` rows are never auto-linked — that login gets a `409` pointing at the original sign-in method.
 
@@ -431,8 +443,8 @@ Full setup, test cards, webhook config, and security model: [`docs/payments.md`]
 - All protected REST and WebSocket endpoints require a verified Clerk session token. WebSocket `?token=` query params are rejected — use `['bearer', jwt]` (covered by `tests/test_health_and_ws_auth.py`).
 - **India service area**: all ride/geocode/routing writes are guarded by `is_india_location` (6.5–35.7 / 68.1–97.4); out-of-area requests return `422`.
 - **Driver Portal isolation**: The Driver Portal login form uses Clerk's headless `useSignIn()` — Google OAuth buttons are never rendered. Social logins are architecturally excluded, not just hidden.
-- **Role enforcement is defence-in-depth**: Roles are checked at three layers — frontend route guard, FastAPI `require_roles()` dependency, and Clerk `publicMetadata` claims in the JWT.
-- **`driver_status` guard**: Even if a user has `role=driver`, driver-only API endpoints reject requests if `driver_status` is not `active`.
+- **Role enforcement**: the database is the only source of truth for a role. Every request authenticates the caller from a verified JWT (signature, issuer and authorized-party checks in `utils/auth_utils.py`), then resolves the role from the `users` row; `require_roles()` / `ensure_active_driver()` authorize the action. Token claims never set a role.
+- **`driver_status` guard**: a `role=driver` account with `driver_status != "active"` is refused on the driver operational surface — route acceptance, route optimization, the carpool lifecycle endpoints and ride status writes. Read-only listing endpoints stay role-gated.
 - **Payments**: the Razorpay Key Secret and Webhook Secret are backend-only (`backend/.env` / Secrets Manager). Fares are computed server-side; every payment is marked `paid` only after server-side signature verification; webhooks are signature-verified and idempotent. See [`docs/payments.md`](docs/payments.md).
 - Tracking data is scoped server-side: passengers see only their assigned ride vehicle, drivers see only their assigned vehicle, and admins see the fleet.
 - Admins assign a driver to a vehicle with `PATCH /vehicles/{vehicle_id}`:
