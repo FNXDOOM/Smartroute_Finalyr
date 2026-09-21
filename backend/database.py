@@ -115,9 +115,6 @@ def create_db_tables(bind_engine=None):
             connection.execute(text(
                 "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS carpool_status VARCHAR"
             ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_ride_requests_carpool_status ON ride_requests (carpool_status)"
-            ))
     elif target_engine.dialect.name == "sqlite":
         from sqlalchemy.exc import NoSuchTableError
 
@@ -202,11 +199,6 @@ def create_db_tables(bind_engine=None):
             with target_engine.begin() as connection:
                 connection.execute(text(
                     "ALTER TABLE ride_requests ADD COLUMN carpool_status VARCHAR"
-                ))
-        if "ride_requests" in existing_tables and "carpool_status" in _sqlite_columns("ride_requests"):
-            with target_engine.begin() as connection:
-                connection.execute(text(
-                    "CREATE INDEX IF NOT EXISTS ix_ride_requests_carpool_status ON ride_requests (carpool_status)"
                 ))
 
 
@@ -306,9 +298,6 @@ def run_startup_migrations(bind_engine=None) -> None:
             ))
             connection.execute(text(
                 "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS carpool_status VARCHAR"
-            ))
-            connection.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_ride_requests_carpool_status ON ride_requests (carpool_status)"
             ))
 
 

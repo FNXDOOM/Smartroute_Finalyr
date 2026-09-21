@@ -73,6 +73,31 @@ RIDE_STATUS_TO_CARPOOL = {
 }
 
 
+# The forward ladder a rider walks. ``cancelled`` is terminal and deliberately
+# off it, so an unknown or cancelled stage never satisfies a minimum.
+CARPOOL_PROGRESS_STAGES = (
+    CARPOOL_PENDING,
+    CARPOOL_SEARCHING,
+    CARPOOL_CLUSTERED,
+    CARPOOL_ASSIGNED,
+    CARPOOL_DRIVER_ACCEPTED,
+    CARPOOL_DRIVER_ARRIVING,
+    CARPOOL_PICKUP_READY,
+    CARPOOL_PASSENGER_CONFIRMED,
+    CARPOOL_BOARDED,
+    CARPOOL_IN_TRANSIT,
+    CARPOOL_DROPPED_OFF,
+    CARPOOL_COMPLETED,
+)
+
+
+def stage_at_least(stage: Optional[str], minimum: str) -> bool:
+    """Whether ``stage`` has already reached ``minimum`` on the forward ladder."""
+    if stage not in CARPOOL_PROGRESS_STAGES:
+        return False
+    return CARPOOL_PROGRESS_STAGES.index(stage) >= CARPOOL_PROGRESS_STAGES.index(minimum)
+
+
 def set_carpool_stage(ride, stage: str) -> None:
     """Advance a shared ride to ``stage`` and keep its coarse status in sync.
 
@@ -94,10 +119,3 @@ def sync_carpool_from_status(ride) -> None:
     stage = RIDE_STATUS_TO_CARPOOL.get(ride.status)
     if stage is not None:
         ride.carpool_status = stage
-
-
-def normalize_carpool_status(value: Optional[str]) -> Optional[str]:
-    """Echo a known stage, else None (defensive for older/corrupt rows)."""
-    if value in CARPOOL_TO_RIDE_STATUS:
-        return value
-    return None

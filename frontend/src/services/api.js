@@ -150,8 +150,11 @@ export const routeApi = {
   getById: async (id) => (await client.get(`/route/history/${id}`)).data,
   accept: async (id) => (await client.post(`/route/${encodeURIComponent(id)}/accept`)).data,
   announceCarpoolPickup: async (routeId, rideId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/announce-pickup/${rideId}`)).data,
+  markCarpoolArrived: async (routeId, rideId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/mark-arrived/${rideId}`)).data,
   confirmCarpoolPickup: async (routeId, rideId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/confirm-pickup/${rideId}`)).data,
+  departCarpool: async (routeId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/depart`)).data,
   confirmCarpoolDropoff: async (routeId, rideId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/confirm-dropoff/${rideId}`)).data,
+  completeCarpool: async (routeId) => (await client.post(`/route/${encodeURIComponent(routeId)}/carpool/complete`)).data,
 };
 
 // Analytics

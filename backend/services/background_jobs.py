@@ -57,10 +57,6 @@ MAX_CARPOOL_PASSENGERS = 3
 MAX_PICKUP_WALK_METERS = 150
 
 
-class _WalkLimitExceeded(Exception):
-    """A shared stop cannot serve every rider within the walking limit."""
-
-
 def _split_compatible_shared_group(requests: List[RideRequest]) -> List[List[RideRequest]]:
     """Split a pickup cluster into destination-compatible carpool pools.
 
@@ -469,10 +465,8 @@ def _create_clustered_stop(
         for request in members
     )
     if max_walk_meters > MAX_PICKUP_WALK_METERS:
-        if len(members) > 1:
-            raise _WalkLimitExceeded
-        # A private ride should never force a passenger to walk to a distant
-        # shared curb. Keep the exact requested point as the safe fallback.
+        # Snapping would strand the rider further than they agreed to walk, so
+        # keep the exact requested point as the safe fallback.
         snapped_lat, snapped_lng, snapped_node_id = members[0].pickup_lat, members[0].pickup_lng, "requested-pickup"
 
     virtual_stop = VirtualStop(

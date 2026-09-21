@@ -1,3 +1,5 @@
+from typing import Set
+
 import h3
 
 
@@ -10,7 +12,7 @@ def get_h3_index(lat: float, lng: float, resolution: int = 9) -> str:
     raise AttributeError("H3 library missing latlng_to_cell or geo_to_h3")
 
 
-def neighbouring_h3_cells(cell: str, k: int = 1) -> set:
+def neighbouring_h3_cells(cell: str, k: int = 1) -> Set[str]:
     """The cell itself plus every cell within ``k`` rings of it.
 
     Route matching must not treat a single H3 cell as a hard boundary, so the

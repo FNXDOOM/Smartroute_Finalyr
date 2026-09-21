@@ -25,13 +25,18 @@ from schemas.ride_request import (
     RideRouteStop,
 )
 from schemas.tracking import VehicleSnapshot
+from services.carpool_run import (
+    close_carpool_run,
+    is_carpool_run,
+    riders_not_dropped_off,
+    route_rides,
+)
 from services.notifications import create_notification
 from services.routing.shared_route_builder import resolve_route_geometry
 from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.carpool_status import (
     CARPOOL_CANCELLED,
     CARPOOL_CLUSTERED,
-    CARPOOL_COMPLETED,
     CARPOOL_PASSENGER_CONFIRMED,
     CARPOOL_PENDING,
     set_carpool_stage,
@@ -746,35 +751,12 @@ def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
         .all()
     )
     for route_plan in route_plans:
-        if not (route_plan.route_metadata or {}).get("carpool_run"):
+        if not is_carpool_run(route_plan):
             continue
-        ride_ids = {
-            passenger_id
-            for waypoint in route_plan.waypoints
-            for passenger_id in (waypoint.passenger_ids or [])
-        }
-        if not ride_ids:
+        rides = route_rides(db, route_plan)
+        if not rides or riders_not_dropped_off(rides):
             continue
-        unfinished = db.query(RideRequest).filter(
-            RideRequest.id.in_(ride_ids),
-            RideRequest.status.notin_(["completed", "cancelled"]),
-        ).count()
-        if unfinished:
-            continue
-        # Every rider is off. Close the fine carpool stage for the whole route
-        # too, so a rider dropped off earlier also reaches COMPLETED.
-        for member in db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).all():
-            if member.is_shared and member.status == "completed":
-                member.carpool_status = CARPOOL_COMPLETED
-        metadata = dict(route_plan.route_metadata or {})
-        metadata["carpool_run_status"] = "completed"
-        metadata["completed_at"] = datetime.now(timezone.utc).isoformat()
-        route_plan.route_metadata = metadata
-        route_plan.status = "completed"
-        vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
-        if vehicle and vehicle.assigned_route_id == route_plan.route_id:
-            vehicle.assigned_route_id = None
-            vehicle.status = "idle"
+        close_carpool_run(db, route_plan, rides)
 
 
 @router.get("/", response_model=List[RideRequestResponse])

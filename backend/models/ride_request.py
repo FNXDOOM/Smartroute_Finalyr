@@ -31,7 +31,7 @@ class RideRequest(Base):
     # Per-rider carpool stage (see utils/carpool_status.py): the fine-grained
     # position within the carpool lifecycle. Null for private rides; kept in
     # sync with ``status`` so older clients that only read ``status`` work.
-    carpool_status = Column(String, nullable=True, index=True)
+    carpool_status = Column(String, nullable=True)
     demo_run_id = Column(String, nullable=True, index=True)
     h3_index = Column(String, index=True, nullable=True)
     cluster_id = Column(Integer, nullable=True)

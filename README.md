@@ -368,19 +368,34 @@ Separate pickup stops + ordered pickup/drop-off waypoints
         ↓
 Assign to an online driver-owned vehicle
         ↓
-Driver accepts in Carpool Run
+Driver accepts in Carpool Run (the run then stops accepting new riders)
         ↓
-Ask each rider to walk → rider confirms arrival → driver confirms pickup
+Ask each rider to walk → driver marks arrival → rider confirms → driver confirms pickup
         ↓
-Driver confirms each drop-off
+Driver starts the trip → confirms each drop-off
         ↓
-Last completed rider closes the route and releases the vehicle
+Driver completes the run → every rider closes and the vehicle is released
 ```
 
-A passenger cannot join after the vehicle has started. If a driver goes offline
+Each rider also carries a per-rider `carpool_status` stage, because the driver
+confirms one rider at a time and two riders on the same run are legitimately at
+different points. It stays in lockstep with the coarse `status`, so clients that
+only read `status` are unaffected:
+
+```text
+pending → searching → clustered → assigned → driver_accepted
+       → driver_arriving → pickup_ready → passenger_confirmed_pickup_stop
+       → boarded → in_transit → dropped_off → completed      (cancelled is terminal)
+```
+
+A passenger cannot join once the driver has accepted the run. If a driver goes offline
 before accepting, the route is released on the next dispatch cycle and the
 rides return to the matching pool. Driver presence is recorded every 30 seconds
 and remains dispatchable for 90 seconds after the last heartbeat.
+
+Only an explicit completion closes a run: a co-passenger cancellation moves the
+plan to `needs_reoptimization`, and the driver keeps serving — and finally
+closing — the riders already on board.
 
 ---
 
@@ -408,8 +423,11 @@ Full interactive docs available at `http://localhost:8000/docs` when backend is 
 - `GET /route/history` — return active routes visible to the current driver/admin
 - `POST /route/{route_id}/accept` — accept an assigned route before progression begins
 - `POST /route/{route_id}/carpool/announce-pickup/{ride_id}` — ask one rider to walk to their assigned stop
+- `POST /route/{route_id}/carpool/mark-arrived/{ride_id}` — record that the driver reached that rider's pickup stop
 - `POST /route/{route_id}/carpool/confirm-pickup/{ride_id}` — confirm that a ready rider boarded
+- `POST /route/{route_id}/carpool/depart` — start the trip for every boarded rider
 - `POST /route/{route_id}/carpool/confirm-dropoff/{ride_id}` — confirm one rider's drop-off
+- `POST /route/{route_id}/carpool/complete` — close the run and release the vehicle, once every rider is dropped off
 
 ### Maps / Geo (Stadia-backed, India-only, auth required)
 - `GET /maps/stadia/style.json` + `GET /maps/stadia/resource/{path}` — authenticated tile proxy (no key in browser)

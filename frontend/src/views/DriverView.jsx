@@ -503,6 +503,28 @@ export default function DriverView({ user, view, setView, toast }) {
             toast('success', 'Passenger picked up', `Ride #${rideId} is now in progress.`)
           } catch (error) { toast('error', 'Could not confirm pickup', error?.response?.data?.detail || '') }
         }}
+        onMarkArrived={async (routeId, rideId) => {
+          try {
+            await routeApi.markCarpoolArrived(routeId, rideId)
+            await refreshRides()
+            toast('success', 'Arrival logged', `Rider #${rideId} was told you are at the stop.`)
+          } catch (error) { toast('error', 'Could not log arrival', error?.response?.data?.detail || '') }
+        }}
+        onDepart={async (routeId) => {
+          try {
+            const result = await routeApi.departCarpool(routeId)
+            await refreshRides()
+            toast('success', 'Trip started', `${result?.ride_ids?.length || 0} rider(s) are on the move.`)
+          } catch (error) { toast('error', 'Could not start the trip', error?.response?.data?.detail || '') }
+        }}
+        onCompleteRun={async (routeId) => {
+          try {
+            await routeApi.completeCarpool(routeId)
+            await refreshRides()
+            await refreshRoutes()
+            toast('success', 'Carpool run completed', 'Your vehicle is back in the pool.')
+          } catch (error) { toast('error', 'Could not complete the run', error?.response?.data?.detail || '') }
+        }}
         onConfirmDropoff={async (routeId, rideId) => {
           try {
             await routeApi.confirmCarpoolDropoff(routeId, rideId)
@@ -1174,10 +1196,12 @@ function carpoolDistanceMeters(aLat, aLng, bLat, bLng) {
   return 2 * radius * Math.asin(Math.sqrt(h))
 }
 
-function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, onAcceptRoute, onAnnouncePickup, onConfirmPickup, onConfirmDropoff }) {
+function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, onAcceptRoute, onAnnouncePickup, onMarkArrived, onConfirmPickup, onDepart, onConfirmDropoff, onCompleteRun }) {
   const route = routes?.find((item) => (
     item.vehicle_id === vehicle?.id &&
-    item.status === 'solved' &&
+    // A co-passenger cancellation leaves the plan needing re-optimization while
+    // the riders already served stay live, so the run must remain drivable.
+    ['solved', 'needs_reoptimization'].includes(item.status) &&
     item.route_metadata?.carpool_run &&
     item.route_metadata?.carpool_run_status !== 'completed' &&
     (item.problem || item.route_metadata?.problem || 'pdp') === 'pdp'
@@ -1185,6 +1209,12 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, 
   const waypoints = route?.waypoints || []
   const rideById = new Map((rides || []).map((ride) => [ride.id, ride]))
   const passengerIds = [...new Set(waypoints.flatMap((waypoint) => waypoint.passenger_ids || []))]
+  const passengers = passengerIds
+    .map((id) => rideById.get(id))
+    .filter((ride) => ride && ride.status !== 'cancelled')
+  const boardedCount = passengers.filter((ride) => ride.carpool_status === 'boarded').length
+  const everyRiderDroppedOff = passengers.length > 0 && passengers.every((ride) => ride.status === 'completed')
+  const accepted = Boolean(route?.route_metadata?.driver_accepted)
   const routeGeometry = route?.geometry?.length > 1
     ? route.geometry
     : waypoints.map((waypoint) => [waypoint.lng, waypoint.lat])
@@ -1208,9 +1238,21 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, 
             <p className="mt-0.5 text-sm text-muted-foreground">Stop-by-stop guidance for up to three riders.</p>
           </div>
         </div>
-        <Button onClick={() => route?.route_metadata?.driver_accepted ? onOpenMap(route) : onAcceptRoute(route)} className="gap-1.5" disabled={!route}>
-          <Navigation className="h-4 w-4" /> {route?.route_metadata?.driver_accepted ? 'Open live map' : 'Accept carpool run'}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {boardedCount > 0 && (
+            <Button variant="outline" onClick={() => onDepart(route.route_id)} className="gap-1.5">
+              <Play className="h-4 w-4" /> Start trip ({boardedCount})
+            </Button>
+          )}
+          {accepted && everyRiderDroppedOff && (
+            <Button onClick={() => onCompleteRun(route.route_id)} className="gap-1.5">
+              <Check className="h-4 w-4" /> Complete run
+            </Button>
+          )}
+          <Button onClick={() => accepted ? onOpenMap(route) : onAcceptRoute(route)} className="gap-1.5" disabled={!route}>
+            <Navigation className="h-4 w-4" /> {accepted ? 'Open live map' : 'Accept carpool run'}
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -1285,7 +1327,10 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, 
                               {isPickup && ride.status === 'assigned' && (
                                 <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onAnnouncePickup(route.route_id, id)}>Ask rider to walk</Button>
                               )}
-                              {isPickup && ride.status === 'arriving' && (
+                              {isPickup && ride.carpool_status === 'driver_arriving' && (
+                                <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onMarkArrived(route.route_id, id)}>I have arrived</Button>
+                              )}
+                              {isPickup && ride.status === 'arriving' && ride.carpool_status !== 'driver_arriving' && (
                                 <span className="text-[11px] text-muted-foreground">Waiting for rider confirmation</span>
                               )}
                               {isPickup && ride.status === 'ready_for_pickup' && (

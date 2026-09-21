@@ -14,13 +14,20 @@ from fastapi import HTTPException
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from database import SessionLocal
+from models.notification import Notification
 from models.ride_request import RideRequest
 from models.route_plan import RoutePlan
 from models.route_waypoint import RouteWaypointRecord
 from models.user import User
 from models.vehicle import Vehicle
 from models.virtual_stop import VirtualStop
-from routers.rides import confirm_passenger_pickup, get_ride_route
+from routers.rides import (
+    cancel_ride_request,
+    confirm_passenger_pickup,
+    get_ride_route,
+    update_ride_request_status,
+)
+from schemas.ride_request import RideRequestStatusUpdate
 from routers.route import (
     accept_route,
     announce_carpool_pickup,
@@ -31,8 +38,10 @@ from routers.route import (
     mark_carpool_arrived,
 )
 from services.background_jobs import _try_attach_to_existing_carpool_route
+from services.clustering import h3_partitioner
 from services.clustering.h3_partitioner import get_h3_index, neighbouring_h3_cells
 from services.routing.shared_route_builder import BuiltRoute, persist_shared_route
+from utils.carpool_status import CARPOOL_ASSIGNED, set_carpool_stage, sync_carpool_from_status
 from utils.ride_scope import LIVE_MODE
 
 DEPOT_LAT, DEPOT_LNG = 12.9784, 77.6408
@@ -146,13 +155,31 @@ def _cleanup(db, persisted, ride_ids, stop_ids, vehicle_id):
     db.commit()
 
 
+def _board_rider(db, route_id, driver, rider, ride):
+    """Drive one rider from 'announced' through to being onboard the car."""
+    announce_carpool_pickup(route_id=route_id, ride_id=ride.id, db=db, current_user=driver)
+    mark_carpool_arrived(route_id=route_id, ride_id=ride.id, db=db, current_user=driver)
+    confirm_passenger_pickup(ride_id=ride.id, db=db, current_user=rider)
+    confirm_carpool_pickup(route_id=route_id, ride_id=ride.id, db=db, current_user=driver)
+
+
 def test_neighbouring_h3_cells_include_the_cell_and_its_ring():
     cell = get_h3_index(12.9719, 77.6412, resolution=9)
 
     neighbours = neighbouring_h3_cells(cell, k=1)
 
+    # 7 for a hexagon, 6 for a pentagon — H3 clips the ring at a pentagon.
     assert cell in neighbours
-    assert len(neighbours) == 7, "a res-9 cell plus its 6 neighbours"
+    assert len(neighbours) in (6, 7)
+
+
+def test_neighbouring_h3_cells_degrade_to_the_cell_alone(monkeypatch):
+    """A build without a ring API must not crash the clustering pass."""
+    monkeypatch.delattr(h3_partitioner.h3, "grid_disk", raising=False)
+    monkeypatch.delattr(h3_partitioner.h3, "k_ring", raising=False)
+    cell = get_h3_index(12.9719, 77.6412, resolution=9)
+
+    assert h3_partitioner.neighbouring_h3_cells(cell) == {cell}
 
 
 def test_carpool_lifecycle_walks_every_stage_then_completes():
@@ -215,18 +242,32 @@ def test_carpool_lifecycle_walks_every_stage_then_completes():
         confirm_carpool_pickup(route_id=route_id, ride_id=ride_b.id, db=db, current_user=driver)
         depart_carpool_route(route_id=route_id, db=db, current_user=driver)
 
-        # The final drop-off closes the run and completes *both* riders.
+        # The final drop-off records the drop-off but leaves the run open: only
+        # an explicit completion closes it and releases the vehicle.
         confirm_carpool_dropoff(route_id=route_id, ride_id=ride_b.id, db=db, current_user=driver)
         db.refresh(ride_a)
         db.refresh(ride_b)
-        assert ride_b.carpool_status == "completed"
-        assert ride_a.carpool_status == "completed"
         db.refresh(persisted.route_plan)
-        assert persisted.route_plan.status == "completed"
+        assert ride_a.carpool_status == "dropped_off"
+        assert ride_b.carpool_status == "dropped_off"
+        assert persisted.route_plan.status == "solved"
 
-        # Explicit completion is idempotent after the run closed itself.
         result = complete_carpool_route(route_id=route_id, db=db, current_user=driver)
         assert result["status"] == "completed"
+        db.refresh(ride_a)
+        db.refresh(ride_b)
+        db.refresh(persisted.route_plan)
+        db.refresh(vehicle)
+        assert ride_a.carpool_status == "completed"
+        assert ride_b.carpool_status == "completed"
+        assert persisted.route_plan.status == "completed"
+        assert vehicle.status == "idle"
+        assert vehicle.assigned_route_id is None
+
+        # Explicit completion is idempotent after the run closed.
+        result = complete_carpool_route(route_id=route_id, db=db, current_user=driver)
+        assert result["status"] == "completed"
+        assert result["already_completed"] is True
     finally:
         if persisted is not None:
             _cleanup(
@@ -311,3 +352,195 @@ def test_accepted_route_is_closed_to_new_riders():
             )
         db.commit()
         db.close()
+
+
+def _notification_count(db, user_id, notification_type):
+    return db.query(Notification).filter(
+        Notification.user_id == user_id,
+        Notification.notification_type == notification_type,
+    ).count()
+
+
+def test_repeated_accept_does_not_resurrect_a_dropped_off_rider():
+    """Accept stays retry-safe: riders already past it are left alone."""
+    db = SessionLocal()
+    persisted = None
+    try:
+        driver, rider_a, rider_b, vehicle, ride_a, ride_b, persisted = _two_rider_route(db)
+        route_id = persisted.route_id
+        accept_route(route_id=route_id, db=db, current_user=driver)
+        _board_rider(db, route_id, driver, rider_a, ride_a)
+        depart_carpool_route(route_id=route_id, db=db, current_user=driver)
+        confirm_carpool_dropoff(route_id=route_id, ride_id=ride_a.id, db=db, current_user=driver)
+        db.refresh(ride_a)
+        assert ride_a.carpool_status == "dropped_off"
+        accepted_before = _notification_count(db, rider_a.id, "carpool_driver_accepted")
+
+        # A client retry of the same POST must not walk rider A backwards.
+        accept_route(route_id=route_id, db=db, current_user=driver)
+
+        db.refresh(ride_a)
+        assert ride_a.carpool_status == "dropped_off"
+        assert ride_a.status == "completed"
+        assert _notification_count(db, rider_a.id, "carpool_driver_accepted") == accepted_before
+        db.refresh(ride_b)
+        assert ride_b.carpool_status == "driver_accepted"
+    finally:
+        if persisted is not None:
+            _cleanup(
+                db,
+                persisted,
+                [r.id for r in (ride_a, ride_b)],
+                [ride_a.virtual_stop_id, ride_b.virtual_stop_id],
+                vehicle.id,
+            )
+        db.close()
+
+
+def test_a_co_passenger_cancellation_does_not_lock_out_the_remaining_riders():
+    """A cancellation rewrites the plan to needs_reoptimization; the driver can
+    still finish the riders already on board and get their vehicle back."""
+    db = SessionLocal()
+    persisted = None
+    try:
+        driver, rider_a, rider_b, vehicle, ride_a, ride_b, persisted = _two_rider_route(db)
+        route_id = persisted.route_id
+        accept_route(route_id=route_id, db=db, current_user=driver)
+        _board_rider(db, route_id, driver, rider_a, ride_a)
+        depart_carpool_route(route_id=route_id, db=db, current_user=driver)
+
+        cancel_ride_request(ride_id=ride_b.id, db=db, current_user=rider_b)
+        db.refresh(persisted.route_plan)
+        assert persisted.route_plan.status == "needs_reoptimization"
+
+        confirm_carpool_dropoff(route_id=route_id, ride_id=ride_a.id, db=db, current_user=driver)
+        complete_carpool_route(route_id=route_id, db=db, current_user=driver)
+
+        db.refresh(persisted.route_plan)
+        db.refresh(vehicle)
+        db.refresh(ride_a)
+        assert persisted.route_plan.status == "completed"
+        assert vehicle.status == "idle"
+        assert vehicle.assigned_route_id is None
+        assert ride_a.carpool_status == "completed"
+    finally:
+        if persisted is not None:
+            _cleanup(
+                db,
+                persisted,
+                [r.id for r in (ride_a, ride_b)],
+                [ride_a.virtual_stop_id, ride_b.virtual_stop_id],
+                vehicle.id,
+            )
+        db.close()
+
+
+def test_depart_requires_someone_to_have_boarded():
+    db = SessionLocal()
+    persisted = None
+    try:
+        driver, rider_a, rider_b, vehicle, ride_a, ride_b, persisted = _two_rider_route(db)
+        accept_route(route_id=persisted.route_id, db=db, current_user=driver)
+
+        with pytest.raises(HTTPException) as refused:
+            depart_carpool_route(route_id=persisted.route_id, db=db, current_user=driver)
+        assert refused.value.status_code == 409
+    finally:
+        if persisted is not None:
+            _cleanup(
+                db,
+                persisted,
+                [r.id for r in (ride_a, ride_b)],
+                [ride_a.virtual_stop_id, ride_b.virtual_stop_id],
+                vehicle.id,
+            )
+        db.close()
+
+
+def test_only_the_assigned_driver_can_patch_a_riders_status():
+    """A second driver must not be able to complete another driver's rider,
+    which would close that run, release its vehicle and notify its riders."""
+    db = SessionLocal()
+    persisted = None
+    try:
+        driver, rider_a, rider_b, vehicle, ride_a, ride_b, persisted = _two_rider_route(db)
+        route_id = persisted.route_id
+        owner = _user(db, "carpool_owner_driver@example.com", role="driver")
+        stranger = _user(db, "carpool_stranger_driver@example.com", role="driver")
+        vehicle.driver_user_id = owner.id
+        db.commit()
+
+        accept_route(route_id=route_id, db=db, current_user=driver)
+        _board_rider(db, route_id, driver, rider_a, ride_a)
+
+        accepted_before = _notification_count(db, rider_a.id, "carpool_route_completed")
+
+        with pytest.raises(HTTPException) as refused:
+            update_ride_request_status(
+                ride_id=ride_a.id,
+                status_update=RideRequestStatusUpdate(status="completed"),
+                db=db,
+                current_user=stranger,
+            )
+        assert refused.value.status_code == 403
+
+        db.refresh(ride_a)
+        db.refresh(persisted.route_plan)
+        db.refresh(vehicle)
+        assert ride_a.carpool_status == "boarded"
+        assert persisted.route_plan.status == "solved"
+        assert vehicle.assigned_route_id == route_id
+        assert _notification_count(db, rider_a.id, "carpool_route_completed") == accepted_before
+
+        # The driver who actually holds the run is not affected.
+        update_ride_request_status(
+            ride_id=ride_a.id,
+            status_update=RideRequestStatusUpdate(status="completed"),
+            db=db,
+            current_user=owner,
+        )
+        db.refresh(ride_a)
+        assert ride_a.carpool_status == "completed"
+    finally:
+        if persisted is not None:
+            _cleanup(
+                db,
+                persisted,
+                [r.id for r in (ride_a, ride_b)],
+                [ride_a.virtual_stop_id, ride_b.virtual_stop_id],
+                vehicle.id,
+            )
+        db.close()
+
+
+def test_private_rides_stay_off_the_carpool_axis():
+    private = RideRequest(
+        user_id=1,
+        pickup_lat=DEPOT_LAT,
+        pickup_lng=DEPOT_LNG,
+        dest_lat=DEPOT_LAT,
+        dest_lng=DEPOT_LNG,
+        status="pending",
+        is_shared=False,
+    )
+
+    set_carpool_stage(private, CARPOOL_ASSIGNED)
+    assert private.carpool_status is None
+    assert private.status == "pending"
+
+    private.status = "arriving"
+    sync_carpool_from_status(private)
+    assert private.carpool_status is None
+
+    pooled = RideRequest(
+        user_id=1,
+        pickup_lat=DEPOT_LAT,
+        pickup_lng=DEPOT_LNG,
+        dest_lat=DEPOT_LAT,
+        dest_lng=DEPOT_LNG,
+        status="pending",
+        is_shared=True,
+    )
+    set_carpool_stage(pooled, CARPOOL_ASSIGNED)
+    assert pooled.carpool_status == CARPOOL_ASSIGNED
+    assert pooled.status == "assigned"
