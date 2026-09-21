@@ -25,6 +25,7 @@ from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
 from utils.auth_utils import get_current_user
 from utils.ride_scope import LIVE_MODE
+from utils.ride_states import RIDE_CLUSTERED, RIDE_PENDING
 
 router = APIRouter()
 
@@ -56,7 +57,7 @@ def run_clustering(
 
     # Live only; exclude demo rides.
     query = db.query(RideRequest).filter(
-        RideRequest.status == "pending",
+        RideRequest.status == RIDE_PENDING,
         RideRequest.mode == LIVE_MODE,
     )
     if h3_index:
@@ -129,7 +130,7 @@ def run_clustering(
             for request in members:
                 request.cluster_id = next_cluster_id
                 request.virtual_stop_id = virtual_stop.id
-                request.status = "clustered"
+                request.status = RIDE_CLUSTERED
                 ride_ids.append(request.id)
 
             virtual_stop_response = VirtualStopResponse.model_validate(virtual_stop)

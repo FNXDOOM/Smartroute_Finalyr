@@ -24,6 +24,7 @@ from utils.auth_utils import (
     hash_password,
     verify_password,
 )
+from utils.ride_states import VEHICLE_OFFLINE
 
 router = APIRouter()
 
@@ -151,7 +152,7 @@ def apply_for_driver(
         new_vehicle = Vehicle(
             license_plate=plate,
             capacity=apply_in.capacity or 4,
-            status="offline",
+            status=VEHICLE_OFFLINE,
             driver_user_id=current_user.id,
         )
         db.add(new_vehicle)

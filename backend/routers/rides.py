@@ -25,24 +25,38 @@ from schemas.ride_request import (
     RideRouteStop,
 )
 from schemas.tracking import VehicleSnapshot
-from services.carpool_run import (
-    close_carpool_run,
-    is_carpool_run,
-    riders_not_dropped_off,
-    route_rides,
+from services import route_plan_meta
+from services.carpool_lifecycle import (
+    CarpoolRefused,
+    CarpoolRun,
+    cancel_ride,
+    detach_ride,
+    route_plan_serving_ride,
+    settle_carpool_run,
 )
 from services.notifications import create_notification
 from services.routing.shared_route_builder import resolve_route_geometry
 from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.carpool_status import (
-    CARPOOL_CANCELLED,
-    CARPOOL_CLUSTERED,
-    CARPOOL_PASSENGER_CONFIRMED,
     CARPOOL_PENDING,
     set_carpool_stage,
     sync_carpool_from_status,
 )
 from utils.geo import haversine_meters, is_india_location
+from utils.ride_states import (
+    LIVE_ROUTE_STATUSES,
+    RIDE_ARRIVING,
+    RIDE_ASSIGNED,
+    RIDE_CANCELLED,
+    RIDE_COMPLETED,
+    RIDE_IN_PROGRESS,
+    RIDE_PENDING,
+    RIDE_READY_FOR_PICKUP,
+    RIDE_STATUSES,
+    ROUTE_SOLVED,
+    VEHICLE_ACTIVE,
+    VEHICLE_IDLE,
+)
 from services.clustering.h3_partitioner import get_h3_index
 from utils.ride_scope import (
     LIVE_MODE,
@@ -53,17 +67,14 @@ from utils.ride_scope import (
 
 router = APIRouter()
 
+
+def _carpool_http(refused: CarpoolRefused) -> HTTPException:
+    """Map a carpool refusal to the HTTP status the endpoint used to raise."""
+    return HTTPException(status_code=refused.status_code, detail=refused.detail)
+
+
 # Valid statuses
-VALID_RIDE_STATUSES = {
-    "pending",
-    "clustered",
-    "assigned",
-    "arriving",
-    "ready_for_pickup",
-    "in_progress",
-    "completed",
-    "cancelled",
-}
+VALID_RIDE_STATUSES = RIDE_STATUSES
 
 
 @router.post("/request", response_model=RideRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -93,7 +104,7 @@ def create_ride_request(
         pickup_lng=ride_in.pickup_lng,
         dest_lat=ride_in.dest_lat,
         dest_lng=ride_in.dest_lng,
-        status="pending",
+        status=RIDE_PENDING,
         mode=LIVE_MODE,
         is_shared=ride_in.is_shared,
         h3_index=h3_idx,
@@ -137,7 +148,7 @@ def create_batch_ride_requests(
             pickup_lng=item.pickup_lng,
             dest_lat=item.dest_lat,
             dest_lng=item.dest_lng,
-            status="pending",
+            status=RIDE_PENDING,
             mode=LIVE_MODE,
             is_shared=item.is_shared,
             h3_index=h3_idx,
@@ -244,7 +255,7 @@ def create_demo_clustered_riders(
             pickup_lng=p["plng"],
             dest_lat=p["dlat"],
             dest_lng=p["dlng"],
-            status="pending",
+            status=RIDE_PENDING,
             mode=PRESENTATION_DEMO_MODE,
             demo_run_id=demo_run_id,
             h3_index=h3_idx,
@@ -301,7 +312,7 @@ def create_demo_shared_batch(
             pickup_lng=item.pickup_lng,
             dest_lat=item.dest_lat,
             dest_lng=item.dest_lng,
-            status="pending",
+            status=RIDE_PENDING,
             mode=PRESENTATION_DEMO_MODE,
             is_shared=True,
             demo_run_id=batch_in.demo_run_id,
@@ -368,7 +379,7 @@ def reset_demo_run(
         vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
         if vehicle and vehicle.assigned_route_id == route_plan.route_id:
             vehicle.assigned_route_id = None
-            vehicle.status = "idle"
+            vehicle.status = VEHICLE_IDLE
 
     if route_plan_ids:
         db.query(TrackingEvent).filter(TrackingEvent.route_plan_id.in_(route_plan_ids)).delete(
@@ -481,7 +492,7 @@ def get_ride_vehicle(
         db.query(RouteWaypointRecord)
         .join(RoutePlan)
         .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id)
-        .filter(RoutePlan.status == "solved")
+        .filter(RoutePlan.status == ROUTE_SOLVED)
         .all()
     )
     match = next(
@@ -493,7 +504,7 @@ def get_ride_vehicle(
 
     route_plan = db.query(RoutePlan).filter(
         RoutePlan.id == match.route_plan_id,
-        RoutePlan.status == "solved",
+        RoutePlan.status == ROUTE_SOLVED,
     ).first()
     if not route_plan:
         return None
@@ -536,7 +547,7 @@ def get_ride_route(
         db.query(RouteWaypointRecord)
         .join(RoutePlan)
         .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id)
-        .filter(RoutePlan.status == "solved")
+        .filter(RoutePlan.status == ROUTE_SOLVED)
         .all()
     )
     pickup_waypoint = next(
@@ -548,7 +559,7 @@ def get_ride_route(
 
     route_plan = db.query(RoutePlan).filter(
         RoutePlan.id == pickup_waypoint.route_plan_id,
-        RoutePlan.status == "solved",
+        RoutePlan.status == ROUTE_SOLVED,
     ).first()
     if not route_plan:
         return None
@@ -601,7 +612,7 @@ def get_ride_route(
         route_id=route_plan.route_id,
         vehicle_id=route_plan.vehicle_id,
         provider=(route_geometry or {}).get("provider") or "unknown",
-        problem=str((route_plan.route_metadata or {}).get("problem") or "pdp"),
+        problem=route_plan_meta.problem(route_plan),
         geometry=(route_geometry or {}).get("geometry") or [],
         legs=legs,
         stops=[
@@ -628,110 +639,31 @@ def get_ride_route(
         my_leg_indices=my_leg_indices,
         total_distance_meters=float(route_plan.total_distance_meters or 0),
         estimated_duration_seconds=float(route_plan.estimated_duration_seconds or 0),
-        driver_accepted=bool((route_plan.route_metadata or {}).get("driver_accepted")),
-        route_status=str(route_plan.status or "solved"),
+        driver_accepted=route_plan_meta.is_driver_accepted(route_plan),
+        route_status=str(route_plan.status or ROUTE_SOLVED),
         carpool_status=ride.carpool_status,
     )
 
 
-def _detach_ride_from_route(db: Session, ride: RideRequest) -> None:
-    """Remove a passenger from persisted route assignments safely."""
-    if not ride.virtual_stop_id:
-        ride.cluster_id = None
-        return
+def _has_live_route(db: Session, ride: RideRequest) -> bool:
+    """Return whether this ride is on a live route (a run being served).
 
-    stop = db.query(VirtualStop).filter(VirtualStop.id == ride.virtual_stop_id).first()
-    pickup_waypoints = db.query(RouteWaypointRecord).filter(
-        RouteWaypointRecord.stop_id == ride.virtual_stop_id,
-    ).all()
-    route_plans = {}
-    for pickup_waypoint in pickup_waypoints:
-        route_plan = db.query(RoutePlan).filter(RoutePlan.id == pickup_waypoint.route_plan_id).first()
-        if not route_plan:
-            continue
-        route_plans[route_plan.id] = route_plan
-        for waypoint in route_plan.waypoints or []:
-            waypoint.passenger_ids = [
-                passenger_id
-                for passenger_id in (waypoint.passenger_ids or [])
-                if passenger_id != ride.id
-            ]
-
-    ride.virtual_stop_id = None
-    ride.cluster_id = None
-    if stop:
-        stop.passenger_count = max(0, int(stop.passenger_count or 0) - 1)
-
-    for route_plan in route_plans.values():
-        remaining = [
-            passenger_id
-            for waypoint in route_plan.waypoints or []
-            for passenger_id in (waypoint.passenger_ids or [])
-        ]
-        metadata = dict(route_plan.route_metadata or {})
-        metadata["assigned_dropoff_request_ids"] = [
-            passenger_id
-            for passenger_id in (metadata.get("assigned_dropoff_request_ids") or [])
-            if passenger_id != ride.id
-        ]
-        metadata["needs_reoptimization"] = bool(remaining)
-        route_plan.route_metadata = metadata
-        if remaining:
-            route_plan.status = "needs_reoptimization"
-            db.query(RideRequest).filter(
-                RideRequest.id.in_(set(remaining)),
-                RideRequest.status.in_(["assigned", "arriving"]),
-            ).update(
-                {
-                    RideRequest.status: "clustered",
-                    RideRequest.carpool_status: CARPOOL_CLUSTERED,
-                },
-                synchronize_session=False,
-            )
-        else:
-            route_plan.status = "cancelled"
-            vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
-            if vehicle and vehicle.assigned_route_id == route_plan.route_id:
-                vehicle.status = "idle"
-                vehicle.assigned_route_id = None
-
-
-def _has_solved_route(db: Session, ride: RideRequest) -> bool:
-    """Return whether this ride is part of a currently valid route plan."""
+    ``needs_reoptimization`` is still live: the driver keeps serving the riders
+    already on board, so a status write must not be treated as if the rider had
+    no route at all.
+    """
     if not ride.virtual_stop_id:
         return False
     candidates = db.query(RouteWaypointRecord).join(RoutePlan).filter(
         RouteWaypointRecord.stop_id == ride.virtual_stop_id,
-        RoutePlan.status == "solved",
+        RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
     ).all()
     return any(ride.id in (waypoint.passenger_ids or []) for waypoint in candidates)
 
 
 def _vehicle_serving_ride(db: Session, ride: RideRequest) -> Optional[Vehicle]:
-    """The vehicle whose live route carries this ride, or None if unrouted.
-
-    A run in ``needs_reoptimization`` is still being driven, so it counts as
-    live here; treating it as unassigned would let another driver write over the
-    driver who is currently serving the rider.
-    """
-    if not ride.virtual_stop_id:
-        return None
-    candidates = (
-        db.query(RouteWaypointRecord)
-        .join(RoutePlan)
-        .filter(
-            RouteWaypointRecord.stop_id == ride.virtual_stop_id,
-            RoutePlan.status.in_(("solved", "needs_reoptimization")),
-        )
-        .all()
-    )
-    match = next(
-        (waypoint for waypoint in candidates if ride.id in (waypoint.passenger_ids or [])),
-        None,
-    )
-    if not match:
-        return None
-    route_plan = db.query(RoutePlan).filter(RoutePlan.id == match.route_plan_id).first()
+    """The vehicle whose live route carries this ride, or None if unrouted."""
+    route_plan = route_plan_serving_ride(db, ride)
     if not route_plan:
         return None
     return db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
@@ -742,21 +674,16 @@ def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
     if not ride.is_shared or not ride.virtual_stop_id:
         return
     # autoflush is off, so flush the status change that triggered this call or
-    # the unfinished count below reads the previous state.
+    # the roster below reads the previous state.
     db.flush()
     route_plans = (
         db.query(RoutePlan)
         .join(RouteWaypointRecord, RouteWaypointRecord.route_plan_id == RoutePlan.id)
-        .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id, RoutePlan.status == "solved")
+        .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id, RoutePlan.status.in_(LIVE_ROUTE_STATUSES))
         .all()
     )
     for route_plan in route_plans:
-        if not is_carpool_run(route_plan):
-            continue
-        rides = route_rides(db, route_plan)
-        if not rides or riders_not_dropped_off(rides):
-            continue
-        close_carpool_run(db, route_plan, rides)
+        settle_carpool_run(db, route_plan)
 
 
 @router.get("/", response_model=List[RideRequestResponse])
@@ -829,7 +756,7 @@ def update_ride_request_status(
                 detail="Only the driver assigned to this ride can update its status",
             )
 
-    if ride.user_id == current_user.id and current_user.role == "passenger" and status_update.status != "cancelled":
+    if ride.user_id == current_user.id and current_user.role == "passenger" and status_update.status != RIDE_CANCELLED:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Passengers may only cancel their own ride requests",
@@ -844,8 +771,8 @@ def update_ride_request_status(
     if (
         current_user.role == "driver"
         and ride.is_shared
-        and status_update.status in {"assigned", "arriving", "in_progress", "completed"}
-        and not _has_solved_route(db, ride)
+        and status_update.status in {RIDE_ASSIGNED, RIDE_ARRIVING, RIDE_IN_PROGRESS, RIDE_COMPLETED}
+        and not _has_live_route(db, ride)
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -853,47 +780,42 @@ def update_ride_request_status(
         )
     if (
         current_user.role == "driver"
-        and status_update.status in {"arriving", "ready_for_pickup", "in_progress", "completed"}
+        and status_update.status in {RIDE_ARRIVING, RIDE_READY_FOR_PICKUP, RIDE_IN_PROGRESS, RIDE_COMPLETED}
         and ride.virtual_stop_id
     ):
         pickup_waypoint = db.query(RouteWaypointRecord).join(RoutePlan).filter(
             RouteWaypointRecord.stop_id == ride.virtual_stop_id,
-            RoutePlan.status == "solved",
+            RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
         ).first()
         route_plan = (
             db.query(RoutePlan).filter(RoutePlan.id == pickup_waypoint.route_plan_id).first()
             if pickup_waypoint else None
         )
-        if route_plan and not (route_plan.route_metadata or {}).get("driver_accepted", False):
+        if route_plan and not route_plan_meta.is_driver_accepted(route_plan):
             # Arrived/Start trip is itself an explicit driver acceptance from
             # the active-trip card. Keep the UI flow usable even when the
             # driver did not first open the navigation screen.
-            metadata = dict(route_plan.route_metadata or {})
-            metadata["driver_accepted"] = True
-            metadata["driver_accepted_at"] = datetime.now(timezone.utc).isoformat()
-            if metadata.get("carpool_run"):
-                metadata["carpool_run_status"] = "accepted"
-            route_plan.route_metadata = metadata
+            route_plan_meta.mark_driver_accepted(route_plan, datetime.now(timezone.utc).isoformat())
             vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
             if vehicle:
-                vehicle.status = "active"
-    if status_update.status == "cancelled":
-        _detach_ride_from_route(db, ride)
+                vehicle.status = VEHICLE_ACTIVE
+    if status_update.status == RIDE_CANCELLED:
+        detach_ride(db, ride)
     ride.status = status_update.status
     # Keep the fine carpool axis in step with a coarse status write.
     sync_carpool_from_status(ride)
-    if status_update.status == "completed":
+    if status_update.status == RIDE_COMPLETED:
         _finalize_carpool_route_if_complete(db, ride)
     if current_user.role in ("admin", "driver") and status_update.status in (
-        "assigned",
-        "arriving",
-        "ready_for_pickup",
-        "in_progress",
-        "completed",
+        RIDE_ASSIGNED,
+        RIDE_ARRIVING,
+        RIDE_READY_FOR_PICKUP,
+        RIDE_IN_PROGRESS,
+        RIDE_COMPLETED,
     ):
         # Manual drive: unlink pipeline so simulator skips it.
-        if not _has_solved_route(db, ride):
-            _detach_ride_from_route(db, ride)
+        if not _has_live_route(db, ride):
+            detach_ride(db, ride)
     create_notification(
         db,
         user_id=ride.user_id,
@@ -919,27 +841,16 @@ def confirm_passenger_pickup(
     ride = db.query(RideRequest).filter(RideRequest.id == ride_id).first()
     if not ride or ride.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ride request not found")
-    if not ride.is_shared or ride.status != "arriving":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This ride is not waiting at a carpool pickup stop")
-    set_carpool_stage(ride, CARPOOL_PASSENGER_CONFIRMED)
-    pickup_waypoint = db.query(RouteWaypointRecord).join(RoutePlan).filter(
-        RouteWaypointRecord.stop_id == ride.virtual_stop_id,
-        RoutePlan.status == "solved",
-    ).first()
-    route_plan = db.query(RoutePlan).filter(RoutePlan.id == pickup_waypoint.route_plan_id).first() if pickup_waypoint else None
-    if route_plan:
-        vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
-        if vehicle and vehicle.driver_user_id:
-            create_notification(
-                db,
-                user_id=vehicle.driver_user_id,
-                notification_type="carpool_passenger_ready",
-                title="Passenger is ready at the pickup stop",
-                message=f"Passenger for ride #{ride.id} has arrived at the assigned carpool pickup stop.",
-                related_entity_type="ride_request",
-                related_entity_id=ride.id,
-                metadata={"route_id": route_plan.route_id, "ride_id": ride.id},
-            )
+    if not ride.is_shared:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This ride is not waiting at a carpool pickup stop",
+        )
+    try:
+        run = CarpoolRun.for_ride(db, ride, current_user)
+        ride = run.passenger_ready(ride_id)
+    except CarpoolRefused as refused:
+        raise _carpool_http(refused) from refused
     db.commit()
     db.refresh(ride)
     return ride
@@ -965,17 +876,13 @@ def cancel_ride_request(
             detail="Not authorized to cancel this ride request",
         )
 
-    if ride.status in ["in_progress", "completed"]:
+    if ride.status in [RIDE_IN_PROGRESS, RIDE_COMPLETED]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot cancel a ride that is already {ride.status}",
         )
 
-    _detach_ride_from_route(db, ride)
-    if ride.is_shared:
-        set_carpool_stage(ride, CARPOOL_CANCELLED)
-    else:
-        ride.status = "cancelled"
+    cancel_ride(db, ride)
     create_notification(
         db,
         user_id=ride.user_id,
@@ -984,7 +891,7 @@ def cancel_ride_request(
         message=f"Your ride request #{ride.id} has been cancelled.",
         related_entity_type="ride_request",
         related_entity_id=ride.id,
-        metadata={"status": "cancelled"},
+        metadata={"status": RIDE_CANCELLED},
     )
     db.commit()
     return {"message": f"Ride request #{ride_id} has been cancelled successfully"}

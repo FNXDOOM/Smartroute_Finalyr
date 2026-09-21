@@ -6,6 +6,7 @@ import networkx as nx
 from services.stops.road_snapper import build_road_graph
 from services.stadia_client import matrix as stadia_matrix
 from utils.geo import haversine_meters as _haversine_meters
+from utils.ride_states import ROUTE_SOLVED
 
 
 # Stadia's matrix endpoint accepts at most 25 sources x 25 targets per call.
@@ -284,7 +285,7 @@ def solve_vrp(
     return {
         "routes": routes,
         "total_distance_m": total_distance,
-        "status": "solved",
+        "status": ROUTE_SOLVED,
     }
 
 
@@ -452,5 +453,5 @@ def solve_shared_ride_pdp(
     return {
         "routes": routes,
         "total_distance_m": total_distance,
-        "status": "solved",
+        "status": ROUTE_SOLVED,
     }

@@ -21,6 +21,7 @@ from config import STADIA_API_KEY
 from utils.auth_utils import get_current_user
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
+from utils.ride_states import VEHICLE_ACTIVE, VEHICLE_IDLE
 
 router = APIRouter()
 
@@ -54,7 +55,7 @@ def list_idle_vehicles(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can view fleet vehicles",
         )
-    query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == "idle")
+    query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == VEHICLE_IDLE)
     if current_user.role == "driver":
         query = query.filter(Vehicle.driver_user_id == current_user.id)
     return (
@@ -77,7 +78,7 @@ def assign_idle_vehicles_to_routes(
             detail="Only admin or driver users can assign vehicles",
         )
 
-    vehicle_query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == "idle")
+    vehicle_query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == VEHICLE_IDLE)
     if current_user.role == "driver":
         vehicle_query = vehicle_query.filter(Vehicle.driver_user_id == current_user.id)
     if payload.vehicle_ids:
@@ -144,7 +145,7 @@ def assign_idle_vehicles_to_routes(
         vehicle = vehicles[vehicle_idx]
         route = routes[route_idx]
         vehicle.assigned_route_id = route.route_id
-        vehicle.status = "active"
+        vehicle.status = VEHICLE_ACTIVE
         assignments.append(
             VehicleAssignmentItem(
                 vehicle_id=vehicle.id,
@@ -196,7 +197,7 @@ def create_vehicle(
         license_plate=payload.license_plate,
         capacity=payload.capacity,
         mode=LIVE_MODE,
-        status=payload.status or "idle",
+        status=payload.status or VEHICLE_IDLE,
         lat=payload.lat,
         lng=payload.lng,
     )

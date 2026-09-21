@@ -11,6 +11,17 @@ keeps working unchanged.
 
 from typing import Optional
 
+from utils.ride_states import (
+    RIDE_ARRIVING,
+    RIDE_ASSIGNED,
+    RIDE_CANCELLED,
+    RIDE_CLUSTERED,
+    RIDE_COMPLETED,
+    RIDE_IN_PROGRESS,
+    RIDE_PENDING,
+    RIDE_READY_FOR_PICKUP,
+)
+
 # -- Stages (wire values) ----------------------------------------------------
 CARPOOL_PENDING = "pending"
 CARPOOL_SEARCHING = "searching"
@@ -44,32 +55,32 @@ CARPOOL_STAGES = (
 
 # Fine stage -> coarse status. Every stage maps to exactly one coarse status.
 CARPOOL_TO_RIDE_STATUS = {
-    CARPOOL_PENDING: "pending",
-    CARPOOL_SEARCHING: "pending",
-    CARPOOL_CLUSTERED: "clustered",
-    CARPOOL_ASSIGNED: "assigned",
-    CARPOOL_DRIVER_ACCEPTED: "assigned",
-    CARPOOL_DRIVER_ARRIVING: "arriving",
-    CARPOOL_PICKUP_READY: "arriving",
-    CARPOOL_PASSENGER_CONFIRMED: "ready_for_pickup",
-    CARPOOL_BOARDED: "in_progress",
-    CARPOOL_IN_TRANSIT: "in_progress",
-    CARPOOL_DROPPED_OFF: "completed",
-    CARPOOL_COMPLETED: "completed",
-    CARPOOL_CANCELLED: "cancelled",
+    CARPOOL_PENDING: RIDE_PENDING,
+    CARPOOL_SEARCHING: RIDE_PENDING,
+    CARPOOL_CLUSTERED: RIDE_CLUSTERED,
+    CARPOOL_ASSIGNED: RIDE_ASSIGNED,
+    CARPOOL_DRIVER_ACCEPTED: RIDE_ASSIGNED,
+    CARPOOL_DRIVER_ARRIVING: RIDE_ARRIVING,
+    CARPOOL_PICKUP_READY: RIDE_ARRIVING,
+    CARPOOL_PASSENGER_CONFIRMED: RIDE_READY_FOR_PICKUP,
+    CARPOOL_BOARDED: RIDE_IN_PROGRESS,
+    CARPOOL_IN_TRANSIT: RIDE_IN_PROGRESS,
+    CARPOOL_DROPPED_OFF: RIDE_COMPLETED,
+    CARPOOL_COMPLETED: RIDE_COMPLETED,
+    CARPOOL_CANCELLED: RIDE_CANCELLED,
 }
 
 # Coarse status -> the stage a manual status write implies. Keeps a legacy
 # PATCH /rides/{id}/status from desyncing the two axes.
 RIDE_STATUS_TO_CARPOOL = {
-    "pending": CARPOOL_PENDING,
-    "clustered": CARPOOL_CLUSTERED,
-    "assigned": CARPOOL_ASSIGNED,
-    "arriving": CARPOOL_DRIVER_ARRIVING,
-    "ready_for_pickup": CARPOOL_PASSENGER_CONFIRMED,
-    "in_progress": CARPOOL_BOARDED,
-    "completed": CARPOOL_COMPLETED,
-    "cancelled": CARPOOL_CANCELLED,
+    RIDE_PENDING: CARPOOL_PENDING,
+    RIDE_CLUSTERED: CARPOOL_CLUSTERED,
+    RIDE_ASSIGNED: CARPOOL_ASSIGNED,
+    RIDE_ARRIVING: CARPOOL_DRIVER_ARRIVING,
+    RIDE_READY_FOR_PICKUP: CARPOOL_PASSENGER_CONFIRMED,
+    RIDE_IN_PROGRESS: CARPOOL_BOARDED,
+    RIDE_COMPLETED: CARPOOL_COMPLETED,
+    RIDE_CANCELLED: CARPOOL_CANCELLED,
 }
 
 

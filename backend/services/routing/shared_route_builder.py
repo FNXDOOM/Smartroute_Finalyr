@@ -27,11 +27,13 @@ from models.ride_request import RideRequest
 from models.route_plan import RoutePlan
 from models.route_waypoint import RouteWaypointRecord
 from models.vehicle import Vehicle
+from services import route_plan_meta
 from services.routing.vrp_solver import solve_shared_ride_pdp
 from services.stadia_client import extract_route_details, route_many
 from utils.carpool_status import CARPOOL_ASSIGNED, set_carpool_stage
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
+from utils.ride_states import RIDE_ASSIGNED, ROUTE_SOLVED, VEHICLE_ACTIVE
 
 
 # Valhalla accepts a bounded number of locations per routing request, so long
@@ -340,7 +342,7 @@ def build_shared_routes(
         vehicle_capacity=smallest_capacity,
         vehicle_capacities=capacities,
     )
-    if solution.get("status") != "solved":
+    if solution.get("status") != ROUTE_SOLVED:
         # A pickup-only route is not a valid passenger route: it has no
         # destination waypoint and would falsely mark riders as assigned.
         # Leave the shared pool clustered so a later run can split/retry it.
@@ -407,13 +409,13 @@ def persist_shared_route(
     route_id = f"route-{vehicle.id}-{uuid4().hex[:8]}"
     route_requests = db.query(RideRequest).filter(RideRequest.id.in_(built.ride_ids)).all()
     vehicle.assigned_route_id = route_id
-    vehicle.status = "active"
+    vehicle.status = VEHICLE_ACTIVE
 
     route_plan = RoutePlan(
         route_id=route_id,
         vehicle_id=vehicle.id,
         source_cluster_run_id=source_cluster_run_id,
-        status="solved",
+        status=ROUTE_SOLVED,
         mode=mode,
         demo_run_id=demo_run_id,
         depot_lat=built.depot_lat,
@@ -468,7 +470,7 @@ def persist_shared_route(
             if getattr(ride, "is_shared", False):
                 set_carpool_stage(ride, CARPOOL_ASSIGNED)
             else:
-                ride.status = "assigned"
+                ride.status = RIDE_ASSIGNED
         ride_ids.append(ride.id)
         passenger_user_ids.append(ride.user_id)
 
@@ -488,15 +490,14 @@ def resolve_route_geometry(db: Session, route_plan: RoutePlan) -> Optional[Dict]
     result and a failed attempt are cached on the plan, so a client polling
     every few seconds can never hammer the router.
     """
-    metadata = dict(route_plan.route_metadata or {})
-    geometry = metadata.get("geometry") or []
+    geometry = route_plan_meta.geometry(route_plan)
     if geometry:
         return {
             "geometry": geometry,
-            "legs": metadata.get("legs") or [],
-            "provider": metadata.get("routing_provider") or "unknown",
+            "legs": route_plan_meta.legs(route_plan),
+            "provider": route_plan_meta.routing_provider(route_plan),
         }
-    if metadata.get("geometry_resolved"):
+    if route_plan_meta.is_geometry_resolved(route_plan):
         return None
 
     waypoints = sorted(route_plan.waypoints or [], key=lambda waypoint: waypoint.sequence)
@@ -504,13 +505,15 @@ def resolve_route_geometry(db: Session, route_plan: RoutePlan) -> Optional[Dict]
         {"lat": float(waypoint.lat), "lng": float(waypoint.lng)} for waypoint in waypoints
     ])
 
-    metadata["geometry_resolved"] = True
+    route_plan_meta.record_geometry_resolved(route_plan)
     if details and details.get("geometry"):
-        metadata["geometry"] = details["geometry"]
-        metadata["legs"] = details.get("legs") or []
-        metadata["maneuvers"] = details.get("maneuvers") or []
-        metadata["routing_provider"] = "stadia"
-    route_plan.route_metadata = metadata
+        route_plan_meta.record_geometry(
+            route_plan,
+            geometry=details["geometry"],
+            legs=details.get("legs") or [],
+            maneuvers=details.get("maneuvers") or [],
+            provider="stadia",
+        )
     db.commit()
 
     if not details or not details.get("geometry"):

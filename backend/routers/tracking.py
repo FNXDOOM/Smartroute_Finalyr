@@ -20,11 +20,13 @@ from schemas.tracking import (
     VehicleSnapshot,
     VehicleTelemetryUpdate,
 )
+from services import route_plan_meta
 from services.notifications import create_notification, create_notifications_for_users
 from services.stadia_client import extract_route_details, map_match
 from utils.auth_utils import get_current_user, get_user_from_token, get_websocket_token
 from config import ALLOWED_ORIGINS
 from utils.ride_scope import LIVE_MODE
+from utils.ride_states import RIDE_IN_PIPELINE_STATUSES
 
 router = APIRouter()
 
@@ -120,7 +122,7 @@ def _visible_tracking_ids(db: Session, entry: TrackingConnection) -> tuple[set[i
     rides = db.query(RideRequest).filter(
         RideRequest.user_id == entry.user_id,
         RideRequest.mode == LIVE_MODE,
-        RideRequest.status.in_(["pending", "clustered", "assigned", "arriving", "in_progress"]),
+        RideRequest.status.in_(RIDE_IN_PIPELINE_STATUSES),
     ).all()
     ride_ids = {ride.id for ride in rides}
     if not ride_ids:
@@ -319,8 +321,8 @@ async def update_vehicle_location(
     passenger_user_ids = []
     if vehicle.assigned_route_id:
         route_plan = db.query(RoutePlan).filter(RoutePlan.route_id == vehicle.assigned_route_id).first()
-        if route_plan and route_plan.route_metadata and isinstance(route_plan.route_metadata, dict):
-            assigned_stop_ids = route_plan.route_metadata.get("assigned_stop_ids", []) or []
+        if route_plan:
+            assigned_stop_ids = route_plan_meta.assigned_stop_ids(route_plan)
             if assigned_stop_ids:
                 virtual_stops = db.query(VirtualStop).filter(VirtualStop.id.in_(assigned_stop_ids)).all()
                 for virtual_stop in virtual_stops:

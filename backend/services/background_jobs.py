@@ -32,6 +32,8 @@ from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
 from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
 from services.notifications import create_notification, create_notifications_for_users
+from services import route_plan_meta
+from services.carpool_lifecycle import run_is_open_to_riders
 from utils.carpool_status import (
     CARPOOL_CLUSTERED,
     CARPOOL_SEARCHING,
@@ -39,6 +41,22 @@ from utils.carpool_status import (
 )
 from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE, apply_ride_scope, validate_ride_mode
+from utils.ride_states import (
+    RIDE_ARRIVING,
+    RIDE_ASSIGNED,
+    RIDE_BOUND_STATUSES,
+    RIDE_CLUSTERED,
+    RIDE_COMPLETED,
+    RIDE_IN_PROGRESS,
+    RIDE_PENDING,
+    RIDE_SERVING_STATUSES,
+    ROUTE_CANCELLED,
+    ROUTE_SOLVED,
+    ROUTE_SUPERSEDED,
+    VEHICLE_IDLE,
+    is_terminal_ride,
+    vehicle_is_dispatchable,
+)
 
 CLUSTER_INTERVAL_SECONDS = 60
 AUTO_DISPATCH_INTERVAL_SECONDS = 60
@@ -237,22 +255,21 @@ def _try_attach_to_existing_carpool_route(
     """
     plans_query = db.query(RoutePlan).filter(
         RoutePlan.mode == mode,
-        RoutePlan.status == "solved",
+        RoutePlan.status == ROUTE_SOLVED,
     )
     if mode == PRESENTATION_DEMO_MODE:
         plans_query = plans_query.filter(RoutePlan.demo_run_id == demo_run_id)
 
     for route_plan in plans_query.order_by(RoutePlan.created_at.desc()).all():
-        if str((route_plan.route_metadata or {}).get("problem") or "pdp") != "pdp":
+        if route_plan_meta.problem(route_plan) != "pdp":
             continue
-        metadata = route_plan.route_metadata or {}
         # A rider may join a route only before the driver has accepted (or
         # started/finished) it. Once accepted, the rider must wait for another
         # compatible route rather than silently changing a live itinerary.
-        if metadata.get("driver_accepted") or metadata.get("carpool_run_status") in {"accepted", "completed"}:
+        if not run_is_open_to_riders(route_plan):
             continue
         vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
-        if not vehicle or vehicle.status not in {"active", "en_route", "idle"}:
+        if not vehicle or not vehicle_is_dispatchable(vehicle.status):
             continue
         capacity = min(MAX_CARPOOL_PASSENGERS, max(1, int(vehicle.capacity or 1)))
         passenger_ids = sorted({
@@ -265,7 +282,7 @@ def _try_attach_to_existing_carpool_route(
 
         active_requests = db.query(RideRequest).filter(
             RideRequest.id.in_(passenger_ids),
-            RideRequest.status.in_(["assigned", "arriving"]),
+            RideRequest.status.in_(RIDE_BOUND_STATUSES),
         ).all()
         if len(active_requests) != len(passenger_ids):
             # Do not rewrite a route that has already started or contains stale
@@ -356,7 +373,7 @@ def _try_attach_to_existing_carpool_route(
             virtual_stops=stops,
             depot_lat=route_plan.depot_lat,
             depot_lng=route_plan.depot_lng,
-            request_statuses=("clustered", "assigned", "arriving"),
+            request_statuses=(RIDE_CLUSTERED, RIDE_ASSIGNED, RIDE_ARRIVING),
             enrich=True,
         )
         if not rebuilt or not rebuilt[0].ride_ids or request.id not in rebuilt[0].ride_ids:
@@ -370,7 +387,7 @@ def _try_attach_to_existing_carpool_route(
                 stop.passenger_count = max(0, int(stop.passenger_count or 0) - 1)
             continue
 
-        route_plan.status = "superseded"
+        route_plan.status = ROUTE_SUPERSEDED
         persisted = persist_shared_route(
             db,
             rebuilt[0],
@@ -379,7 +396,7 @@ def _try_attach_to_existing_carpool_route(
             created_by_user_id=None,
             source_cluster_run_id=route_plan.source_cluster_run_id,
             demo_run_id=demo_run_id,
-            assign_statuses=("clustered", "assigned", "arriving"),
+            assign_statuses=(RIDE_CLUSTERED, RIDE_ASSIGNED, RIDE_ARRIVING),
         )
         create_notification(
             db,
@@ -489,7 +506,7 @@ def _create_clustered_stop(
         if getattr(request, "is_shared", False):
             set_carpool_stage(request, CARPOOL_CLUSTERED)
         else:
-            request.status = "clustered"
+            request.status = RIDE_CLUSTERED
         ride_ids.append(request.id)
 
     return {
@@ -558,7 +575,7 @@ def run_cluster_job(
     try:
         requests = (
             ride_query
-            .filter(RideRequest.status == "pending")
+            .filter(RideRequest.status == RIDE_PENDING)
             .order_by(RideRequest.request_time.asc())
             .all()
         )
@@ -846,7 +863,7 @@ def run_vehicle_rebalance_job(
     try:
         idle_vehicles = db.query(Vehicle).filter(
             Vehicle.mode == LIVE_MODE,
-            Vehicle.status == "idle",
+            Vehicle.status == VEHICLE_IDLE,
         ).order_by(Vehicle.id.asc()).all()
         if not idle_vehicles:
             _finish_job_run(
@@ -977,7 +994,7 @@ def run_auto_dispatch_pipeline(
                 .join(User, User.id == Vehicle.driver_user_id)
                 .filter(
                     RoutePlan.mode == LIVE_MODE,
-                    RoutePlan.status == "solved",
+                    RoutePlan.status == ROUTE_SOLVED,
                     (
                         User.driver_last_seen_at.is_(None)
                         | (User.driver_last_seen_at < presence_cutoff)
@@ -987,7 +1004,7 @@ def run_auto_dispatch_pipeline(
             )
             stale_routes = [
                 route for route in stale_routes
-                if not (route.route_metadata or {}).get("driver_accepted", False)
+                if not route_plan_meta.is_driver_accepted(route)
             ]
             for stale_route in stale_routes:
                 ride_ids = {
@@ -996,11 +1013,11 @@ def run_auto_dispatch_pipeline(
                     for ride_id in (waypoint.passenger_ids or [])
                 }
                 for ride in db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).all() if ride_ids else []:
-                    if ride.status not in {"completed", "cancelled"}:
+                    if not is_terminal_ride(ride.status):
                         if ride.is_shared:
                             set_carpool_stage(ride, CARPOOL_CLUSTERED)
                         else:
-                            ride.status = "clustered"
+                            ride.status = RIDE_CLUSTERED
                         if ride.user_id:
                             create_notification(
                                 db,
@@ -1012,14 +1029,12 @@ def run_auto_dispatch_pipeline(
                                 related_entity_id=ride.id,
                                 metadata={"previous_route_id": stale_route.route_id},
                             )
-                stale_route.status = "cancelled"
-                metadata = dict(stale_route.route_metadata or {})
-                metadata["cancelled_reason"] = "driver_offline_before_acceptance"
-                stale_route.route_metadata = metadata
+                stale_route.status = ROUTE_CANCELLED
+                route_plan_meta.mark_cancelled(stale_route, "driver_offline_before_acceptance")
                 vehicle = stale_route.vehicle
                 if vehicle and vehicle.assigned_route_id == stale_route.route_id:
                     vehicle.assigned_route_id = None
-                    vehicle.status = "idle"
+                    vehicle.status = VEHICLE_IDLE
 
         # Step 1: cluster pending requests
         cluster_res = run_cluster_job(
@@ -1034,7 +1049,7 @@ def run_auto_dispatch_pipeline(
         clustered_rides = apply_ride_scope(
             db.query(RideRequest), mode, demo_run_id
         ).filter(
-            RideRequest.status == "clustered",
+            RideRequest.status == RIDE_CLUSTERED,
             RideRequest.virtual_stop_id.isnot(None),
         ).all()
 
@@ -1073,13 +1088,13 @@ def run_auto_dispatch_pipeline(
                     license_plate="DEMO-PRESENTATION-01",
                     capacity=4,
                     mode=PRESENTATION_DEMO_MODE,
-                    status="idle",
+                    status=VEHICLE_IDLE,
                     lat=depot_lat,
                     lng=depot_lng,
                 )
                 db.add(demo_vehicle)
                 db.flush()
-            demo_vehicle.status = "idle"
+            demo_vehicle.status = VEHICLE_IDLE
             demo_vehicle.assigned_route_id = None
             vehicle_scope = vehicle_scope.filter(Vehicle.id == demo_vehicle.id)
         else:
@@ -1095,7 +1110,7 @@ def run_auto_dispatch_pipeline(
                 User.driver_last_seen_at >= presence_cutoff,
             )
         idle_vehicles = vehicle_scope.filter(
-            (Vehicle.status == "idle") | (Vehicle.assigned_route_id.is_(None))
+            (Vehicle.status == VEHICLE_IDLE) | (Vehicle.assigned_route_id.is_(None))
         ).order_by(Vehicle.id.asc()).all()
 
         if not idle_vehicles or not virtual_stops:
@@ -1118,7 +1133,7 @@ def run_auto_dispatch_pipeline(
             virtual_stops=virtual_stops,
             depot_lat=depot_lat,
             depot_lng=depot_lng,
-            request_statuses=("clustered",),
+            request_statuses=(RIDE_CLUSTERED,),
         )
 
         routes_count = 0
@@ -1136,7 +1151,7 @@ def run_auto_dispatch_pipeline(
                 created_by_user_id=triggered_by_user_id,
                 source_cluster_run_id=cluster_res.get("cluster_run_id"),
                 demo_run_id=demo_run_id,
-                assign_statuses=("clustered",),
+                assign_statuses=(RIDE_CLUSTERED,),
             )
             assigned_rides_count += len(persisted.ride_ids)
 
@@ -1167,7 +1182,7 @@ def run_auto_dispatch_pipeline(
                     metadata={
                         "route_id": persisted.route_id,
                         "vehicle_id": actual_vehicle.id,
-                        "carpool_run": bool((persisted.route_plan.route_metadata or {}).get("carpool_run")),
+                        "carpool_run": route_plan_meta.is_carpool(persisted.route_plan),
                     },
                 )
             routes_count += 1
@@ -1197,14 +1212,14 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
     job_run = _start_job_run(db, "simulate_ride_dispatch", None, is_scheduled)
     try:
         active_rides = db.query(RideRequest).filter(
-            RideRequest.status.in_(["assigned", "arriving", "in_progress"]),
+            RideRequest.status.in_(RIDE_SERVING_STATUSES),
             RideRequest.virtual_stop_id.isnot(None),
         ).all()
 
         transitions = {
-            "assigned": "arriving",
-            "arriving": "in_progress",
-            "in_progress": "completed",
+            RIDE_ASSIGNED: RIDE_ARRIVING,
+            RIDE_ARRIVING: RIDE_IN_PROGRESS,
+            RIDE_IN_PROGRESS: RIDE_COMPLETED,
         }
 
         updates_count = 0
@@ -1224,9 +1239,9 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
             if waypoint:
                 route_plan = db.query(RoutePlan).filter(
                     RoutePlan.id == waypoint.route_plan_id,
-                    RoutePlan.status == "solved",
+                    RoutePlan.status == ROUTE_SOLVED,
                 ).first()
-            if not route_plan or not (route_plan.route_metadata or {}).get("driver_accepted", False):
+            if not route_plan or not route_plan_meta.is_driver_accepted(route_plan):
                 continue
 
             old_status = ride.status
@@ -1247,17 +1262,17 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
                 updates_count += 1
 
                 # If done, free vehicle if idle
-                if new_status == "completed" and ride.virtual_stop_id:
+                if new_status == RIDE_COMPLETED and ride.virtual_stop_id:
                     if waypoint:
                         if route_plan and route_plan.vehicle_id:
                             veh = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
                             if veh:
                                 other_active = db.query(RideRequest).filter(
-                                    RideRequest.status.in_(["assigned", "arriving", "in_progress"]),
+                                    RideRequest.status.in_(RIDE_SERVING_STATUSES),
                                     RideRequest.virtual_stop_id == ride.virtual_stop_id,
                                 ).count()
                                 if other_active == 0:
-                                    veh.status = "idle"
+                                    veh.status = VEHICLE_IDLE
                                     veh.assigned_route_id = None
 
         _finish_job_run(

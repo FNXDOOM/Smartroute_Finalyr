@@ -15,9 +15,11 @@ from models.vehicle import Vehicle
 from models.ride_request import RideRequest
 from models.virtual_stop import VirtualStop
 from schemas.analytics import AnalyticsDailyPoint, AnalyticsDailyResponse, AnalyticsOverviewResponse
+from services import route_plan_meta
 from utils.auth_utils import get_current_user
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
+from utils.ride_states import RIDE_CANCELLED, RIDE_CLUSTERED, RIDE_COMPLETED, VEHICLE_IDLE
 
 router = APIRouter()
 
@@ -33,9 +35,7 @@ def _require_admin_or_driver(current_user: User) -> None:
 
 def _route_passenger_count(route: RoutePlan, stops_by_id: Dict[int, VirtualStop]) -> int:
     """Return the passenger count recorded in route metadata."""
-    assigned_stop_ids = []
-    if route.route_metadata and isinstance(route.route_metadata, dict):
-        assigned_stop_ids = route.route_metadata.get("assigned_stop_ids", []) or []
+    assigned_stop_ids = route_plan_meta.assigned_stop_ids(route)
     total = 0
     for stop_id in assigned_stop_ids:
         stop = stops_by_id.get(stop_id)
@@ -79,7 +79,7 @@ def get_analytics_overview(
     idle_vehicles = 0
     active_vehicles = 0
     for vst, cnt in vehicle_status_rows:
-        if vst == "idle":
+        if vst == VEHICLE_IDLE:
             idle_vehicles = cnt
         else:
             active_vehicles += cnt
@@ -114,16 +114,15 @@ def get_analytics_overview(
         avg_trip_distance_meters = round(total_dist / len(ride_sample), 2)
 
     # Route utilisation
-    route_meta_rows = (
-        db.query(RoutePlan.route_metadata)
+    route_rows = (
+        db.query(RoutePlan)
         .filter(RoutePlan.mode == LIVE_MODE)
         .limit(500)
     )
     total_passengers_assigned = 0
     all_stop_ids: List[int] = []
-    for (meta,) in route_meta_rows:
-        if meta and isinstance(meta, dict):
-            all_stop_ids.extend(meta.get("assigned_stop_ids", []) or [])
+    for route in route_rows:
+        all_stop_ids.extend(route_plan_meta.assigned_stop_ids(route))
 
     if all_stop_ids:
         stop_passenger_rows = (
@@ -212,11 +211,11 @@ def get_analytics_daily(
         if not point:
             continue
         point.ride_requests += 1
-        if ride.status == "clustered":
-            point.clustered_rides += 1
-        elif ride.status == "completed":
-            point.completed_rides += 1
-        elif ride.status == "cancelled":
+        if ride.status == RIDE_CLUSTERED:
+            clustered += 1
+        elif ride.status == RIDE_COMPLETED:
+            completed += 1
+        elif ride.status == RIDE_CANCELLED:
             point.cancelled_rides += 1
 
     for route in route_plans:
