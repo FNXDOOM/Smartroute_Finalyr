@@ -26,6 +26,7 @@ from services.stops.virtual_stop_generator import generate_virtual_stops
 from utils.auth_utils import get_current_driver_user
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_CLUSTERED, RIDE_PENDING
+from utils.carpool_status import CARPOOL_CLUSTERED, set_carpool_stage
 
 router = APIRouter()
 
@@ -125,7 +126,13 @@ def run_clustering(
             for request in members:
                 request.cluster_id = next_cluster_id
                 request.virtual_stop_id = virtual_stop.id
-                request.status = RIDE_CLUSTERED
+                # Keep the fine carpool stage in lockstep with the coarse status:
+                # this endpoint writes status directly, so a shared ride clustered
+                # here would otherwise keep carpool_status NULL forever.
+                if getattr(request, "is_shared", False):
+                    set_carpool_stage(request, CARPOOL_CLUSTERED)
+                else:
+                    request.status = RIDE_CLUSTERED
                 ride_ids.append(request.id)
 
             virtual_stop_response = VirtualStopResponse.model_validate(virtual_stop)

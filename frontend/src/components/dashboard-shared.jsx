@@ -11,7 +11,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 export const STATUS_STYLES = {
   pending: 'border-[#E2E2E2] bg-[#F6F6F6] text-[#333333] dark:border-[#333333] dark:bg-[#2A2A2A] dark:text-[#E2E2E2]',
   clustered: 'border-[#E2E2E2] bg-[#F6F6F6] text-[#333333] dark:border-[#333333] dark:bg-[#2A2A2A] dark:text-[#E2E2E2]',
-  clustered_status: 'border-[#E2E2E2] bg-[#F6F6F6] text-[#333333] dark:border-[#333333] dark:bg-[#2A2A2A] dark:text-[#E2E2E2]',
   assigned: 'border-transparent bg-black text-white dark:border-transparent dark:bg-white dark:text-black',
   arriving: 'border-transparent bg-black text-white dark:border-transparent dark:bg-white dark:text-black',
   ready_for_pickup: 'border-[#276EF1]/25 bg-[#276EF1]/10 text-[#276EF1]',

@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from database import SessionLocal
 from models.user import User
 from models.ride_request import RideRequest
+from models.virtual_stop import VirtualStop
 from services.background_jobs import run_cluster_job
 from services.carpool_matching import (
     find_cross_cell_corridor_groups,
@@ -176,6 +177,51 @@ def test_corridor_matched_riders_share_one_cluster():
     finally:
         if user_id is not None:
             db.query(RideRequest).filter(RideRequest.user_id == user_id).delete()
+            db.commit()
+        db.close()
+
+
+def test_manual_cluster_run_keeps_the_carpool_stage_in_step():
+    """POST /cluster/run wrote `status` by hand, so a shared ride clustered
+    through it was left with carpool_status NULL forever — the two axes only
+    stay in lockstep if every writer advances both."""
+    from routers.cluster import run_clustering
+    from schemas.cluster import ClusterTriggerRequest
+
+    db = SessionLocal()
+    user_id = None
+    stop_ids = []
+    try:
+        user = _user(db)
+        user_id = user.id
+        db.query(RideRequest).filter(RideRequest.user_id == user_id).delete()
+        db.commit()
+
+        riders = [
+            _ride(db, user, 12.97250, 77.64200, True),
+            _ride(db, user, 12.97252, 77.64202, True),
+        ]
+        db.commit()
+
+        run_clustering(
+            ClusterTriggerRequest(resolution=9, min_cluster_size=2), db=db, current_user=user, h3_index=None
+        )
+
+        for ride in riders:
+            db.refresh(ride)
+            assert ride.status == "clustered", "ride %s was not clustered" % ride.id
+            assert ride.carpool_status == "clustered", (
+                "ride %s advanced its coarse status but not its carpool stage" % ride.id
+            )
+            stop_ids.append(ride.virtual_stop_id)
+    finally:
+        if user_id is not None:
+            db.query(RideRequest).filter(RideRequest.user_id == user_id).delete()
+            db.commit()
+        if stop_ids:
+            db.query(VirtualStop).filter(VirtualStop.id.in_([s for s in stop_ids if s])).delete(
+                synchronize_session=False
+            )
             db.commit()
         db.close()
 

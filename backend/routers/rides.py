@@ -77,8 +77,6 @@ def _carpool_http(refused: CarpoolRefused) -> HTTPException:
     return HTTPException(status_code=refused.status_code, detail=refused.detail)
 
 
-# Valid statuses
-VALID_RIDE_STATUSES = RIDE_STATUSES
 
 
 @router.post("/request", response_model=RideRequestResponse, status_code=status.HTTP_201_CREATED)
@@ -708,10 +706,10 @@ def list_ride_requests(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     if ride_status:
-        if ride_status not in VALID_RIDE_STATUSES:
+        if ride_status not in RIDE_STATUSES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_RIDE_STATUSES))}",
+                detail=f"Invalid status. Must be one of: {', '.join(sorted(RIDE_STATUSES))}",
             )
         query = query.filter(RideRequest.status == ride_status)
     if h3_index:
@@ -762,10 +760,10 @@ def update_ride_request_status(
         )
 
     old_status = ride.status
-    if status_update.status not in VALID_RIDE_STATUSES:
+    if status_update.status not in RIDE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status. Must be one of: {', '.join(sorted(VALID_RIDE_STATUSES))}",
+            detail=f"Invalid status. Must be one of: {', '.join(sorted(RIDE_STATUSES))}",
         )
     if (
         current_user.role == "driver"
