@@ -18,7 +18,7 @@ from schemas.vehicle import (
 from services.assignment.hungarian_assigner import assign_vehicles
 from services.routing.vrp_solver import build_road_distance_to_targets, build_stadia_distance_matrix
 from config import STADIA_API_KEY
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_driver_user, get_current_user
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import VEHICLE_ACTIVE, VEHICLE_IDLE
@@ -29,14 +29,9 @@ router = APIRouter()
 @router.get("/", response_model=List[VehicleResponse])
 def list_vehicles(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Return vehicles visible to the current user."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view fleet vehicles",
-        )
     query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE)
     if current_user.role == "driver":
         query = query.filter(Vehicle.driver_user_id == current_user.id)
@@ -47,14 +42,9 @@ def list_vehicles(
 @router.get("/idle", response_model=List[VehicleResponse])
 def list_idle_vehicles(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Return active vehicles that are available for assignment."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view fleet vehicles",
-        )
     query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == VEHICLE_IDLE)
     if current_user.role == "driver":
         query = query.filter(Vehicle.driver_user_id == current_user.id)
@@ -69,14 +59,9 @@ def list_idle_vehicles(
 def assign_idle_vehicles_to_routes(
     payload: VehicleAssignmentRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Assign idle vehicles to routes."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can assign vehicles",
-        )
 
     vehicle_query = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE, Vehicle.status == VEHICLE_IDLE)
     if current_user.role == "driver":
@@ -212,19 +197,9 @@ def update_vehicle(
     vehicle_id: int,
     payload: VehicleUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Update a vehicle record."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can update vehicles",
-        )
-    if current_user.role == "driver" and getattr(current_user, "driver_status", "active") != "active":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Driver account is pending verification or inactive",
-        )
 
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:

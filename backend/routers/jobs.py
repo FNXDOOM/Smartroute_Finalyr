@@ -21,24 +21,28 @@ from services.background_jobs import (
     run_demand_refresh_job,
     run_vehicle_rebalance_job,
 )
-from utils.auth_utils import get_current_user
+from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE, validate_ride_mode
 
 router = APIRouter()
 
 
 def _require_admin_or_driver(current_user: User) -> None:
-    """Require the current user to be an administrator or driver."""
+    """Require the current user to be an administrator or active driver."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can access job controls",
         )
+    ensure_active_driver(current_user)
 
 
 def _require_job_access(current_user: User, mode: str) -> None:
     """Restrict live controls; allow demo playback."""
-    if current_user.role in {"admin", "driver"} or mode == PRESENTATION_DEMO_MODE:
+    if current_user.role in {"admin", "driver"}:
+        ensure_active_driver(current_user)
+        return
+    if mode == PRESENTATION_DEMO_MODE:
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

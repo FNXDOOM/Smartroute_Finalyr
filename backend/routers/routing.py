@@ -9,7 +9,7 @@ from services.stadia_client import (
     nearest_roads,
     route,
 )
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_driver_user, get_current_user
 from utils.geo import is_india_location
 
 router = APIRouter()
@@ -94,11 +94,9 @@ def match_trace(
 @router.post("/matrix")
 def route_matrix(
     payload: dict,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Return a travel-cost matrix for source and target locations."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only admin or driver users can request a route matrix")
     sources = payload.get("sources") or []
     targets = payload.get("targets") or []
     if not 1 <= len(sources) <= 25 or not 1 <= len(targets) <= 25:

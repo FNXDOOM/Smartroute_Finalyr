@@ -23,7 +23,7 @@ from services.clustering.h3_partitioner import get_h3_index, partition_requests
 from services.clustering.hdbscan_clusterer import cluster_passengers, get_cluster_groups
 from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
-from utils.auth_utils import get_current_user
+from utils.auth_utils import get_current_driver_user
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_CLUSTERED, RIDE_PENDING
 
@@ -45,15 +45,10 @@ def _cluster_centroid(requests: List[RideRequest]) -> tuple[float, float]:
 def run_clustering(
     payload: ClusterTriggerRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
     h3_index: Optional[str] = Query(None, description="Optional H3 index filter"),
 ):
     """Cluster unassigned ride requests and persist the result."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can trigger clustering",
-        )
 
     # Live only; exclude demo rides.
     query = db.query(RideRequest).filter(
@@ -187,14 +182,9 @@ def run_clustering(
 def list_cluster_runs(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Return recent clustering runs visible to the current user."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view cluster history",
-        )
 
     runs = (
         db.query(ClusterRun)
@@ -210,14 +200,9 @@ def list_cluster_runs(
 def get_cluster_run(
     run_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Return one clustering run after applying access controls."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view cluster history",
-        )
 
     cluster_run = db.query(ClusterRun).filter(
         ClusterRun.id == run_id,

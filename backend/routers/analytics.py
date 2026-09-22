@@ -16,7 +16,7 @@ from models.ride_request import RideRequest
 from models.virtual_stop import VirtualStop
 from schemas.analytics import AnalyticsDailyPoint, AnalyticsDailyResponse, AnalyticsOverviewResponse
 from services import route_plan_meta
-from utils.auth_utils import get_current_user
+from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_CANCELLED, RIDE_CLUSTERED, RIDE_COMPLETED, VEHICLE_IDLE
@@ -30,6 +30,7 @@ def _require_admin_or_driver(current_user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can view analytics",
         )
+    ensure_active_driver(current_user)
 
 @router.get("/overview", response_model=AnalyticsOverviewResponse)
 def get_analytics_overview(

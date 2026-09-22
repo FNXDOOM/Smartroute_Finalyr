@@ -36,7 +36,11 @@ from services.carpool_lifecycle import (
 )
 from services.notifications import create_notification
 from services.routing.shared_route_builder import resolve_route_geometry
-from utils.auth_utils import ensure_active_driver, get_current_user
+from utils.auth_utils import (
+    ensure_active_driver,
+    get_current_driver_user,
+    get_current_user,
+)
 from utils.carpool_status import (
     CARPOOL_PENDING,
     set_carpool_stage,
@@ -695,14 +699,9 @@ def list_ride_requests(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """List rides. Admin/driver only."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can list all ride requests",
-        )
     try:
         mode = validate_ride_mode(mode)
         query = apply_ride_scope(db.query(RideRequest), mode, demo_run_id)

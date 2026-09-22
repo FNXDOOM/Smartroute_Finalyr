@@ -24,7 +24,7 @@ from services import route_plan_meta
 from services.notifications import create_notification, create_notifications_for_users
 from services.websocket_hub import accept_connection, fan_out
 from services.stadia_client import extract_route_details, map_match
-from utils.auth_utils import get_current_user, get_user_from_token, get_websocket_token
+from utils.auth_utils import get_current_driver_user, get_user_from_token, get_websocket_token
 from config import ALLOWED_ORIGINS
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_IN_PIPELINE_STATUSES
@@ -203,14 +203,9 @@ def start_simulation():
 def get_tracking_feed(
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Return the latest vehicle locations and tracking events."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view tracking data",
-        )
 
     if current_user.role == "admin":
         vehicles, events = _get_snapshot(db, limit=limit)
@@ -225,14 +220,9 @@ def get_tracking_feed(
 def list_tracking_events(
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Return recent tracking events for a vehicle."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view tracking events",
-        )
 
     if current_user.role == "admin":
         events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit).all()
@@ -247,14 +237,9 @@ async def update_vehicle_location(
     vehicle_id: int,
     payload: VehicleTelemetryUpdate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_driver_user),
 ):
     """Update vehicle GPS location and broadcast to WebSocket subscribers."""
-    if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can update vehicle telemetry",
-        )
 
     vehicle = db.query(Vehicle).filter(Vehicle.id == vehicle_id).first()
     if not vehicle:

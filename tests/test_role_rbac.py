@@ -145,6 +145,65 @@ def test_suspended_driver_is_blocked_even_on_a_mixed_allowlist():
     assert admin_guard(admin) == admin
 
 
+def _get_as(user, path):
+    """Issue one ASGI request with `user` substituted for the auth dependency."""
+    import asyncio
+
+    import httpx
+
+    from main import app
+    from utils.auth_utils import get_current_user
+
+    async def run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get(path)
+
+    previous = app.dependency_overrides.get(get_current_user)
+    app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        return asyncio.run(run())
+    finally:
+        # A leaked override would silently disable auth for every later test.
+        if previous is None:
+            app.dependency_overrides.pop(get_current_user, None)
+        else:
+            app.dependency_overrides[get_current_user] = previous
+
+
+def test_suspended_driver_is_refused_by_the_converted_endpoints():
+    """The gate must actually be wired, not merely available.
+
+    These routers used to re-check `role` by hand and never consult
+    `driver_status`, so suspending a driver changed nothing. They now depend on
+    require_roles(), so this asserts the dependency graph end to end rather than
+    calling the helper directly.
+    """
+    suspended = User(
+        id=801,
+        name="Suspended Sam",
+        email="suspended801@example.com",
+        password_hash="test_hash",
+        role="driver",
+        driver_status="suspended",
+    )
+    active = User(
+        id=802,
+        name="Active Amy",
+        email="active802@example.com",
+        password_hash="test_hash",
+        role="driver",
+        driver_status="active",
+    )
+
+    for path in ("/cluster/history", "/vehicle/", "/tracking/feed"):
+        response = _get_as(suspended, path)
+        assert response.status_code == 403, "%s admitted a suspended driver (%s)" % (path, response.status_code)
+        assert "pending verification" in response.json()["detail"]
+
+    assert _get_as(active, "/cluster/history").status_code == 200, "an active driver must still be served"
+
+
 def test_require_roles_dependency_guard():
     driver_only_guard = require_roles(["driver"])
 
