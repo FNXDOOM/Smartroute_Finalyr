@@ -31,9 +31,17 @@ def test_periodic_job_survives_a_raising_runner(caplog):
             raise RuntimeError("simulated job failure")
 
         task = asyncio.ensure_future(_run_periodic("simulated_job", 0.01, runner))
-        await asyncio.sleep(0.15)
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        try:
+            # Poll for the third tick instead of sleeping a fixed slice: under a
+            # full-suite load a wall-clock window can be too short to observe the
+            # retries, which is a test bug, not a product bug.
+            for _ in range(500):
+                if len(calls) >= 3:
+                    break
+                await asyncio.sleep(0.01)
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     with caplog.at_level(logging.ERROR):
         asyncio.run(scenario())
