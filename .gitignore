@@ -58,6 +58,10 @@ frontend/.env.*.local
 
 # opencode local plugins / scratch
 .opencode/node_modules/
+.commandcode/
+
+# Row dumps from one-off data fixes; they hold real user emails, never commit.
+demo_sweep_backup_*.json
 
 # Playwright MCP output
 .playwright-mcp/
