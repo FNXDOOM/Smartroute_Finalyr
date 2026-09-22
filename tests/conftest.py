@@ -1,7 +1,8 @@
-"""Shared pytest setup: ensure the test database schema exists.
+"""Shared pytest setup: where the test database lives, and what it must never be.
 
-CI runs ``pytest tests/ -v`` with ``DATABASE_URL=sqlite:///./ci_test.db`` on a
-fresh runner, so the SQLite file has no tables unless something creates them.
+CI runs ``pytest tests/ -v`` with
+``DATABASE_URL=sqlite:///./.testdb/ci_test.db`` on a fresh runner, so the SQLite
+file has no tables unless something creates them.
 ``tests/test_pipeline_and_batch.py`` uses ``database.SessionLocal`` directly
 and queries ``users`` — without a prior ``create_all`` it fails with
 ``sqlite3.OperationalError: no such table: users``.
@@ -33,6 +34,10 @@ from database import create_db_tables  # noqa: E402
 
 LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
+SCRATCH_DB_DIR = ".testdb"
+KEEP_SCRATCH_DBS = 3
+TEST_DATABASE_URL = f"sqlite:///./{SCRATCH_DB_DIR}/ci_test.db"
+
 
 def hits_hosted_database(url: str) -> bool:
     """True when running DDL against ``url`` would touch a shared database."""
@@ -44,6 +49,27 @@ def hits_hosted_database(url: str) -> bool:
     return (parsed.host or "") not in LOCAL_HOSTS
 
 
+def prepare_scratch_database(url: str) -> None:
+    """Create the folder a scratch SQLite URL points into, and retire older runs.
+
+    SQLite will not create a missing parent directory, and each ad-hoc
+    ``DATABASE_URL`` name used to leave another file in the repo root forever.
+    Only files inside ``SCRATCH_DB_DIR`` are candidates, so a database that
+    lives elsewhere is never deleted no matter its name.
+    """
+    parsed = make_url(url)
+    if not parsed.drivername.startswith("sqlite") or not parsed.database:
+        return
+    path = Path(parsed.database)
+    if path.parent.name != SCRATCH_DB_DIR:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    by_age = sorted(path.parent.glob("*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for stale in by_age[KEEP_SCRATCH_DBS:]:
+        if stale.resolve() != path.resolve():
+            stale.unlink(missing_ok=True)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _ensure_test_schema():
     if hits_hosted_database(DATABASE_URL):
@@ -51,8 +77,9 @@ def _ensure_test_schema():
             "Refusing to run: DATABASE_URL points at a hosted database "
             f"({make_url(DATABASE_URL).host}). create_db_tables() issues DDL, "
             "so the suite would migrate it. Run with "
-            "DATABASE_URL=sqlite:///./ci_test.db (what CI uses), point it at a "
+            f"DATABASE_URL={TEST_DATABASE_URL} (what CI uses), point it at a "
             "local Postgres, or set TEST_DB_ALLOW_REMOTE=1 to proceed anyway."
         )
+    prepare_scratch_database(DATABASE_URL)
     create_db_tables()
     yield

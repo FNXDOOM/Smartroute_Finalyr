@@ -602,7 +602,7 @@ to loopback + private ranges (see `backend/Dockerfile` / `docker-compose.yml`) s
 1. **Create a feature branch**: `git checkout -b feature/my-feature`
 2. **Make changes** — follow existing code style and patterns
 3. **Test your changes**:
-   - Backend: `DATABASE_URL=sqlite:///./ci_test.db pytest tests/` (if adding new endpoints)
+   - Backend: `DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/` (if adding new endpoints)
    - Frontend: `npm run lint` and manual testing in dev server
 4. **Commit with clear messages**: `git commit -m "Add feature: description"`
 5. **Push and create a PR**
@@ -645,10 +645,14 @@ to loopback + private ranges (see `backend/Dockerfile` / `docker-compose.yml`) s
 **Backend**:
 ```bash
 # from project root (tests/ live at root, backend on sys.path)
-DATABASE_URL=sqlite:///./ci_test.db pytest tests/ -v          # full suite
-DATABASE_URL=sqlite:///./ci_test.db pytest tests/test_health_and_ws_auth.py -v  # single file
+DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/ -v          # full suite
+DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/test_health_and_ws_auth.py -v  # single file
 python scripts/test_models_schemas.py  # schema/model sanity check
 ```
+
+Scratch databases belong in `.testdb/` (gitignored, created for you): the
+fixture keeps the three most recent and deletes older ones, so repeated runs
+with different names cannot litter the repo root.
 
 `DATABASE_URL` is not optional: `backend/.env` points it at the hosted
 Supabase database, and `tests/conftest.py` calls `create_db_tables()`, which
@@ -660,7 +664,7 @@ a non-local database — point it at a local Postgres, or set
 On Windows PowerShell:
 
 ```powershell
-$env:DATABASE_URL = 'sqlite:///./ci_test.db'
+$env:DATABASE_URL = 'sqlite:///./.testdb/ci_test.db'
 py -3.10 -m pytest -q
 ```
 

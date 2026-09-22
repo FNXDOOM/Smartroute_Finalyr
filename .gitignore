@@ -35,6 +35,7 @@ build/
 
 # Testing
 .pytest_cache/
+.testdb/
 .coverage
 htmlcov/
 .tox/

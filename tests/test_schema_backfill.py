@@ -6,6 +6,7 @@ same list, and that list is produced by a pure function — which is what these
 tests pin, so a dropped column or a rename-after-add regression is caught.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def test_a_hosted_database_would_be_left_alone(monkeypatch):
 
 def test_a_local_database_is_fine(monkeypatch):
     monkeypatch.delenv("TEST_DB_ALLOW_REMOTE", raising=False)
-    assert not conftest.hits_hosted_database("sqlite:///./ci_test.db")
+    assert not conftest.hits_hosted_database("sqlite:///./.testdb/ci_test.db")
     assert not conftest.hits_hosted_database("postgresql://postgres@localhost:5432/postgres")
 
 
@@ -107,3 +108,47 @@ def test_the_opt_in_is_explicit(monkeypatch):
     monkeypatch.setenv("TEST_DB_ALLOW_REMOTE", "1")
     hosted = "postgresql://postgres:secret@aws-0.example.pooler.supabase.com:5432/postgres"
     assert not conftest.hits_hosted_database(hosted)
+
+
+# -- where the scratch databases live -----------------------------------------
+# prepare_scratch_database() deletes files, so pin exactly which ones it may touch.
+
+def _aged_folder(tmp_path, names, active):
+    scratch = tmp_path / ".testdb"
+    scratch.mkdir()
+    for i, name in enumerate(names):
+        path = scratch / name
+        path.write_bytes(b"x")
+        os.utime(path, (1000 + i, 1000 + i))
+    return scratch, f"sqlite:///{(scratch / active).as_posix()}"
+
+
+def test_older_scratch_databases_are_trimmed(tmp_path):
+    keep = conftest.KEEP_SCRATCH_DBS
+    names = [f"run_{i}.db" for i in range(keep + 3)]
+    scratch, url = _aged_folder(tmp_path, names, names[-1])
+    conftest.prepare_scratch_database(url)
+    assert sorted(p.name for p in scratch.glob("*.db")) == sorted(names[-keep:])
+
+
+def test_the_database_in_use_is_never_deleted(tmp_path):
+    names = [f"run_{i}.db" for i in range(conftest.KEEP_SCRATCH_DBS + 3)]
+    scratch, url = _aged_folder(tmp_path, names, names[0])
+    conftest.prepare_scratch_database(url)
+    assert names[0] in [p.name for p in scratch.glob("*.db")]
+
+
+def test_a_database_outside_the_scratch_folder_is_untouched(tmp_path):
+    names = ["a.db", "b.db", "c.db", "d.db"]
+    scratch, url = _aged_folder(tmp_path, names, names[-1])
+    outside = tmp_path / "dev_data.db"
+    outside.write_bytes(b"x")
+    os.utime(outside, (1, 1))
+    conftest.prepare_scratch_database(url)
+    assert outside.exists()
+
+
+def test_a_postgres_url_needs_no_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    conftest.prepare_scratch_database("postgresql://postgres@localhost:5432/postgres")
+    assert not (tmp_path / ".testdb").exists()

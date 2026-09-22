@@ -58,7 +58,7 @@ jobs:
         env:
           # Dummy non-secret values for CI only. Real secrets live in
           # AWS Secrets Manager and are never in GitHub.
-          DATABASE_URL: sqlite:///./ci_test.db
+          DATABASE_URL: sqlite:///./.testdb/ci_test.db
           LOCAL_JWT_SECRET: ci-only-dummy-not-a-secret
           APP_ENV: test
           AUTH_PROVIDER: clerk
@@ -160,7 +160,7 @@ jobs:
         # LOCAL_JWT_SECRET, so dummy CI-only values are passed explicitly.
         run: |
           docker run --rm \
-            -e DATABASE_URL=sqlite:///./ci_test.db \
+            -e DATABASE_URL=sqlite:///./.testdb/ci_test.db \
             -e LOCAL_JWT_SECRET=ci-only-dummy-not-a-secret \
             -e APP_ENV=test \
             -e AUTH_PROVIDER=clerk \
