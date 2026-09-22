@@ -10,7 +10,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import conftest  # noqa: E402
 from database import postgres_backfill_statements  # noqa: E402
 
 ALL_TABLES = {
@@ -83,3 +85,25 @@ def test_a_missing_table_is_skipped_entirely():
     assert "ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR" in statements
     assert not any("ride_requests" in statement for statement in statements)
     assert not any("vehicles" in statement for statement in statements)
+
+
+# -- what the statements must never be pointed at -----------------------------
+# The DDL above is real: run against a hosted database it migrates it.
+# tests/conftest.py refuses to call create_db_tables() in that case.
+
+def test_a_hosted_database_would_be_left_alone(monkeypatch):
+    monkeypatch.delenv("TEST_DB_ALLOW_REMOTE", raising=False)
+    hosted = "postgresql://postgres:secret@aws-0.example.pooler.supabase.com:5432/postgres"
+    assert conftest.hits_hosted_database(hosted)
+
+
+def test_a_local_database_is_fine(monkeypatch):
+    monkeypatch.delenv("TEST_DB_ALLOW_REMOTE", raising=False)
+    assert not conftest.hits_hosted_database("sqlite:///./ci_test.db")
+    assert not conftest.hits_hosted_database("postgresql://postgres@localhost:5432/postgres")
+
+
+def test_the_opt_in_is_explicit(monkeypatch):
+    monkeypatch.setenv("TEST_DB_ALLOW_REMOTE", "1")
+    hosted = "postgresql://postgres:secret@aws-0.example.pooler.supabase.com:5432/postgres"
+    assert not conftest.hits_hosted_database(hosted)
