@@ -341,6 +341,21 @@ def attach_to_existing_run(
                 stop.passenger_count = max(0, int(stop.passenger_count or 0) - 1)
             continue
 
+        # Superseding this plan discards its acceptance, so re-read it now that
+        # the expensive rebuild is done: a driver who accepted while we were
+        # solving must not find their run replaced underneath them.
+        db.refresh(route_plan)
+        if not run_is_open_to_riders(route_plan):
+            request.status = original_status
+            request.carpool_status = original_carpool_status
+            request.cluster_id = None
+            request.virtual_stop_id = None
+            if new_stop:
+                db.delete(new_stop)
+            else:
+                stop.passenger_count = max(0, int(stop.passenger_count or 0) - 1)
+            continue
+
         route_plan.status = ROUTE_SUPERSEDED
         persisted = persist_shared_route(
             db,

@@ -603,7 +603,15 @@ class CarpoolRun:
                 + ", ".join(str(ride.id) for ride in outstanding)
                 + " still need to be dropped off before the run can be completed",
             )
-        if self.route_plan.status == ROUTE_COMPLETED:
+        # Claim the plan with a conditional UPDATE rather than testing
+        # route_plan.status: two concurrent completions that both read
+        # "not completed" would otherwise each notify every rider. The database
+        # re-checks the predicate against the committed row, so exactly one wins.
+        claimed = self._db.query(RoutePlan).filter(
+            RoutePlan.id == self.route_plan.id,
+            RoutePlan.status != ROUTE_COMPLETED,
+        ).update({RoutePlan.status: ROUTE_COMPLETED}, synchronize_session=False)
+        if not claimed:
             return False
         close_carpool_run(self._db, self.route_plan, rides)
         return True

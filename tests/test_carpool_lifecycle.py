@@ -43,6 +43,7 @@ from services.clustering.h3_partitioner import get_h3_index, neighbouring_h3_cel
 from services.routing.shared_route_builder import BuiltRoute, persist_shared_route
 from utils.carpool_status import CARPOOL_ASSIGNED, set_carpool_stage, sync_carpool_from_status
 from utils.ride_scope import LIVE_MODE
+from utils.ride_states import CLOSABLE_ROUTE_STATUSES
 
 DEPOT_LAT, DEPOT_LNG = 12.9784, 77.6408
 
@@ -501,6 +502,50 @@ def test_only_the_assigned_driver_can_patch_a_riders_status():
         )
         db.refresh(ride_a)
         assert ride_a.carpool_status == "completed"
+    finally:
+        if persisted is not None:
+            _cleanup(
+                db,
+                persisted,
+                [r.id for r in (ride_a, ride_b)],
+                [ride_a.virtual_stop_id, ride_b.virtual_stop_id],
+                vehicle.id,
+            )
+        db.close()
+
+
+def test_completion_claims_the_plan_so_a_double_submit_closes_once():
+    """A stale in-memory status must not let a run close twice.
+
+    The completion check used to read route_plan.status off the ORM identity map;
+    a concurrent request that had already completed the row in the database was
+    invisible, so both callers notified every rider. The claim is now a
+    conditional UPDATE, which the database re-evaluates.
+    """
+    from sqlalchemy import update as sa_update
+    from services.carpool_lifecycle import CarpoolRun
+
+    db = SessionLocal()
+    persisted = None
+    try:
+        driver, rider_a, rider_b, vehicle, ride_a, ride_b, persisted = _two_rider_route(db)
+        route_id = persisted.route_id
+        accept_route(route_id=route_id, db=db, current_user=driver)
+        for ride, rider in ((ride_a, rider_a), (ride_b, rider_b)):
+            _board_rider(db, route_id, driver, rider, ride)
+            confirm_carpool_dropoff(route_id=route_id, ride_id=ride.id, db=db, current_user=driver)
+
+        run = CarpoolRun.open(db, route_id, driver, statuses=CLOSABLE_ROUTE_STATUSES)
+        # Another worker commits the completion without touching this session's
+        # cached object, leaving route_plan.status stale.
+        db.execute(
+            sa_update(RoutePlan)
+            .where(RoutePlan.id == persisted.route_plan.id)
+            .values(status="completed"),
+            execution_options={"synchronize_session": False},
+        )
+        assert run.route_plan.status == "solved", "fixture should hold a stale status"
+        assert run.complete() is False, "a run already completed in the database must not re-close"
     finally:
         if persisted is not None:
             _cleanup(
