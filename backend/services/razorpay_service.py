@@ -24,8 +24,6 @@ from config import RAZORPAY_API_BASE, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZO
 
 logger = logging.getLogger(__name__)
 
-RAZORPAY_CHECKOUT_SCRIPT = "https://checkout.razorpay.com/v1/checkout.js"
-
 # Server-side fare table. Prices are in RUPEES; converted to paise (x100)
 # when a Razorpay order is created. The client NEVER supplies amounts —
 # it may only name one of these option IDs.
@@ -51,11 +49,9 @@ _TRANSIENT_EXCEPTIONS = (
 RAZORPAY_HTTP_ATTEMPTS = 3
 RAZORPAY_RETRY_BACKOFF_SECONDS = 0.5
 
-
 def is_configured() -> bool:
     """True when Razorpay credentials are present in the environment."""
     return bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
-
 
 class RazorpayError(Exception):
     """Raised when the Razorpay API request fails.
@@ -63,7 +59,6 @@ class RazorpayError(Exception):
     The exception message intentionally contains no secret material and no
     raw Razorpay error bodies (those can echo back auth challenges).
     """
-
 
 class RazorpayClient:
     """Minimal Razorpay Orders API client (basic auth, httpx).
@@ -163,7 +158,6 @@ class RazorpayClient:
             raise RazorpayError(f"Razorpay payment fetch failed (HTTP {response.status_code})")
         return response.json()
 
-
 def verify_payment_signature(
     razorpay_order_id: str,
     razorpay_payment_id: str,
@@ -185,7 +179,6 @@ def verify_payment_signature(
     ).hexdigest()
     return hmac.compare_digest(expected, signature or "")
 
-
 def verify_webhook_signature(body: bytes, signature: str, *, webhook_secret: Optional[str] = None) -> bool:
     """Verify the webhook signature:
 
@@ -196,7 +189,6 @@ def verify_webhook_signature(body: bytes, signature: str, *, webhook_secret: Opt
         return False
     expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature or "")
-
 
 def compute_fare_amount_paise(ride_option_id: str, distance_km: float) -> int:
     """Compute the ride fare in paise from the server-side fare table.

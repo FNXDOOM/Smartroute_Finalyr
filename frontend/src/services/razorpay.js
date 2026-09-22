@@ -39,8 +39,6 @@ function loadRazorpayScript() {
   return scriptPromise
 }
 
-export const isRazorpayConfigured = () => Boolean(window.Razorpay)
-
 /**
  * Open Razorpay Checkout.
  *

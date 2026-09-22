@@ -240,8 +240,7 @@ backend/
 │   │   ├── h3_partitioner.py
 │   │   └── hdbscan_clusterer.py
 │   ├── routing/
-│   │   ├── vrp_solver.py        # OR-Tools optimization (Stadia → OSM → haversine matrix, 10 s limit)
-│   │   └── astar_router.py      # A* pathfinding (implemented, currently unused by pipeline)
+│   │   └── vrp_solver.py        # OR-Tools optimization (Stadia → OSM → haversine matrix, 10 s limit)
 │   ├── prediction/
 │   │   ├── demand_model.py      # XGBoost loader (ml/models/demand_model.pkl + heuristic fallback)
 │   │   └── feature_engineering.py

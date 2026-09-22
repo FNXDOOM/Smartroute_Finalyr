@@ -37,22 +37,6 @@ CARPOOL_DROPPED_OFF = "dropped_off"
 CARPOOL_COMPLETED = "completed"
 CARPOOL_CANCELLED = "cancelled"
 
-CARPOOL_STAGES = (
-    CARPOOL_PENDING,
-    CARPOOL_SEARCHING,
-    CARPOOL_CLUSTERED,
-    CARPOOL_ASSIGNED,
-    CARPOOL_DRIVER_ACCEPTED,
-    CARPOOL_DRIVER_ARRIVING,
-    CARPOOL_PICKUP_READY,
-    CARPOOL_PASSENGER_CONFIRMED,
-    CARPOOL_BOARDED,
-    CARPOOL_IN_TRANSIT,
-    CARPOOL_DROPPED_OFF,
-    CARPOOL_COMPLETED,
-    CARPOOL_CANCELLED,
-)
-
 # Fine stage -> coarse status. Every stage maps to exactly one coarse status.
 CARPOOL_TO_RIDE_STATUS = {
     CARPOOL_PENDING: RIDE_PENDING,
@@ -83,7 +67,6 @@ RIDE_STATUS_TO_CARPOOL = {
     RIDE_CANCELLED: CARPOOL_CANCELLED,
 }
 
-
 # The forward ladder a rider walks. ``cancelled`` is terminal and deliberately
 # off it, so an unknown or cancelled stage never satisfies a minimum.
 CARPOOL_PROGRESS_STAGES = (
@@ -101,13 +84,11 @@ CARPOOL_PROGRESS_STAGES = (
     CARPOOL_COMPLETED,
 )
 
-
 def stage_at_least(stage: Optional[str], minimum: str) -> bool:
     """Whether ``stage`` has already reached ``minimum`` on the forward ladder."""
     if stage not in CARPOOL_PROGRESS_STAGES:
         return False
     return CARPOOL_PROGRESS_STAGES.index(stage) >= CARPOOL_PROGRESS_STAGES.index(minimum)
-
 
 def set_carpool_stage(ride, stage: str) -> None:
     """Advance a shared ride to ``stage`` and keep its coarse status in sync.
@@ -121,7 +102,6 @@ def set_carpool_stage(ride, stage: str) -> None:
         raise ValueError(f"Unknown carpool stage: {stage}")
     ride.carpool_status = stage
     ride.status = CARPOOL_TO_RIDE_STATUS[stage]
-
 
 def sync_carpool_from_status(ride) -> None:
     """Derive the carpool stage from a coarse status (legacy PATCH path)."""

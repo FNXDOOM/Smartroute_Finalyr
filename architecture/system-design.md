@@ -309,7 +309,6 @@ services/
     road_snapper.py            → osmnx
   routing/
     vrp_solver.py    → ortools, services/stadia_client.py, utils/geo.py
-    astar_router.py  → osmnx, networkx (implemented, unused by pipeline)
   assignment/
     hungarian_assigner.py → scipy.optimize
   prediction/

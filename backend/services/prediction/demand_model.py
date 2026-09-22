@@ -18,44 +18,12 @@ from services.prediction.feature_engineering import (
 from services.prediction.model_contract import FEATURE_ORDER, MODEL_PATH
 from utils.ride_scope import LIVE_MODE
 
-
 @lru_cache(maxsize=1)
 def load_model() -> Any | None:
     if not MODEL_PATH.exists():
         return None
     with MODEL_PATH.open("rb") as handle:
         return pickle.load(handle)
-
-
-def _query_historical_requests(
-    db: Session,
-    *,
-    h3_index: Optional[str] = None,
-    min_lat: Optional[float] = None,
-    min_lng: Optional[float] = None,
-    max_lat: Optional[float] = None,
-    max_lng: Optional[float] = None,
-    lookback_days: int = 30,
-) -> List[RideRequest]:
-    threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-    query = db.query(RideRequest).filter(
-        RideRequest.request_time >= threshold,
-        RideRequest.mode == LIVE_MODE,
-    )
-
-    if h3_index:
-        query = query.filter(RideRequest.h3_index == h3_index)
-    if min_lat is not None:
-        query = query.filter(RideRequest.pickup_lat >= min_lat)
-    if max_lat is not None:
-        query = query.filter(RideRequest.pickup_lat <= max_lat)
-    if min_lng is not None:
-        query = query.filter(RideRequest.pickup_lng >= min_lng)
-    if max_lng is not None:
-        query = query.filter(RideRequest.pickup_lng <= max_lng)
-
-    return query.all()
-
 
 def _count_historical_requests(
     db: Session,
@@ -74,7 +42,6 @@ def _count_historical_requests(
         .count()
     )
 
-
 def _predict_with_model(features: Dict[str, int]) -> Optional[float]:
     model = load_model()
     if model is None:
@@ -83,7 +50,6 @@ def _predict_with_model(features: Dict[str, int]) -> Optional[float]:
     vector = np.array([[features[column] for column in FEATURE_ORDER]], dtype=float)
     prediction = model.predict(vector)
     return float(np.asarray(prediction).reshape(-1)[0])
-
 
 def _fallback_prediction(features: Dict[str, int]) -> float:
     demand = float(features["historical_count"])
@@ -104,7 +70,6 @@ def _fallback_prediction(features: Dict[str, int]) -> float:
         demand *= 1.05
 
     return max(0.0, round(demand + 0.5, 2))
-
 
 def predict_zone_demand(
     db: Session,
@@ -138,7 +103,6 @@ def predict_zone_demand(
         "method": method,
         "features": feature_dict,
     }
-
 
 def build_heatmap_cells(
     db: Session,

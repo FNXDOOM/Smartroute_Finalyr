@@ -281,24 +281,6 @@ No file I/O on subsequent prediction calls.
 
 ---
 
-## 8. A* Shortest Path
-
-**File:** `backend/services/routing/astar_router.py`  
-**Library:** `networkx`
-
-### What it does
-Computes the shortest path between two OSM road nodes using the A* algorithm on the downloaded road graph.
-
-### Current status
-This module is implemented but not called anywhere in the current pipeline. The VRP solver uses a haversine straight-line distance matrix (sufficient for optimization). A* would be used if turn-by-turn navigation is added in the future.
-
-```python
-path = nx.astar_path(graph, origin_node, dest_node, weight="length")
-# returns ordered list of OSM node IDs
-```
-
----
-
 ## Algorithm Selection Summary
 
 | Problem | Why this algorithm |

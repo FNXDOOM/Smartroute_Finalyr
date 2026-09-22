@@ -49,10 +49,8 @@ RIDE_BOUND_STATUSES = (RIDE_ASSIGNED, RIDE_ARRIVING)
 # A ride the simulator/serving path considers on board a route.
 RIDE_SERVING_STATUSES = (RIDE_ASSIGNED, RIDE_ARRIVING, RIDE_IN_PROGRESS)
 
-
 def is_terminal_ride(status: Optional[str]) -> bool:
     return status in RIDE_TERMINAL_STATUSES
-
 
 # -- RoutePlan.status --------------------------------------------------------
 ROUTE_SOLVED = "solved"
@@ -66,13 +64,6 @@ ROUTE_SUPERSEDED = "superseded"
 # it is still live; only ``completed`` ends the run.
 LIVE_ROUTE_STATUSES: Tuple[str, ...] = (ROUTE_SOLVED, ROUTE_NEEDS_REOPTIMIZATION)
 CLOSABLE_ROUTE_STATUSES: Tuple[str, ...] = (*LIVE_ROUTE_STATUSES, ROUTE_COMPLETED)
-# Terminal route states: the plan is over and owns no vehicle.
-ROUTE_TERMINAL_STATUSES = frozenset({ROUTE_COMPLETED, ROUTE_CANCELLED, ROUTE_SUPERSEDED})
-
-
-def route_is_live(status: Optional[str]) -> bool:
-    return status in LIVE_ROUTE_STATUSES
-
 
 # -- Vehicle.status ----------------------------------------------------------
 VEHICLE_IDLE = "idle"
@@ -80,16 +71,8 @@ VEHICLE_ACTIVE = "active"
 VEHICLE_EN_ROUTE = "en_route"
 VEHICLE_OFFLINE = "offline"
 
-VEHICLE_STATUSES: Tuple[str, ...] = (
-    VEHICLE_IDLE,
-    VEHICLE_ACTIVE,
-    VEHICLE_EN_ROUTE,
-    VEHICLE_OFFLINE,
-)
-
 # A vehicle that may be handed a route.
 DISPATCHABLE_VEHICLE_STATUSES = frozenset({VEHICLE_IDLE, VEHICLE_ACTIVE, VEHICLE_EN_ROUTE})
-
 
 def vehicle_is_dispatchable(status: Optional[str]) -> bool:
     return status in DISPATCHABLE_VEHICLE_STATUSES

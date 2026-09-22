@@ -2,7 +2,6 @@
 import { ArrowLeft, CircleDot } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
@@ -53,23 +52,6 @@ export function PageHeader({ title, description, onBack, backLabel = 'Back', act
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
-  )
-}
-
-export function StatCard({ icon: Icon, label, value, sub }) {
-  return (
-    <Card className="shadow-none transition-[border-color,box-shadow] duration-200 hover:border-[#D6D6D6] hover:shadow-[0_2px_8px_rgba(0,0,0,0.08)]">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-2">
-          <p className="mob-section-label">{label}</p>
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-black text-white dark:bg-white dark:text-black">
-            <Icon className="h-4 w-4" />
-          </span>
-        </div>
-        <p className="mob-data mt-3 truncate text-[28px] font-bold leading-none tracking-[-0.02em]" title={String(value)}>{value}</p>
-        {sub && <p className="mt-1.5 truncate text-[13px] text-[#6B6B6B] dark:text-[#AFAFAF]">{sub}</p>}
-      </CardContent>
-    </Card>
   )
 }
 
@@ -139,8 +121,3 @@ export function LoadingRows({ count = 3, height = 'h-[68px]' }) {
   )
 }
 
-export function FieldLabel({ children }) {
-  return <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-[#6B6B6B] dark:text-[#AFAFAF]">{children}</p>
-}
-
-export { Card, CardContent, CardDescription, CardHeader, CardTitle }

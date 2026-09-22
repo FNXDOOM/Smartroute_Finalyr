@@ -23,26 +23,13 @@ from utils.ride_states import RIDE_CANCELLED, RIDE_CLUSTERED, RIDE_COMPLETED, VE
 
 router = APIRouter()
 
-
 def _require_admin_or_driver(current_user: User) -> None:
-    """Require the current user to be an administrator or driver."""
+    """Require the current user to be an administrator or active driver."""
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admin or driver users can view analytics",
         )
-
-
-def _route_passenger_count(route: RoutePlan, stops_by_id: Dict[int, VirtualStop]) -> int:
-    """Return the passenger count recorded in route metadata."""
-    assigned_stop_ids = route_plan_meta.assigned_stop_ids(route)
-    total = 0
-    for stop_id in assigned_stop_ids:
-        stop = stops_by_id.get(stop_id)
-        if stop:
-            total += int(stop.passenger_count or 0)
-    return total
-
 
 @router.get("/overview", response_model=AnalyticsOverviewResponse)
 def get_analytics_overview(
@@ -158,7 +145,6 @@ def get_analytics_overview(
         avg_trip_distance_meters=avg_trip_distance_meters,
         route_utilization_percent=route_utilization_percent,
     )
-
 
 @router.get("/daily", response_model=AnalyticsDailyResponse)
 def get_analytics_daily(
