@@ -1,5 +1,5 @@
 from typing import List, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
@@ -294,6 +294,7 @@ def create_demo_shared_batch(
     current_user: User = Depends(get_current_user),
 ):
     """Create up to three presentation riders joining one shared-auto route."""
+    _reclaim_stale_demo_runs(db, batch_in.demo_run_id)
     created = []
     for item in batch_in.riders:
         if not all(
@@ -345,30 +346,8 @@ def create_demo_shared_batch(
     return created
 
 
-@router.delete("/demo-runs/{demo_run_id}", status_code=status.HTTP_200_OK)
-def reset_demo_run(
-    demo_run_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Remove one presentation run and release any vehicle it temporarily used."""
-    owned_demo_rides = db.query(RideRequest).filter(
-        RideRequest.mode == PRESENTATION_DEMO_MODE,
-        RideRequest.demo_run_id == demo_run_id,
-        RideRequest.user_id == current_user.id,
-    ).all()
-    if current_user.role != "admin" and not owned_demo_rides:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only reset your own presentation demo runs",
-        )
-
-    demo_rides = owned_demo_rides if current_user.role != "admin" else apply_ride_scope(
-        db.query(RideRequest), PRESENTATION_DEMO_MODE, demo_run_id
-    ).all()
-    if not demo_rides:
-        return {"deleted_rides": 0, "demo_run_id": demo_run_id}
-
+def _purge_demo_run(db: Session, demo_run_id: str, demo_rides: List[RideRequest]) -> int:
+    """Delete one presentation run: its rides, stops, plans and notifications."""
     ride_ids = [ride.id for ride in demo_rides]
     stop_ids = {ride.virtual_stop_id for ride in demo_rides if ride.virtual_stop_id}
     route_plans = db.query(RoutePlan).filter(
@@ -428,7 +407,63 @@ def reset_demo_run(
         ClusterRun.demo_run_id == demo_run_id,
     ).delete(synchronize_session=False)
     db.commit()
-    return {"deleted_rides": len(ride_ids), "demo_run_id": demo_run_id}
+    return len(ride_ids)
+
+
+DEMO_RUN_TTL_HOURS = 24
+
+
+def _reclaim_stale_demo_runs(db: Session, keep_demo_run_id: str) -> int:
+    """Delete abandoned presentation runs so they cannot accumulate forever.
+
+    The scheduler only clusters live rides, and reset only clears the run it is
+    handed, so a presenter who closes the app mid-demo strands its riders in
+    `pending` permanently. Reclaiming when a new demo starts keeps the shared
+    table bounded without introducing another scheduled job.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=DEMO_RUN_TTL_HOURS)
+    stale_run_ids = [
+        row[0]
+        for row in db.query(RideRequest.demo_run_id).filter(
+            RideRequest.mode == PRESENTATION_DEMO_MODE,
+            RideRequest.demo_run_id.isnot(None),
+            RideRequest.demo_run_id != keep_demo_run_id,
+            RideRequest.request_time < cutoff,
+        ).distinct().all()
+    ]
+    reclaimed = 0
+    for stale_run_id in stale_run_ids:
+        rides = apply_ride_scope(db.query(RideRequest), PRESENTATION_DEMO_MODE, stale_run_id).all()
+        reclaimed += _purge_demo_run(db, stale_run_id, rides)
+    return reclaimed
+
+
+@router.delete("/demo-runs/{demo_run_id}", status_code=status.HTTP_200_OK)
+def reset_demo_run(
+    demo_run_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove one presentation run and release any vehicle it temporarily used."""
+    owned_demo_rides = db.query(RideRequest).filter(
+        RideRequest.mode == PRESENTATION_DEMO_MODE,
+        RideRequest.demo_run_id == demo_run_id,
+        RideRequest.user_id == current_user.id,
+    ).all()
+    if current_user.role != "admin" and not owned_demo_rides:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only reset your own presentation demo runs",
+        )
+
+    demo_rides = owned_demo_rides if current_user.role != "admin" else apply_ride_scope(
+        db.query(RideRequest), PRESENTATION_DEMO_MODE, demo_run_id
+    ).all()
+    if not demo_rides:
+        return {"deleted_rides": 0, "demo_run_id": demo_run_id}
+
+    deleted_rides = _purge_demo_run(db, demo_run_id, demo_rides)
+    return {"deleted_rides": deleted_rides, "demo_run_id": demo_run_id}
 
 
 @router.get("/my-rides", response_model=List[RideRequestResponse])

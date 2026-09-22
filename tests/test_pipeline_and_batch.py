@@ -50,6 +50,62 @@ def test_periodic_job_survives_a_raising_runner(caplog):
     assert "simulated_job" in caplog.text, "the failure was not logged"
 
 
+def test_starting_a_demo_reclaims_abandoned_demo_runs():
+    """A presenter who closes the app mid-demo used to strand its riders forever.
+
+    The scheduler clusters live rides only, and reset clears just the run it is
+    handed, so abandoned presentation rows accumulated in the shared table with
+    no path to removal.
+    """
+    from datetime import timedelta
+
+    from routers.rides import create_demo_shared_batch
+    from schemas.ride_request import DemoSharedBatchCreate, RideRequestCreate
+
+    db = SessionLocal()
+    user = db.query(User).filter(User.email == "pipeline_tester@example.com").first()
+    if user is None:
+        user = User(
+            clerk_user_id="test_pipeline_user",
+            email="pipeline_tester@example.com",
+            name="Pipeline Tester",
+            password_hash="test_hash",
+            role="admin",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    marker_run = "abandoned-marker"
+    fresh_run = "recent-marker"
+    new_run = "starting-marker"
+    try:
+        now = datetime.now(timezone.utc)
+        for run_id, age in ((marker_run, 25), (fresh_run, 1)):
+            db.add(RideRequest(
+                user_id=user.id, pickup_lat=12.9719, pickup_lng=77.6412,
+                dest_lat=12.9756, dest_lng=77.6066, status="pending", is_shared=True,
+                mode="presentation_demo", demo_run_id=run_id, request_time=now - timedelta(hours=age),
+            ))
+        db.commit()
+
+        payload = DemoSharedBatchCreate(demo_run_id=new_run, riders=[
+            RideRequestCreate(pickup_lat=12.9719, pickup_lng=77.6412,
+                              dest_lat=12.9756, dest_lng=77.6066),
+        ])
+        create_demo_shared_batch(payload, db=db, current_user=user)
+
+        assert db.query(RideRequest).filter(RideRequest.demo_run_id == marker_run).count() == 0, \
+            "a demo run abandoned past the TTL should be reclaimed"
+        assert db.query(RideRequest).filter(RideRequest.demo_run_id == fresh_run).count() == 1, \
+            "a recent demo run must be left alone"
+        assert db.query(RideRequest).filter(RideRequest.demo_run_id == new_run).count() == 1
+    finally:
+        for run_id in (marker_run, fresh_run, new_run):
+            db.query(RideRequest).filter(RideRequest.demo_run_id == run_id).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
 def test_auto_dispatch_pipeline_groups_and_assigns_rides():
     """Pipeline test: cluster, route, assign 3 rides."""
     db = SessionLocal()
