@@ -124,6 +124,62 @@ def test_cross_cell_corridor_match_keeps_each_rider_in_the_group():
     assert matched_ids == {279, 280}
 
 
+def test_corridor_matched_riders_share_one_cluster():
+    """Riders the corridor pass pools must end up in a single cluster.
+
+    The matcher returns a group of two, but the job assigned each member its own
+    cluster id, so they were dispatched as separate one-passenger routes and the
+    corridor match never became a carpool. Coordinates are a real production pair:
+    857 m apart at pickup, identical destination.
+    """
+    db = SessionLocal()
+    user_id = None
+    try:
+        user = _user(db)
+        user_id = user.id
+        db.query(RideRequest).filter(RideRequest.user_id == user_id).delete()
+        db.commit()
+
+        riders = []
+        for plat, plng in ((12.99704, 77.66913), (13.00039, 77.67625)):
+            ride = RideRequest(
+                user_id=user.id,
+                pickup_lat=plat,
+                pickup_lng=plng,
+                dest_lat=13.02728,
+                dest_lng=77.73185,
+                status="pending",
+                pickup_label="Test Pickup",
+                destination_label="Test Dest",
+                is_shared=True,
+            )
+            db.add(ride)
+            riders.append(ride)
+        db.commit()
+
+        assert [len(group) for group in find_cross_cell_corridor_groups(riders)[0]] == [2], (
+            "fixture must be a corridor match, otherwise this tests nothing"
+        )
+
+        run_cluster_job(db)
+
+        for ride in riders:
+            db.refresh(ride)
+            assert ride.status == "clustered", "corridor rider %s was not clustered" % ride.id
+        assert len({ride.cluster_id for ride in riders}) == 1, (
+            "corridor-matched riders must share one cluster, got %s"
+            % [ride.cluster_id for ride in riders]
+        )
+        assert len({ride.virtual_stop_id for ride in riders}) == len(riders), (
+            "each rider still needs a dedicated pickup stop"
+        )
+    finally:
+        if user_id is not None:
+            db.query(RideRequest).filter(RideRequest.user_id == user_id).delete()
+            db.commit()
+        db.close()
+
+
 def test_private_rides_never_pool_and_shared_rides_do():
     """Shared riders pool into one cluster but each keeps a dedicated stop."""
     db = SessionLocal()

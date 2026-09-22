@@ -332,23 +332,22 @@ def run_cluster_job(
         ]
         corridor_groups, _ = find_cross_cell_corridor_groups(unmatched_shared_requests)
         for corridor_group in corridor_groups:
-            for request in corridor_group:
-                h3_index = request.h3_index or get_h3_index(
-                    request.pickup_lat, request.pickup_lng, resolution=resolution
+            # One cluster per corridor pool with a dedicated stop per rider, the
+            # same shape the local bucket pass produces. Assigning a fresh cluster
+            # id per rider here split matched riders into separate one-passenger
+            # routes, so the corridor match never actually became a carpool.
+            cluster_groups_payload.extend(
+                _create_per_rider_stops(
+                    db,
+                    corridor_group,
+                    cluster_id=next_cluster_id,
+                    resolution=resolution,
+                    mode=mode,
+                    demo_run_id=demo_run_id,
                 )
-                cluster_groups_payload.append(
-                    _create_clustered_stop(
-                        db,
-                        [request],
-                        h3_index=h3_index,
-                        cluster_id=next_cluster_id,
-                        resolution=resolution,
-                        mode=mode,
-                        demo_run_id=demo_run_id,
-                    )
-                )
-                next_cluster_id += 1
+            )
             clusters_formed += 1
+            next_cluster_id += 1
 
         for request in private_requests:
             h3_index = request.h3_index or get_h3_index(
