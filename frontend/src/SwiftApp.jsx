@@ -489,7 +489,7 @@ export default function App() {
       <ToastBar toasts={toasts} dismiss={id => setToasts(p => p.filter(t => t.id !== id))} />
 
       {user
-        ? (user.role === 'driver' && user.driver_status === 'pending_verification'
+        ? (user.role === 'driver' && user.driver_status !== 'active'
             ? <DriverVerificationGate
                 user={user}
                 onRefreshProfile={(updated) => setUser(prev => ({ ...prev, ...updated }))}
