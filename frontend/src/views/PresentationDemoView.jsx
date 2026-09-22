@@ -366,15 +366,28 @@ export default function PresentationDemoView({ toast }) {
     setCurrentStage(2)
     addLog('🧬 Step 2: Executing HDBSCAN density clustering on pickup coordinates...', 'accent')
     await new Promise(r => setTimeout(r, 600))
+    const riders = sharedPassengersRef.current || demoRiders
+    let result
     try {
-      await jobsApi.runClustering({ mode: 'presentation_demo', demoRunId: demoRunIdRef.current })
-      addLog('✓ HDBSCAN: Formed Cluster #1 (Epsilon = 300m, MinPts = 1, Leaf Selection)', 'success')
-    } catch {
-      addLog('✓ HDBSCAN: Grouped 3 passengers into Cluster #1', 'info')
+      result = await jobsApi.runClustering({ mode: 'presentation_demo', demoRunId: demoRunIdRef.current })
+    } catch (error) {
+      addLog(`✗ Clustering request failed: ${apiErrorMessage(error)}`, 'error')
+      return
+    }
+    const clusters = Number(result?.clusters_formed ?? 0)
+    const noise = Number(result?.noise_requests_count ?? 0)
+    const pooled = Math.max(0, Number(result?.processed_requests ?? riders.length) - noise)
+    if (clusters <= 0) {
+      addLog(`✗ HDBSCAN formed no cluster: all ${noise} pickups fell outside the 300 m density window`, 'error')
+      return
+    }
+    addLog(`✓ HDBSCAN: pooled ${pooled} of ${riders.length} riders into ${clusters} cluster (Epsilon = 300m, MinPts = 1, Leaf Selection)`, 'success')
+    if (noise > 0) {
+      addLog(`· ${noise} pickup${noise > 1 ? 's' : ''} stayed outside the window and will be matched on a later pass`, 'info')
     }
     setSimData(prev => ({
       ...prev,
-      riders: (sharedPassengersRef.current || demoRiders).map(r => ({ ...r, status: 'clustered' })),
+      riders: riders.map((rider, index) => ({ ...rider, status: index < pooled ? 'clustered' : rider.status })),
     }))
   }
 
