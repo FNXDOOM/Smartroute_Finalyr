@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -58,6 +59,8 @@ from utils.ride_states import (
     VEHICLE_IDLE,
     is_terminal_ride,
 )
+
+logger = logging.getLogger(__name__)
 
 CLUSTER_INTERVAL_SECONDS = 60
 AUTO_DISPATCH_INTERVAL_SECONDS = 60
@@ -904,7 +907,16 @@ async def _run_periodic(name: str, interval_seconds: int, runner):
     STATE.active_tasks.append(name)
     try:
         while True:
-            await asyncio.to_thread(run_once)
+            try:
+                await asyncio.to_thread(run_once)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # One unexpected exception must not retire the job in silence:
+                # nothing awaits these tasks, so a bare raise here stops the
+                # schedule for the remaining lifetime of the worker with no
+                # error surfaced anywhere.
+                logger.exception("background job %s raised; schedule continues", name)
             now = datetime.now(timezone.utc)
             if name in {"cluster_pending_rides", "auto_dispatch_pipeline"}:
                 STATE.last_cluster_run_at = now

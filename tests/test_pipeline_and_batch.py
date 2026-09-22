@@ -11,6 +11,37 @@ from models.ride_request import RideRequest
 from services.background_jobs import run_auto_dispatch_pipeline
 
 
+def test_periodic_job_survives_a_raising_runner(caplog):
+    """A crashing job must not retire its own schedule in silence.
+
+    Nothing awaits these tasks, so an exception escaping the runner previously
+    ended the job for the lifetime of the worker and reported it nowhere — the
+    shape of "clustering just stopped happening".
+    """
+    import asyncio
+    import logging
+
+    from services.background_jobs import _run_periodic
+
+    calls = []
+
+    async def scenario():
+        def runner(db):
+            calls.append(1)
+            raise RuntimeError("simulated job failure")
+
+        task = asyncio.ensure_future(_run_periodic("simulated_job", 0.01, runner))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    with caplog.at_level(logging.ERROR):
+        asyncio.run(scenario())
+
+    assert len(calls) >= 3, "schedule stopped after the first failure, ran %d time(s)" % len(calls)
+    assert "simulated_job" in caplog.text, "the failure was not logged"
+
+
 def test_auto_dispatch_pipeline_groups_and_assigns_rides():
     """Pipeline test: cluster, route, assign 3 rides."""
     db = SessionLocal()
