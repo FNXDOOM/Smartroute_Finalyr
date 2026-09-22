@@ -278,6 +278,13 @@ Create 3 isolated presentation riders (`mode="presentation_demo"`) for 1-click H
 ### `POST /rides/demo-shared-batch`
 Create up to 3 presentation riders joining one shared-auto route (`{ demo_run_id, riders[] }`).
 
+Starting a run first reclaims abandoned ones: any other `presentation_demo` run
+containing a ride older than `DEMO_RUN_TTL_HOURS` (24) is deleted through the same
+cascade as `DELETE /rides/demo-runs/{id}`, because the periodic clustering job only
+queries `live` rides (`background_jobs.py:425`) and a presenter who closes the app
+mid-demo would otherwise strand its riders in `pending` forever. The run being
+created is never a candidate.
+
 **Auth required:** Yes (any role)
 
 ---

@@ -117,7 +117,10 @@ frontend/
     │   └── AuthLoadingView.jsx  # Loading state during auth init
     │
     ├── components/              # Reusable UI components
-    │   ├── AppMap.jsx           # MapLibre map wrapper
+    │   ├── AppMapLazy.jsx       # React.lazy boundary + skeleton; views import this
+    │   ├── AppMap.jsx           # MapLibre map wrapper (loaded on demand, not in the
+    │   │                        #   view chunk — 247 KiB gz of renderer stays off the
+    │   │                        #   must-load path: 372-458 KiB per view → 128-213 KiB)
     │   ├── Header.jsx           # Top navigation bar
     │   ├── Sidebar.jsx          # Left sidebar navigation
     │   └── [other components]   # Feature-specific components

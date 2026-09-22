@@ -668,7 +668,7 @@ $env:DATABASE_URL = 'sqlite:///./.testdb/ci_test.db'
 py -3.10 -m pytest -q
 ```
 
-The current backend suite contains 120 tests. Frontend verification uses
+The current backend suite contains 124 tests. Frontend verification uses
 `npm run lint` and `npm run build`.
 
 **Frontend**:
@@ -701,7 +701,7 @@ frontend/
 │   ├── App.jsx          # Main router
 │   ├── SwiftApp.jsx     # App shell with sidebar
 │   ├── views/           # Full-page views (PassengerView, DriverView, AdminView, PresentationDemoView)
-│   ├── components/      # Reusable UI components (AppMap, DriverLoginForm, DriverVerificationGate)
+│   ├── components/      # Reusable UI components (AppMapLazy, AppMap, DriverLoginForm, DriverVerificationGate)
 │   ├── hooks/           # Custom React hooks (useWebSocket, etc.)
 │   ├── services/        # API clients (api.js — Clerk JWT interceptor, bearer WS factories)
 │   └── config/          # Frontend constants (demoPresets, etc.)

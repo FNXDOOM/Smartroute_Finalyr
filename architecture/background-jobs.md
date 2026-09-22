@@ -40,6 +40,11 @@ On server shutdown, all tasks are cancelled and awaited via `stop_background_job
 
 Takes all `pending` ride requests and groups them into clusters with virtual pickup stops. The shared-ride path then performs a global corridor search across nearby H3 cells so compatible riders are not rejected merely because their pickup cells differ.
 
+A corridor-matched group is assigned **one** `cluster_id`, and `next_cluster_id`
+advances once per group rather than once per rider. This is what makes the riders
+share a route downstream: distinct ids per rider read as separate single-passenger
+clusters and produced two solo routes for a pair that had just been matched.
+
 ### Step-by-step
 
 ```
