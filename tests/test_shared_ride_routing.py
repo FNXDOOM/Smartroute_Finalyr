@@ -700,3 +700,17 @@ def test_ride_route_endpoint_serves_pooled_legs_without_calling_the_router(monke
             )
         db.commit()
         db.close()
+
+
+def test_solver_budget_defaults_to_the_production_value_and_honours_the_env(monkeypatch):
+    from services.routing import vrp_solver
+
+    monkeypatch.delenv("SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS", raising=False)
+    assert vrp_solver.shared_ride_solver_time_limit() == 15
+    monkeypatch.setenv("SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS", "1")
+    assert vrp_solver.shared_ride_solver_time_limit() == 1
+    # A CI typo must not silently buy a zero-second search.
+    monkeypatch.setenv("SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS", "nonsense")
+    assert vrp_solver.shared_ride_solver_time_limit() == 15
+    monkeypatch.setenv("SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS", "0")
+    assert vrp_solver.shared_ride_solver_time_limit() == 1

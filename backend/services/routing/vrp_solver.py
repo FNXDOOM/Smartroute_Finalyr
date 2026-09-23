@@ -1,4 +1,5 @@
 import functools
+import os
 from typing import List, Dict, Any, Optional
 
 import networkx as nx
@@ -7,6 +8,20 @@ from services.stops.road_snapper import build_road_graph
 from services.stadia_client import matrix as stadia_matrix
 from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_states import ROUTE_SOLVED
+
+# The pooled PDP search runs GUIDED_LOCAL_SEARCH, which has no early exit: it
+# spends whatever ``time_limit`` says. That makes this a fixed cost on every
+# dispatch tick *and* on every test that builds a pooled route, so CI can lower
+# it without touching the production default.
+DEFAULT_SHARED_RIDE_SOLVER_SECONDS = 15
+
+
+def shared_ride_solver_time_limit() -> int:
+    raw = os.getenv("SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS", "")
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_SHARED_RIDE_SOLVER_SECONDS
 
 
 # Stadia's matrix endpoint accepts at most 25 sources x 25 targets per call.
@@ -295,7 +310,7 @@ def solve_shared_ride_pdp(
     vehicle_capacity: int = 4,
     vehicle_capacities: Optional[List[int]] = None,
     depot_idx: int = 0,
-    time_limit_seconds: int = 15,
+    time_limit_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Solve a pooled shared ride: pickups *and* destinations.
 
@@ -420,7 +435,9 @@ def solve_shared_ride_pdp(
     params = pywrapcp.DefaultRoutingSearchParameters()
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
     params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    params.time_limit.seconds = time_limit_seconds
+    params.time_limit.seconds = (
+        shared_ride_solver_time_limit() if time_limit_seconds is None else max(1, time_limit_seconds)
+    )
 
     solution = routing.SolveWithParameters(params)
     if not solution:

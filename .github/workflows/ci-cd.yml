@@ -68,6 +68,9 @@ jobs:
           AUTH_PROVIDER: clerk
           CLERK_JWKS_URL: https://ci.invalid/.well-known/jwks.json
           CLERK_ISSUER: https://ci.invalid
+          # GUIDED_LOCAL_SEARCH always spends its whole budget, so the 15s
+          # production default would be paid by every pooled-route test.
+          SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS: 1
         # tests/conftest.py refuses outbound sockets, so the runner behaves
         # exactly like an offline laptop: no Overpass road-graph fetches.
         run: pytest tests/ -v --durations=15

@@ -650,25 +650,36 @@ DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/test_health_and_ws_auth
 python scripts/test_models_schemas.py  # schema/model sanity check
 ```
 
+The suite is hermetic: `tests/conftest.py` refuses outbound sockets and refuses a
+non-local `DATABASE_URL`, so CI and a laptop behave identically. Both have an
+explicit opt-out (`TEST_ALLOW_NETWORK=1`, `TEST_DB_ALLOW_REMOTE=1`) because both
+failure modes are silent — see below.
+
+- Without the socket guard, `road_snapper.build_road_graph` reaches Overpass once
+  per 0.05° cell on a networked runner. It never shows locally because `osmnx` is
+  only in `requirements.txt`, so the import fails and the call returns `None`.
+- `backend/.env` points `DATABASE_URL` at the hosted Supabase database, and
+  `create_db_tables()` issues real DDL (`ALTER TABLE … ADD COLUMN`, `CREATE INDEX`).
+  A bare `pytest` would migrate production.
+
+`SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS` lowers the pooled-route solver budget from
+its 15 s production default; CI sets it to 1 because `GUIDED_LOCAL_SEARCH` has no
+early exit and pays the whole budget per call (~80 s across the suite).
+
 Scratch databases belong in `.testdb/` (gitignored, created for you): the
 fixture keeps the three most recent and deletes older ones, so repeated runs
 with different names cannot litter the repo root.
-
-`DATABASE_URL` is not optional: `backend/.env` points it at the hosted
-Supabase database, and `tests/conftest.py` calls `create_db_tables()`, which
-issues real DDL (`ALTER TABLE … ADD COLUMN`, `CREATE INDEX`). Rather than let a
-forgotten prefix migrate production, the suite aborts when `DATABASE_URL` names
-a non-local database — point it at a local Postgres, or set
-`TEST_DB_ALLOW_REMOTE=1` if you really mean it.
 
 On Windows PowerShell:
 
 ```powershell
 $env:DATABASE_URL = 'sqlite:///./.testdb/ci_test.db'
+$env:SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS = '1'
 py -3.10 -m pytest -q
 ```
 
-The current backend suite contains 124 tests. Frontend verification uses
+The current backend suite contains 127 tests, ~21 s with the CI solver budget and
+~1:42 at the production default. Frontend verification uses
 `npm run lint` and `npm run build`.
 
 **Frontend**:
