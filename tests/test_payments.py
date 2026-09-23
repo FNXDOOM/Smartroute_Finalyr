@@ -765,7 +765,10 @@ def test_client_create_order_http_error(monkeypatch):
     def raise_http_error(*args, **kwargs):
         raise httpx.ConnectError("connection failed")
 
-    monkeypatch.setattr(httpx, "post", raise_http_error)
+    # The client calls httpx.request, not httpx.post: patching the wrong name
+    # leaves a real HTTPS call to api.razorpay.com in place, which only looked
+    # correct because an offline machine raises ConnectError by itself.
+    monkeypatch.setattr(razorpay_service.httpx, "request", raise_http_error)
     client = RazorpayClient(key_id="k", key_secret="s")
     with pytest.raises(RazorpayError):
         client.create_order(amount=100, receipt="r1")

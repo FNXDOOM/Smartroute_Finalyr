@@ -17,9 +17,14 @@ Postgres, and ``create_db_tables()`` issues real DDL there (``ALTER TABLE``
 backfills, ``CREATE INDEX``). Running the suite without overriding
 ``DATABASE_URL`` would migrate production, so the fixture aborts instead. Set
 ``TEST_DB_ALLOW_REMOTE=1`` to opt back in deliberately.
+
+The suite is also hermetic: outbound sockets are refused so a networked runner
+behaves exactly like an offline laptop. See ``_keep_the_suite_hermetic`` for the
+cost of not doing that, and ``TEST_ALLOW_NETWORK=1`` for the escape hatch.
 """
 
 import os
+import socket
 import sys
 from pathlib import Path
 
@@ -47,6 +52,64 @@ def hits_hosted_database(url: str) -> bool:
     if parsed.drivername.startswith("sqlite"):
         return False
     return (parsed.host or "") not in LOCAL_HOSTS
+
+
+def is_external_address(address) -> bool:
+    """True when a socket target leaves this machine.
+
+    ``socket.connect`` receives ``(host, port)`` for an internet address and a
+    bare path string for AF_UNIX (or AF_PIPE on Windows). Only the tuple form
+    can name a remote host, so a string is treated as a local file.
+    """
+    if not isinstance(address, tuple) or not address:
+        return False
+    host = address[0]
+    return isinstance(host, str) and host not in LOCAL_HOSTS
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _keep_the_suite_hermetic():
+    """Refuse outbound sockets for the whole session.
+
+    The suite was written offline, where ``road_snapper.build_road_graph``
+    raises and returns ``None`` so clustering tests skip road snapping. On a
+    networked runner the same call asks Overpass for a 2.5 km road graph per
+    0.05 degree cell, which costs tens of seconds and a networkx graph of a
+    city district each -- enough to take a 1:44 suite past ten minutes. Blocking
+    egress makes CI behave exactly like a laptop and turns any accidental
+    dependency on the open internet into an immediate failure instead of a
+    timeout. Set ``TEST_ALLOW_NETWORK=1`` to opt out.
+    """
+    if os.getenv("TEST_ALLOW_NETWORK") == "1":
+        yield
+        return
+
+    original_connect = socket.socket.connect
+    original_connect_ex = getattr(socket.socket, "connect_ex", None)
+
+    def guarded_connect(self, address, *args, **kwargs):
+        if is_external_address(address):
+            raise AssertionError(
+                f"blocked outbound connection to {address!r}: the test suite must "
+                "not reach the internet. Mock the client, or set "
+                "TEST_ALLOW_NETWORK=1 if the dependency is deliberate."
+            )
+        return original_connect(self, address, *args, **kwargs)
+
+    def guarded_connect_ex(self, address, *args, **kwargs):
+        if is_external_address(address):
+            raise AssertionError(f"blocked outbound connection to {address!r}")
+        return original_connect_ex(self, address, *args, **kwargs)
+
+    socket.socket.connect = guarded_connect
+    if original_connect_ex is not None:
+        socket.socket.connect_ex = guarded_connect_ex
+    try:
+        yield
+    finally:
+        socket.socket.connect = original_connect
+        if original_connect_ex is not None:
+            socket.socket.connect_ex = original_connect_ex
 
 
 def prepare_scratch_database(url: str) -> None:

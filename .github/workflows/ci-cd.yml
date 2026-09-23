@@ -36,6 +36,10 @@ jobs:
   backend-tests:
     name: backend tests
     runs-on: ubuntu-latest
+    # Fail with a clear error instead of burning the 6h default when the suite
+    # stalls. --durations names the slow tests in the log so the next stall is
+    # diagnosable from the run page rather than from a screenshot.
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4.2.2
@@ -64,7 +68,9 @@ jobs:
           AUTH_PROVIDER: clerk
           CLERK_JWKS_URL: https://ci.invalid/.well-known/jwks.json
           CLERK_ISSUER: https://ci.invalid
-        run: pytest tests/ -v
+        # tests/conftest.py refuses outbound sockets, so the runner behaves
+        # exactly like an offline laptop: no Overpass road-graph fetches.
+        run: pytest tests/ -v --durations=15
 
   # ---------- PR + main: frontend lint + prod build check ----------
   frontend-ci:

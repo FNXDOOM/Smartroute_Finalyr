@@ -1,14 +1,24 @@
-"""The additive Postgres backfill: statement content and ordering.
+"""The schema and test-infrastructure layer that has no database to exercise.
+
+Two things the SQLite suite can never prove by running:
+
+* The additive Postgres backfill. Both runtime paths (create_db_tables and
+  run_startup_migrations) execute the same list, produced by a pure function —
+  so these tests pin that list, catching a dropped column or a
+  rename-after-add regression.
+* What tests/conftest.py refuses to do: migrate a hosted database, litter the
+  repo root with scratch files, or reach the internet.
 
 The suite runs on SQLite, so the Postgres path has no database to exercise in
-CI. Both runtime paths (create_db_tables and run_startup_migrations) execute the
-same list, and that list is produced by a pure function — which is what these
-tests pin, so a dropped column or a rename-after-add regression is caught.
+CI.
 """
 
 import os
+import socket
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -152,3 +162,22 @@ def test_a_postgres_url_needs_no_folder(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     conftest.prepare_scratch_database("postgresql://postgres@localhost:5432/postgres")
     assert not (tmp_path / ".testdb").exists()
+
+
+# -- the suite must not reach the internet ------------------------------------
+# Written offline, where road snapping fails fast. A networked runner turns
+# that same call into a real Overpass fetch per grid cell.
+
+def test_only_a_host_string_can_be_external():
+    assert conftest.is_external_address(("api.stadiamaps.com", 443))
+    assert conftest.is_external_address(("148.253.91.245", 80))
+    assert not conftest.is_external_address(("127.0.0.1", 5432))
+    assert not conftest.is_external_address(("::1", 5432))
+    assert not conftest.is_external_address("/tmp/.s.PGSQL.5432")  # AF_UNIX path
+
+
+def test_an_outbound_connection_is_refused(monkeypatch):
+    monkeypatch.delenv("TEST_ALLOW_NETWORK", raising=False)
+    with pytest.raises(AssertionError, match="blocked outbound"):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.connect(("148.253.91.245", 80))
