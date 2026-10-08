@@ -179,6 +179,9 @@ export const routeApi = {
 export const analyticsApi = {
   overview: async () => (await client.get('/analytics/overview')).data,
   daily: async (days = 14) => (await client.get('/analytics/daily', { params: { days } })).data,
+  // Prometheus is proxied server-side: the browser never queries it, and never
+  // supplies the PromQL — the API runs a fixed whitelist.
+  monitoring: async () => (await client.get('/analytics/monitoring')).data,
 };
 
 // Predict

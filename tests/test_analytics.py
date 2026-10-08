@@ -8,7 +8,7 @@ database persists between runs and earlier tests leave live rides in it.
 """
 
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from database import SessionLocal
 from models.ride_request import RideRequest
+from models.job_run import JobRun
 from models.user import User
-from routers.analytics import get_analytics_daily
+from routers.analytics import get_analytics_daily, get_monitoring
 from utils.ride_scope import LIVE_MODE, PRESENTATION_DEMO_MODE
 from utils.ride_states import RIDE_CANCELLED, RIDE_CLUSTERED, RIDE_COMPLETED, RIDE_PENDING
 
@@ -115,6 +116,42 @@ def test_daily_is_closed_to_passengers():
         rider = _user(session, PASSENGER_EMAIL)
         with pytest.raises(HTTPException) as exc:
             get_analytics_daily(days=2, db=session, current_user=rider)
+        assert exc.value.status_code == 403
+    finally:
+        session.close()
+
+
+def test_monitoring_reports_jobs_even_without_prometheus():
+    """The monitoring stack is opt-in, so the panel must never depend on it."""
+    session = SessionLocal()
+    marker = "analytics_probe_job"
+    try:
+        admin = _user(session, ADMIN_EMAIL, role="admin")
+        started = datetime.now(timezone.utc) - timedelta(minutes=3)
+        session.add(JobRun(job_name=marker, status="failed", started_at=started,
+                           finished_at=started, error_message="boom"))
+        session.commit()
+
+        response = get_monitoring(db=session, current_user=admin)
+        assert response.prometheus.reachable in (True, False)
+        by_name = {job.job_name: job for job in response.jobs.jobs}
+        assert by_name[marker].failed == 1
+        # Started 3 minutes ago: pins the arithmetic, not merely that it is set.
+        assert 150 < by_name[marker].seconds_since_last_run < 300
+        assert any(f.job_name == marker and "boom" in f.error_message
+                   for f in response.jobs.recent_failures)
+    finally:
+        session.query(JobRun).filter(JobRun.job_name == marker).delete(synchronize_session=False)
+        session.commit()
+        session.close()
+
+
+def test_monitoring_is_closed_to_passengers():
+    session = SessionLocal()
+    try:
+        rider = _user(session, PASSENGER_EMAIL)
+        with pytest.raises(HTTPException) as exc:
+            get_monitoring(db=session, current_user=rider)
         assert exc.value.status_code == 403
     finally:
         session.close()

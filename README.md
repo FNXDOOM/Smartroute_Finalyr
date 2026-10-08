@@ -146,7 +146,22 @@ The API and scheduled jobs are separate processes. Start the API with
 worker with `python worker.py` from `backend/`. Set `APP_ENV` to `development`,
 `staging`, or `production`; never reuse a production `backend/.env` locally.
 
-Health probes are available at `/health/live` and `/health/ready`.
+Health probes are available at `/health/live` and `/health/ready`. `/metrics`
+(Prometheus format) also exists but is reachable only from inside the docker
+network — no host port and no NPM route maps to it.
+
+The monitoring stack is opt-in and never published:
+
+```bash
+docker compose --profile monitoring up -d   # prometheus + grafana, internal only
+```
+
+Without that profile the resolved compose file is unchanged, so a host that has
+not opted in pays no memory for it. Prometheus holds no auth and Grafana is not
+wired into Clerk, so neither gets a host port; reach them with
+`ssh -L 3000:grafana:3000 <host>`. The admin panel does not embed Grafana — it
+calls `GET /analytics/monitoring`, which queries Prometheus server-side from a
+fixed query whitelist.
 
 ### Docker
 
@@ -678,8 +693,8 @@ $env:SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS = '1'
 py -3.10 -m pytest -q
 ```
 
-The current backend suite contains 127 tests, ~21 s with the CI solver budget and
-~1:42 at the production default. Frontend verification uses
+The current backend suite contains 139 tests, ~26 s with the CI solver budget and
+~1:45 at the production default. Frontend verification uses
 `npm run lint` and `npm run build`.
 
 **Frontend**:

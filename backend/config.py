@@ -78,6 +78,11 @@ RATE_LIMIT_DEFAULT_PER_MINUTE = int(os.getenv("RATE_LIMIT_DEFAULT_PER_MINUTE", "
 # JSON-only API: cap request bodies before they are buffered.
 MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "1048576"))  # 1 MiB
 
+# Internal Prometheus for the admin Monitoring panel. Only exists when the
+# `monitoring` compose profile is enabled; services/monitoring.py treats an
+# unreachable value as "not installed", never as an error.
+PROMETHEUS_BASE_URL = os.getenv("PROMETHEUS_BASE_URL", "http://prometheus:9090").strip().rstrip("/")
+
 # Razorpay payments. KEY_SECRET/WEBHOOK_SECRET must NEVER reach the frontend.
 RAZORPAY_KEY_ID = os.getenv("RAZORPAY_KEY_ID", "").strip()
 RAZORPAY_KEY_SECRET = os.getenv("RAZORPAY_KEY_SECRET", "").strip()

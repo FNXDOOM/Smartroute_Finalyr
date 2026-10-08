@@ -810,6 +810,62 @@ Per-day ride and route counts for the last N days.
 
 ---
 
+### `GET /analytics/monitoring`
+Operational health for the admin Monitoring panel: HTTP traffic and latency read
+from Prometheus, background-job outcomes read from `job_runs`.
+
+Prometheus is **optional by deployment** — it runs only under the `monitoring`
+compose profile. When it is absent, `prometheus.reachable` is `false` with the
+reason in `detail` and `series` is empty, while the `jobs` half still returns.
+The panel is built so that half never blocks the other.
+
+The browser never supplies PromQL. `services/monitoring.py` holds a fixed
+whitelist (`request_rate`, `server_error_rate`, `throttled_rate`,
+`p95_latency_seconds`, `busiest_routes`, `resident_memory_bytes`,
+`job_staleness_seconds`) and queries Prometheus server-side with a 2 s timeout.
+
+**Auth required:** Yes (admin or driver)
+
+**Responses:**
+- `200`
+```json
+{
+  "status": "ok",
+  "generated_at": "2026-10-09T05:00:00Z",
+  "prometheus": {
+    "reachable": false,
+    "detail": "ConnectError: [Errno 11001] getaddrinfo failed",
+    "series": {}
+  },
+  "jobs": {
+    "window_hours": 24,
+    "jobs": [
+      { "job_name": "cluster_pending_rides", "runs": 7, "succeeded": 7, "failed": 0, "seconds_since_last_run": 40.6 }
+    ],
+    "recent_failures": []
+  }
+}
+```
+- `403` — passenger
+
+---
+
+### `GET /metrics`
+Prometheus exposition format: request counters and latency histograms labelled
+by **matched route template** (unmatched paths collapse to `route="unmatched"` so
+scanners cannot mint a series per URL), process CPU/memory, and job-health series
+derived from `job_runs`.
+
+**Auth required:** No — a scraper can hold no Clerk JWT, and the auth layer has no
+API-key path. Safe only because nothing publishes it: no compose service maps a
+host port for the API and NPM has no route here, so it is reachable from inside
+the docker network alone. Exempt from rate limiting, since a throttled payload
+would read as an outage.
+
+**Responses:** `200` `text/plain`
+
+---
+
 ## Demand Prediction `/predict`
 
 ---

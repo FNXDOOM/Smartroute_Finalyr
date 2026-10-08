@@ -14,8 +14,14 @@ from models.user import User
 from models.vehicle import Vehicle
 from models.ride_request import RideRequest
 from models.virtual_stop import VirtualStop
-from schemas.analytics import AnalyticsDailyPoint, AnalyticsDailyResponse, AnalyticsOverviewResponse
-from services import route_plan_meta
+from schemas.analytics import (
+    AnalyticsDailyPoint,
+    AnalyticsDailyResponse,
+    AnalyticsOverviewResponse,
+    MonitoringResponse,
+)
+from services import monitoring, route_plan_meta
+from config import PROMETHEUS_BASE_URL
 from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
@@ -218,4 +224,26 @@ def get_analytics_daily(
         start_date=start_date,
         end_date=end_date,
         points=list(points_by_day.values()),
+    )
+
+
+@router.get("/monitoring", response_model=MonitoringResponse)
+def get_monitoring(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Operational health: HTTP metrics from Prometheus plus job outcomes from Postgres.
+
+    The Prometheus half is empty whenever the `monitoring` compose profile is
+    off, which is the default deployment. `prometheus.reachable` says so and the
+    jobs half still answers, so the admin panel never depends on that stack
+    being installed.
+    """
+    _require_admin_or_driver(current_user)
+
+    return MonitoringResponse(
+        status="ok",
+        generated_at=datetime.now(timezone.utc),
+        prometheus=monitoring.query_prometheus(PROMETHEUS_BASE_URL),
+        jobs=monitoring.job_health(db),
     )

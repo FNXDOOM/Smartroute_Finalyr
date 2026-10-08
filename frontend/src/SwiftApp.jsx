@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect, useCallback, useRef } from 'react'
 import { SignIn, SignUp, useAuth, useClerk, useUser } from '@clerk/clerk-react'
 import {
-  Bell, CarFront, CheckCircle2, ClipboardList, Flame, History, Home, Inbox, LayoutDashboard,
+  Bell, Activity, CarFront, CheckCircle2, ClipboardList, Flame, History, Home, Inbox, LayoutDashboard,
   Loader2, LogOut, Map as MapIcon, Route as RouteIcon, Settings, ShieldCheck, Sparkles,
   TriangleAlert, User as UserIcon, X, XCircle, Info, BarChart3, Truck, Zap, Play, GraduationCap, Users,
 } from 'lucide-react'
@@ -461,7 +461,7 @@ export default function App() {
     }
 
     const driverOnlyViews = ['driver-home', 'driver-map', 'driver-routes', 'driver-carpool']
-    const adminOnlyViews = ['admin-overview', 'admin-rides', 'admin-vehicles', 'admin-cluster', 'admin-routes', 'admin-analytics', 'admin-jobs', 'admin-heatmap', 'admin-drivers']
+    const adminOnlyViews = ['admin-overview', 'admin-rides', 'admin-vehicles', 'admin-cluster', 'admin-routes', 'admin-analytics', 'admin-jobs', 'admin-heatmap', 'admin-drivers', 'admin-monitoring']
 
     if (user.role === 'passenger' && (driverOnlyViews.includes(targetView) || adminOnlyViews.includes(targetView))) {
       toast('warning', 'Role Guard Enforced', 'Driver or Administrator credentials required to access this portal.')
@@ -581,6 +581,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
       items: [
         { v: 'presentation-demo', Icon: Zap, label: 'Presentation Demo' },
         { v: 'admin-jobs', Icon: Settings, label: 'Jobs' },
+        { v: 'admin-monitoring', Icon: Activity, label: 'Monitoring' },
         { v: 'admin-heatmap', Icon: Flame, label: 'Heatmap' },
       ],
     },

@@ -40,3 +40,41 @@ class AnalyticsDailyResponse(BaseModel):
     end_date: date
     points: List[AnalyticsDailyPoint]
 
+
+class MonitoringSample(BaseModel):
+    labels: Dict[str, str]
+    value: float
+
+
+class MonitoringPrometheusState(BaseModel):
+    reachable: bool
+    detail: Optional[str]
+    series: Dict[str, List[MonitoringSample]]
+
+
+class MonitoringJobStat(BaseModel):
+    job_name: str
+    runs: int
+    succeeded: int
+    failed: int
+    seconds_since_last_run: Optional[float]
+
+
+class MonitoringJobFailure(BaseModel):
+    job_name: str
+    started_at: datetime
+    error_message: str
+
+
+class MonitoringJobsState(BaseModel):
+    window_hours: int
+    jobs: List[MonitoringJobStat]
+    recent_failures: List[MonitoringJobFailure]
+
+
+class MonitoringResponse(BaseModel):
+    status: str
+    generated_at: datetime
+    prometheus: MonitoringPrometheusState
+    jobs: MonitoringJobsState
+

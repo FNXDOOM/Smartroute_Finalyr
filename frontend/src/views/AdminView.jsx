@@ -108,6 +108,7 @@ export default function AdminView({ user, view, setView, toast }) {
   if (view === 'admin-analytics') return <AnalyticsPanel       {...ctx} />
   if (view === 'admin-jobs')      return <JobsPanel            {...ctx} />
   if (view === 'admin-heatmap')   return <HeatmapPanel         {...ctx} />
+  if (view === 'admin-monitoring') return <MonitoringPanel      {...ctx} />
   if (view === 'admin-drivers')   return <PendingDriversPanel  {...ctx} />
   return <OverviewPanel user={user} {...ctx} />
 }
@@ -121,6 +122,7 @@ const QUICK_LINKS = [
   { v: 'admin-routes', Icon: RouteIcon, label: 'Routes', desc: 'Multi-stop route plans' },
   { v: 'admin-analytics', Icon: BarChart3, label: 'Analytics', desc: 'Demand & performance' },
   { v: 'admin-jobs', Icon: Settings, label: 'Jobs', desc: 'Background automation' },
+  { v: 'admin-monitoring', Icon: Activity, label: 'Monitoring', desc: 'Traffic, latency, job health' },
   { v: 'admin-heatmap', Icon: Flame, label: 'Heatmap', desc: 'Where demand builds up' },
 ]
 
@@ -1369,6 +1371,199 @@ function PendingDriversPanel({ setView, toast }) {
             </Card>
           ))}
         </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Monitoring
+// ---------------------------------------------------------------------------
+
+// Jobs are scheduled every 60s, so anything past five minutes means a schedule
+// has stopped rather than that traffic happens to be quiet.
+const JOB_STALE_SECONDS = 300
+
+const scalarOf = (series, name) => {
+  const rows = series?.[name]
+  return rows && rows.length ? rows[0].value : null
+}
+
+const formatRate = (value) => (value == null ? '—' : `${value.toFixed(2)}/s`)
+const formatDuration = (value) => {
+  if (value == null) return '—'
+  if (value < 1) return `${Math.round(value * 1000)} ms`
+  return `${value.toFixed(2)} s`
+}
+const formatBytes = (value) => {
+  if (value == null) return '—'
+  const mb = value / (1024 * 1024)
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GiB` : `${mb.toFixed(0)} MiB`
+}
+const formatAge = (value) => {
+  if (value == null) return 'never'
+  if (value < 90) return `${Math.round(value)}s ago`
+  if (value < 5400) return `${Math.round(value / 60)}m ago`
+  return `${(value / 3600).toFixed(1)}h ago`
+}
+
+function MonitoringPanel({ setView, toast }) {
+  const [data, setData] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
+
+  const load = useCallback(async () => {
+    setRefreshing(true)
+    try {
+      setData(await analyticsApi.monitoring())
+    } catch (e) {
+      toast('error', 'Could not load monitoring', apiErrorMessage(e, ''))
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
+  }, [toast])
+  useDeferredLoad(load)
+
+  const series = data?.prometheus?.series
+  const reachable = Boolean(data?.prometheus?.reachable)
+  const jobs = data?.jobs?.jobs || []
+  const failures = data?.jobs?.recent_failures || []
+  const busiest = (series?.busiest_routes || []).slice().sort((a, b) => b.value - a.value)
+  const maxRouteRate = Math.max(0.0001, ...busiest.map((row) => row.value))
+
+  if (loading || !data) {
+    return (
+      <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-7">
+        <PageHeader title="Monitoring" description="Traffic, latency and background job health" onBack={() => setView('admin-overview')} />
+        <LoadingRows count={4} height="h-[92px]" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-7">
+      <PageHeader
+        title="Monitoring"
+        description="Traffic and latency from Prometheus, job outcomes from the database"
+        onBack={() => setView('admin-overview')}
+        actions={
+          <Button variant="outline" size="sm" onClick={load} disabled={refreshing}>
+            <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
+            Refresh
+          </Button>
+        }
+      />
+
+      {!reachable && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-[#E2E2E2] bg-[#F6F6F6] p-4 dark:border-[#333333] dark:bg-[#2A2A2A]">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 text-[13px] leading-relaxed">
+            <p className="font-semibold">Prometheus is not running</p>
+            <p className="mt-0.5 text-muted-foreground">
+              The metrics stack is opt-in: start it with{" "}
+              <code className="rounded bg-white px-1 py-0.5 text-[12px] dark:bg-black">docker compose --profile monitoring up -d</code>.
+              Everything below still reports, because job outcomes are read from the database and need no extra services.
+            </p>
+            {data?.prometheus?.detail && (
+              <p className="mt-1 truncate text-[12px] text-muted-foreground/80">{data.prometheus.detail}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <StatCard icon={Activity} label="Requests" value={formatRate(scalarOf(series, "request_rate"))} sub="last 5 min" />
+        <StatCard icon={Clock} label="p95 latency" value={formatDuration(scalarOf(series, "p95_latency_seconds"))} sub="last 5 min" />
+        <StatCard icon={XCircle} label="Server errors" value={formatRate(scalarOf(series, "server_error_rate"))} sub="5xx per second" />
+        <StatCard icon={Gauge} label="API memory" value={formatBytes(scalarOf(series, "resident_memory_bytes"))} sub="resident" />
+      </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold">Background jobs</CardTitle>
+          <CardDescription>
+            The worker container exposes no port, so this is read from the {data?.jobs?.window_hours || 24}h job_runs
+            history it writes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {jobs.length === 0 ? (
+            <EmptyState icon={Settings} title="No job runs in this window" hint="Scheduled clustering and dispatch record a row each time they fire." />
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Job</TableHead>
+                  <TableHead className="text-right">Runs</TableHead>
+                  <TableHead className="text-right">Failed</TableHead>
+                  <TableHead className="text-right">Last run</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {jobs.map((job) => {
+                  const stale = job.seconds_since_last_run != null && job.seconds_since_last_run > JOB_STALE_SECONDS
+                  return (
+                    <TableRow key={job.job_name}>
+                      <TableCell className="font-medium">{job.job_name}</TableCell>
+                      <TableCell className="mob-data text-right">{job.runs}</TableCell>
+                      <TableCell className={cn("mob-data text-right", job.failed > 0 && "text-red-600 dark:text-red-400")}>
+                        {job.failed}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={stale ? "destructive" : "secondary"} className="mob-data font-normal">
+                          {formatAge(job.seconds_since_last_run)}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {reachable && busiest.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold">Busiest routes</CardTitle>
+            <CardDescription>Requests per second, grouped by route template</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2.5">
+            {busiest.map((row) => (
+              <div key={row.labels.route || "unknown"} className="space-y-1">
+                <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                  <span className="min-w-0 truncate font-medium">{row.labels.route || "unknown"}</span>
+                  <span className="mob-data shrink-0 text-muted-foreground">{formatRate(row.value)}</span>
+                </div>
+                <DensityBar value={row.value} max={maxRouteRate} label={`${row.labels.route} ${formatRate(row.value)}`} />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {failures.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold">Recent job failures</CardTitle>
+            <CardDescription>Newest first — the full history stays in job_runs</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {failures.map((failure, index) => (
+              <div key={`${failure.job_name}-${index}`} className="rounded-lg border border-[#E2E2E2] p-3 dark:border-[#333333]">
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-[13px] font-semibold">{failure.job_name}</span>
+                  <span className="mob-data text-[12px] text-muted-foreground">
+                    {failure.started_at ? new Date(failure.started_at).toLocaleString() : "—"}
+                  </span>
+                </div>
+                <p className="mt-1 break-words text-[12px] text-muted-foreground">{failure.error_message || "no detail recorded"}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
     </div>
   )
