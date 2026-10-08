@@ -199,9 +199,9 @@ def get_analytics_daily(
             continue
         point.ride_requests += 1
         if ride.status == RIDE_CLUSTERED:
-            clustered += 1
+            point.clustered_rides += 1
         elif ride.status == RIDE_COMPLETED:
-            completed += 1
+            point.completed_rides += 1
         elif ride.status == RIDE_CANCELLED:
             point.cancelled_rides += 1
 
