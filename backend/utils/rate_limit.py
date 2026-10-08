@@ -90,7 +90,9 @@ RATE_LIMIT_RULES = (
 )
 
 # Paths that must never be throttled.
-RATE_LIMIT_EXEMPT_PREFIXES = ("/payments/webhook", "/health")
+# /metrics: a scraper polls every few seconds from one container IP, and a
+# truncated payload would read as an outage rather than as throttling.
+RATE_LIMIT_EXEMPT_PREFIXES = ("/payments/webhook", "/health", "/metrics")
 
 # Body-carrying methods guarded by MAX_BODY_BYTES.
 _BODY_METHODS = ("POST", "PUT", "PATCH")

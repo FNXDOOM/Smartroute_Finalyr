@@ -1,12 +1,14 @@
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from database import engine, run_startup_migrations
+from database import engine, run_startup_migrations, SessionLocal
 from routers import auth, rides, cluster, route, routing, geocode, maps, vehicle, predict, tracking, notifications
 from routers import analytics
 from routers import jobs
@@ -19,6 +21,7 @@ from config import (
     LOG_LEVEL,
 )
 from utils.rate_limit import RateLimitBodyGuardMiddleware
+from services import metrics
 from services.background_jobs import start_background_jobs, stop_background_jobs
 
 logging.basicConfig(
@@ -107,6 +110,40 @@ app.include_router(notifications.router, prefix="/notifications", tags=["Notific
 app.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
+
+
+# Registered last, so this is the outermost middleware: it also sees requests the
+# rate limiter turns away, which is precisely the signal worth having.
+@app.middleware("http")
+async def _record_request_metrics(request: Request, call_next):
+    """Count and time every request against its matched route template."""
+    if request.url.path == "/metrics":
+        return await call_next(request)
+    started = time.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        route = metrics.route_label(request)
+        metrics.HTTP_REQUESTS.labels(request.method, route, str(status_code)).inc()
+        metrics.HTTP_LATENCY.labels(route).observe(time.perf_counter() - started)
+
+
+metrics.register_job_collector(SessionLocal)
+
+
+@app.get("/metrics", include_in_schema=False, response_class=PlainTextResponse)
+def prometheus_metrics():
+    """Prometheus scrape endpoint.
+
+    Unauthenticated because a scraper can hold no Clerk JWT — the auth layer
+    offers no API-key path. That is safe only because nothing publishes it: the
+    compose files expose no host port for the API and NPM has no route here, so
+    it is reachable from inside the docker network alone.
+    """
+    return PlainTextResponse(metrics.render(), media_type=metrics.CONTENT_TYPE_LATEST)
 
 
 @app.get("/")
