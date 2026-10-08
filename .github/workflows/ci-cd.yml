@@ -5,7 +5,7 @@
 #   + EC2 deploy of the immutable :<short-sha> tag (never :latest).
 #
 # EC2 NEVER runs git and holds NO source repo. Each deploy SCPs ONLY:
-#   docker-compose.prod.yml + deploy/deploy.sh  →  $EC2_DEPLOY_DIR/
+#   docker-compose.prod.yml + deploy/deploy.sh + monitoring/  →  $EC2_DEPLOY_DIR/
 # then runs deploy.sh <SHA>, which pulls images, fetches secrets from
 # AWS Secrets Manager via the IAM instance role, migrates, and starts compose.
 #
@@ -222,9 +222,10 @@ jobs:
             exit 2
           fi
 
-          # These are the ONLY two files EC2 is allowed to need.
+          # This is ALL EC2 is allowed to need — it holds no git repo.
           test -f docker-compose.prod.yml || { echo "ERROR: docker-compose.prod.yml missing in repo root." >&2; exit 2; }
           test -f deploy/deploy.sh || { echo "ERROR: deploy/deploy.sh missing." >&2; exit 2; }
+          test -f monitoring/prometheus.yml || { echo "ERROR: monitoring/prometheus.yml missing; docker-compose.prod.yml mounts it." >&2; exit 2; }
 
           # --- SSH setup with host-key checking ON ---
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -239,9 +240,13 @@ jobs:
           # shellcheck disable=SC2029
           ${SSH} "${EC2_USER}@${EC2_HOST}" "mkdir -p '${DEPLOY_DIR}/deploy'"
 
-          echo "Uploading deployment bundle (2 files only, no repo)..."
+          echo "Uploading deployment bundle (no repo)..."
           ${SCP} docker-compose.prod.yml "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/docker-compose.prod.yml"
           ${SCP} deploy/deploy.sh "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/deploy/deploy.sh"
+          # Prometheus and Grafana mount these. Shipped even when the monitoring
+          # profile is off so the two environments never diverge on config.
+          ${SSH} "${EC2_USER}@${EC2_HOST}" "mkdir -p '${DEPLOY_DIR}/monitoring'"
+          ${SCP} -r monitoring/. "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/monitoring/"
 
           echo "Running deploy.sh for IMAGE_TAG=${IMAGE_TAG}..."
           # Values passed here are non-secret (namespace, SHA, secret ID, region).

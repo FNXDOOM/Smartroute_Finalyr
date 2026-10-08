@@ -91,6 +91,53 @@ services:
       api:
         condition: service_healthy
 
+  # ---------- monitoring: opt-in, never published ----------
+  # Start with:  docker compose -f docker-compose.prod.yml --profile monitoring up -d
+  #
+  # Neither service maps a host port. Prometheus speaks no authentication at all
+  # and Grafana is not wired into the app's Clerk login, so both stay reachable
+  # only inside this network -- look at them through an SSH tunnel. The admin
+  # panel deliberately does not embed Grafana: it reads Prometheus through the
+  # authenticated GET /analytics/monitoring, which accepts a fixed query whitelist
+  # rather than caller-supplied PromQL.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    expose:
+      - "9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["monitoring"]
+    environment:
+      # Must stay a default, not `${VAR:?}`: Compose interpolates the entire file
+      # whether or not the profile is active, so a required variable here would
+      # fail every production deploy. Grafana forces a password change on the
+      # first admin login, and nothing maps a host port for it in the meantime.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    expose:
+      - "3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   npm_data:
   npm_letsencrypt:
+  prometheus_data:
+  grafana_data:

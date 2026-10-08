@@ -4,11 +4,17 @@ Dev workflow is unchanged: `docker compose up --build` still uses
 `docker-compose.yml` + `backend/.env` + `frontend/.env`.
 
 Production uses **separate** files and never builds on EC2.
-EC2 holds NO git repo. Each deploy ships a 2-file bundle via SCP:
+EC2 holds NO git repo. Each deploy ships this bundle via SCP:
 
 - `docker-compose.prod.yml` → `$EC2_DEPLOY_DIR/docker-compose.prod.yml`
 - `deploy/deploy.sh`         → `$EC2_DEPLOY_DIR/deploy/deploy.sh`
+- `monitoring/`              → `$EC2_DEPLOY_DIR/monitoring/` (Prometheus +
+  Grafana config; only read when the `monitoring` compose profile is enabled)
 - `.github/workflows/ci-cd.yml` — lint/test/build, push, SCP bundle, SSH deploy
+
+`monitoring/` is shipped so dev and production mount the same files. Generating
+that config inside `deploy.sh` instead would have given the two environments
+different sources of truth.
 
 ## 1. GitHub configuration
 

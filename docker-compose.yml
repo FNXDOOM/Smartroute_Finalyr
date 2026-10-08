@@ -76,6 +76,51 @@ services:
     depends_on:
       - api
 
+  # ---------- monitoring: opt-in, never published ----------
+  # Start with:  docker compose --profile monitoring up -d
+  #
+  # No host ports: Prometheus has no authentication and Grafana is not wired
+  # into the app's Clerk login, so both stay inside this network. The admin
+  # panel reads Prometheus through the authenticated GET /analytics/monitoring
+  # rather than embedding Grafana.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: ["monitoring"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    expose:
+      - "9090"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["monitoring"]
+    environment:
+      # A default, not `${VAR:?}`: Compose interpolates the whole file even when
+      # the profile is off, so a required variable here would break every run.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    expose:
+      - "3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
 volumes:
   npm_data:
   npm_letsencrypt:
+  prometheus_data:
+  grafana_data:

@@ -1,0 +1,24 @@
+# Prometheus scrape config. Mounted read-only into the prometheus container by
+# both compose files, so dev and production read the same source of truth.
+#
+# Nothing here is published on a host port: Prometheus has no authentication at
+# all, so it is reachable only from inside the compose network. To look at it
+# from a laptop, tunnel:  ssh -L 9090:prometheus:9090 <ec2-host>
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Prometheus watching itself, so "is monitoring down" is answerable.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  # The API exposes /metrics. The worker does not and cannot: it publishes no
+  # port at all, so its health reaches Prometheus through job_runs rows that
+  # the API scrapes on the API's own /metrics.
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]

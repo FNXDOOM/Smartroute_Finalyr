@@ -8,6 +8,7 @@
 # EC2 layout (created by SCP each deploy, NO git repo):
 #   $DEPLOY_DIR/docker-compose.prod.yml
 #   $DEPLOY_DIR/deploy/deploy.sh
+#   $DEPLOY_DIR/monitoring/           (Prometheus + Grafana config, profile-gated)
 #   $DEPLOY_DIR/deploy/.env.prod      (generated, mode 0600)
 #   $DEPLOY_DIR/deploy/.last-good-tag (generated)
 # Default $DEPLOY_DIR is the parent of this script (e.g. /opt/smartroute).
@@ -38,8 +39,10 @@
 #   - Docker Engine + Compose plugin, AWS CLI v2, python3.
 #   - git is NOT required and MUST NOT be used. No source repo on EC2.
 #   - IAM instance profile with secretsmanager:GetSecretValue on the secret.
-#   - The 2-file bundle: docker-compose.prod.yml + deploy/deploy.sh
-#     (shipped by CI via SCP on every deploy).
+#   - The deploy bundle: docker-compose.prod.yml + deploy/deploy.sh +
+#     monitoring/ (Prometheus and Grafana config, read only under the
+#     "monitoring" compose profile).
+#     Shipped by CI via SCP on every deploy.
 #   - Env: DOCKERHUB_NAMESPACE, IMAGE_TAG (arg or env).
 #     Optional: BACKEND_SECRET_ID (default smartroute/production/backend),
 #               AWS_REGION (auto-detected via IMDSv2 if unset),
