@@ -1,10 +1,6 @@
-"""Analytics aggregation: the daily rollup and who may read it.
+"""Analytics aggregation: the daily rollup, the monitoring endpoint, and who may read them.
 
-Nothing exercised `routers/analytics.py` before, which is how `get_analytics_daily`
-shipped incrementing two names that were never assigned -- an `UnboundLocalError`
-on the first clustered or completed ride of the day, and silently zero counts
-whenever it did not throw. Assertions are written as deltas because the scratch
-database persists between runs and earlier tests leave live rides in it.
+Counts are asserted as deltas because the scratch database persists between runs.
 """
 
 import sys

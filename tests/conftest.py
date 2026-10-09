@@ -1,26 +1,10 @@
 """Shared pytest setup: where the test database lives, and what it must never be.
 
-CI runs ``pytest tests/ -v`` with
-``DATABASE_URL=sqlite:///./.testdb/ci_test.db`` on a fresh runner, so the SQLite
-file has no tables unless something creates them.
-``tests/test_pipeline_and_batch.py`` uses ``database.SessionLocal`` directly
-and queries ``users`` — without a prior ``create_all`` it fails with
-``sqlite3.OperationalError: no such table: users``.
-
-This session-scoped autouse fixture imports all ORM models (registering them
-on ``Base.metadata``) and calls ``create_db_tables()`` once before any test
-runs. It is idempotent (``checkfirst=True``) so it is safe for local runs
-against an existing dev database too.
-
-"dev database" means local, though: ``backend/.env`` points at a hosted
-Postgres, and ``create_db_tables()`` issues real DDL there (``ALTER TABLE``
-backfills, ``CREATE INDEX``). Running the suite without overriding
-``DATABASE_URL`` would migrate production, so the fixture aborts instead. Set
-``TEST_DB_ALLOW_REMOTE=1`` to opt back in deliberately.
-
-The suite is also hermetic: outbound sockets are refused so a networked runner
-behaves exactly like an offline laptop. See ``_keep_the_suite_hermetic`` for the
-cost of not doing that, and ``TEST_ALLOW_NETWORK=1`` for the escape hatch.
+CI runs against ``sqlite:///./.testdb/ci_test.db``, so the schema is created here.
+Two guards stop a bare ``pytest`` doing damage: a hosted ``DATABASE_URL`` is
+refused (``create_db_tables()`` issues real DDL and ``backend/.env`` points at
+production), and outbound sockets are refused (osmnx is installed in CI but not
+locally, so road-graph fetches make CI crawl while local runs skip snapping).
 """
 
 import os
@@ -55,12 +39,7 @@ def hits_hosted_database(url: str) -> bool:
 
 
 def is_external_address(address) -> bool:
-    """True when a socket target leaves this machine.
-
-    ``socket.connect`` receives ``(host, port)`` for an internet address and a
-    bare path string for AF_UNIX (or AF_PIPE on Windows). Only the tuple form
-    can name a remote host, so a string is treated as a local file.
-    """
+    """True when a socket target leaves this machine; a bare string is an AF_UNIX path."""
     if not isinstance(address, tuple) or not address:
         return False
     host = address[0]
@@ -69,16 +48,9 @@ def is_external_address(address) -> bool:
 
 @pytest.fixture(scope="session", autouse=True)
 def _keep_the_suite_hermetic():
-    """Refuse outbound sockets for the whole session.
+    """Refuse outbound sockets so CI behaves like a laptop: no Overpass road-graph fetches.
 
-    The suite was written offline, where ``road_snapper.build_road_graph``
-    raises and returns ``None`` so clustering tests skip road snapping. On a
-    networked runner the same call asks Overpass for a 2.5 km road graph per
-    0.05 degree cell, which costs tens of seconds and a networkx graph of a
-    city district each -- enough to take a 1:44 suite past ten minutes. Blocking
-    egress makes CI behave exactly like a laptop and turns any accidental
-    dependency on the open internet into an immediate failure instead of a
-    timeout. Set ``TEST_ALLOW_NETWORK=1`` to opt out.
+    Opt out with ``TEST_ALLOW_NETWORK=1``.
     """
     if os.getenv("TEST_ALLOW_NETWORK") == "1":
         yield
@@ -113,13 +85,7 @@ def _keep_the_suite_hermetic():
 
 
 def prepare_scratch_database(url: str) -> None:
-    """Create the folder a scratch SQLite URL points into, and retire older runs.
-
-    SQLite will not create a missing parent directory, and each ad-hoc
-    ``DATABASE_URL`` name used to leave another file in the repo root forever.
-    Only files inside ``SCRATCH_DB_DIR`` are candidates, so a database that
-    lives elsewhere is never deleted no matter its name.
-    """
+    """Create the scratch folder SQLite will not make, and keep only the newest DBs."""
     parsed = make_url(url)
     if not parsed.drivername.startswith("sqlite") or not parsed.database:
         return

@@ -1,23 +1,9 @@
 """Prometheus exposition for the API process.
 
-Two things are measured here and nothing else:
-
-* HTTP rate, latency and status — signals that exist nowhere today.
-* Background-job health, derived from ``job_runs`` — because the worker
-  container has no HTTP port (`docker-compose.prod.yml` gives it
-  `healthcheck: disable`) and its scheduler heartbeat lives only in that
-  process' memory. `GET /jobs/status` on the API reports
-  `scheduler_running=false` and null timestamps in production, since
-  `ENABLE_BACKGROUND_JOBS_IN_API` is false there. Postgres is the only channel
-  between the two processes, so the API scrapes what the worker wrote.
-
-Job *history* stays in Postgres — it is durable and already carries summaries
-and error text, which Prometheus would only hold a lossy copy of.
-
-Process CPU/memory/file-descriptor metrics come from prometheus_client's own
-collector, which reads ``/proc``: present in the Linux container, absent on a
-Windows dev machine unless psutil is installed. Anything grafana-side that
-plots memory should therefore expect no data when pointed at a laptop.
+Job health is derived from job_runs rather than scraped: the worker publishes no
+port and its heartbeat is in-process memory, so Postgres is the only channel to
+it. Process CPU/memory come from prometheus_client's /proc collector and are
+therefore absent on Windows dev machines.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -27,11 +13,10 @@ from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, Counter, Histogram,
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from sqlalchemy import case, func
 
+# Covers a stalled 60s schedule while staying narrow enough for the index.
 JOB_WINDOW_HOURS = 24
-# Long enough to cover a stalled schedule, short enough that the scrape query
-# stays on the started_at index.
-# Anything unroutable (404 probes, scanners) collapses to this one label so a
-# request flood cannot mint unbounded label series.
+
+# Unroutable paths collapse to this one label so a scanner cannot mint a series per URL.
 UNMATCHED_ROUTE = "unmatched"
 
 HTTP_REQUESTS = Counter(
@@ -48,17 +33,13 @@ HTTP_LATENCY = Histogram(
 
 
 def route_label(request) -> str:
-    """The matched route template, never the concrete path.
-
-    Reading ``scope["route"]`` after the response exists gives the template
-    (``/rides/{ride_id}/status``), so path parameters cannot leak into labels.
-    """
+    """The matched route template, so path parameters never become labels."""
     route = request.scope.get("route")
     return getattr(route, "path", None) or UNMATCHED_ROUTE
 
 
 def _epoch(value: Optional[datetime]) -> float:
-    """Seconds since the epoch, tolerating the naive datetimes SQLite returns."""
+    """Seconds since the epoch; SQLite hands back naive datetimes."""
     if value is None:
         return 0.0
     if value.tzinfo is None:
@@ -92,7 +73,7 @@ class JobRunCollector:
 
         try:
             rows = self._query()
-        except Exception:  # noqa: BLE001 — one bad query must not void the payload
+        except Exception:  # noqa: BLE001 — one bad query must not void the whole payload
             db_up.add_metric([], 0)
             yield db_up
             return

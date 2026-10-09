@@ -1,13 +1,9 @@
 """Reads the monitoring stack for the admin panel.
 
-Prometheus is optional *by deployment*: it only runs under the `monitoring`
-compose profile, so everything here degrades to a clear "not running" answer
-instead of an exception. This endpoint sits on an admin's critical path; an
-absent or slow Prometheus must not take the panel down with it.
-
-Only a fixed whitelist of queries is ever sent. Accepting caller-supplied PromQL
-would hand out a full expression language over the metrics store, where one
-`rate(x[1000d])` is enough to pin a CPU.
+Prometheus only runs under the `monitoring` compose profile, so every function
+degrades to a plain "not running" answer rather than an exception. Only the
+fixed QUERIES whitelist is ever sent: caller-supplied PromQL would hand out a
+query language over the metrics store.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -18,12 +14,11 @@ from sqlalchemy import case, func
 
 from models.job_run import JobRun
 
-# Short: the panel renders this inline, so an unreachable Prometheus must fail
-# fast rather than hold a request.
+# The panel renders inline, so an unreachable Prometheus must fail fast.
 PROMETHEUS_TIMEOUT_SECONDS = 2.0
 JOB_WINDOW_HOURS = 24
+RECENT_FAILURES_SHOWN = 5
 
-# name -> (PromQL, what the admin should read from it)
 QUERIES: Dict[str, str] = {
     "request_rate": 'sum(rate(http_requests_total[5m]))',
     "server_error_rate": 'sum(rate(http_requests_total{status=~"5.."}[5m]))',
@@ -33,8 +28,11 @@ QUERIES: Dict[str, str] = {
     ),
     "busiest_routes": 'topk(6, sum by (route) (rate(http_requests_total[5m])))',
     "resident_memory_bytes": "process_resident_memory_bytes",
-    "job_staleness_seconds": "time() - job_last_success_timestamp_seconds",
 }
+
+
+def _unreachable(detail: str) -> Dict[str, Any]:
+    return {"reachable": False, "detail": detail[:200], "series": {}}
 
 
 def _parse(result: List[dict]) -> List[Dict[str, Any]]:
@@ -53,46 +51,27 @@ def _parse(result: List[dict]) -> List[Dict[str, Any]]:
 def query_prometheus(base_url: str) -> Dict[str, Any]:
     """Run every whitelisted query once. Never raises."""
     if not base_url:
-        return {"reachable": False, "detail": "PROMETHEUS_BASE_URL is not configured", "series": {}}
+        return _unreachable("PROMETHEUS_BASE_URL is not configured")
 
     series: Dict[str, Any] = {}
     try:
         with httpx.Client(timeout=PROMETHEUS_TIMEOUT_SECONDS) as client:
             for name, expression in QUERIES.items():
-                response = client.get(
-                    f"{base_url.rstrip('/')}/api/v1/query", params={"query": expression}
-                )
+                response = client.get(f"{base_url}/api/v1/query", params={"query": expression})
                 if response.status_code != 200:
-                    return {
-                        "reachable": False,
-                        "detail": f"Prometheus answered {response.status_code}",
-                        "series": {},
-                    }
+                    return _unreachable(f"Prometheus answered {response.status_code}")
                 payload = response.json()
                 if payload.get("status") != "success":
-                    return {
-                        "reachable": False,
-                        "detail": str(payload.get("error") or "Prometheus query failed")[:200],
-                        "series": {},
-                    }
+                    return _unreachable(str(payload.get("error") or "Prometheus query failed"))
                 series[name] = _parse(payload.get("data", {}).get("result", []))
-    except Exception as exc:  # noqa: BLE001 — down/not installed/blocked are all the same answer
-        return {
-            "reachable": False,
-            "detail": f"{type(exc).__name__}: {exc}"[:200],
-            "series": {},
-        }
+    except Exception as exc:  # noqa: BLE001 — down, absent and blocked are the same answer
+        return _unreachable(f"{type(exc).__name__}: {exc}")
 
     return {"reachable": True, "detail": None, "series": series}
 
 
 def job_health(db) -> Dict[str, Any]:
-    """Job outcomes straight from Postgres.
-
-    This half works with no monitoring stack installed at all, and it is the
-    only view of the worker: that container publishes no port, so nothing can
-    scrape it. `job_runs` is what it leaves behind.
-    """
+    """Job outcomes from Postgres, which is the only view of the portless worker."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=JOB_WINDOW_HOURS)
     rows = (
         db.query(
@@ -113,12 +92,13 @@ def job_health(db) -> Dict[str, Any]:
     for name, total, succeeded, failed, newest in rows:
         age = None
         if newest is not None:
-            reference = newest if newest.tzinfo else newest.replace(tzinfo=timezone.utc)
-            age = round(max(0.0, (now - reference).total_seconds()), 1)
+            if newest.tzinfo is None:
+                newest = newest.replace(tzinfo=timezone.utc)
+            age = round(max(0.0, (now - newest).total_seconds()), 1)
         jobs.append(
             {
                 "job_name": name,
-                "runs": total or 0,
+                "runs": int(total or 0),
                 "succeeded": int(succeeded or 0),
                 "failed": int(failed or 0),
                 "seconds_since_last_run": age,
@@ -129,7 +109,7 @@ def job_health(db) -> Dict[str, Any]:
         db.query(JobRun)
         .filter(JobRun.started_at >= cutoff, JobRun.status == "failed")
         .order_by(JobRun.started_at.desc())
-        .limit(5)
+        .limit(RECENT_FAILURES_SHOWN)
         .all()
     )
     return {

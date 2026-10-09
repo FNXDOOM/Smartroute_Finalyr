@@ -112,8 +112,7 @@ app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
 app.include_router(payments.router, prefix="/payments", tags=["Payments"])
 
 
-# Registered last, so this is the outermost middleware: it also sees requests the
-# rate limiter turns away, which is precisely the signal worth having.
+# Registered last, so it is outermost and also sees requests the rate limiter rejects.
 @app.middleware("http")
 async def _record_request_metrics(request: Request, call_next):
     """Count and time every request against its matched route template."""
@@ -136,13 +135,7 @@ metrics.register_job_collector(SessionLocal)
 
 @app.get("/metrics", include_in_schema=False, response_class=PlainTextResponse)
 def prometheus_metrics():
-    """Prometheus scrape endpoint.
-
-    Unauthenticated because a scraper can hold no Clerk JWT — the auth layer
-    offers no API-key path. That is safe only because nothing publishes it: the
-    compose files expose no host port for the API and NPM has no route here, so
-    it is reachable from inside the docker network alone.
-    """
+    """Scrape endpoint: unauthenticated because a scraper holds no JWT, safe because nothing publishes it."""
     return PlainTextResponse(metrics.render(), media_type=metrics.CONTENT_TYPE_LATEST)
 
 

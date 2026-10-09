@@ -1380,8 +1380,7 @@ function PendingDriversPanel({ setView, toast }) {
 // Monitoring
 // ---------------------------------------------------------------------------
 
-// Jobs are scheduled every 60s, so anything past five minutes means a schedule
-// has stopped rather than that traffic happens to be quiet.
+// Jobs run every 60s, so past five minutes means a schedule stopped, not that traffic is quiet.
 const JOB_STALE_SECONDS = 300
 
 const scalarOf = (series, name) => {
@@ -1475,7 +1474,7 @@ function MonitoringPanel({ setView, toast }) {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatCard icon={Activity} label="Requests" value={formatRate(scalarOf(series, "request_rate"))} sub="last 5 min" />
         <StatCard icon={Clock} label="p95 latency" value={formatDuration(scalarOf(series, "p95_latency_seconds"))} sub="last 5 min" />
-        <StatCard icon={XCircle} label="Server errors" value={formatRate(scalarOf(series, "server_error_rate"))} sub="5xx per second" />
+        <StatCard icon={XCircle} label="Server errors" value={formatRate(scalarOf(series, "server_error_rate"))} sub={`${formatRate(scalarOf(series, "throttled_rate"))} throttled`} />
         <StatCard icon={Gauge} label="API memory" value={formatBytes(scalarOf(series, "resident_memory_bytes"))} sub="resident" />
       </div>
 

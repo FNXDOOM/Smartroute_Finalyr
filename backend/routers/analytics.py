@@ -232,13 +232,7 @@ def get_monitoring(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Operational health: HTTP metrics from Prometheus plus job outcomes from Postgres.
-
-    The Prometheus half is empty whenever the `monitoring` compose profile is
-    off, which is the default deployment. `prometheus.reachable` says so and the
-    jobs half still answers, so the admin panel never depends on that stack
-    being installed.
-    """
+    """Traffic and latency from Prometheus plus job outcomes from Postgres."""
     _require_admin_or_driver(current_user)
 
     return MonitoringResponse(

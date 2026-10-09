@@ -819,10 +819,10 @@ compose profile. When it is absent, `prometheus.reachable` is `false` with the
 reason in `detail` and `series` is empty, while the `jobs` half still returns.
 The panel is built so that half never blocks the other.
 
-The browser never supplies PromQL. `services/monitoring.py` holds a fixed
+The browser never receives PromQL. `services/monitoring.py` holds a fixed
 whitelist (`request_rate`, `server_error_rate`, `throttled_rate`,
-`p95_latency_seconds`, `busiest_routes`, `resident_memory_bytes`,
-`job_staleness_seconds`) and queries Prometheus server-side with a 2 s timeout.
+`p95_latency_seconds`, `busiest_routes`, `resident_memory_bytes`) and queries
+Prometheus server-side with a 2 s timeout.
 
 **Auth required:** Yes (admin or driver)
 

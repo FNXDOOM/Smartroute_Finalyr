@@ -1,9 +1,7 @@
-"""The Prometheus surface: what it records, what it must never leak, and who
-can reach it.
+"""The Prometheus surface: what it records, what it must never leak, who can reach it.
 
-The route-template assertion is the important one. Labelling by concrete path
-would let any scanner mint an unbounded series per URL and grow Prometheus
-forever.
+The route-template assertion matters most: labelling by concrete path would let a
+scanner mint an unbounded series per URL.
 """
 
 import asyncio
@@ -43,13 +41,8 @@ def test_metrics_endpoint_is_public_and_in_prometheus_format():
 
 
 def test_process_metrics_only_exist_where_proc_does():
-    """Documented rather than asserted as a requirement.
-
-    prometheus_client's ProcessCollector reads /proc, so it yields nothing on
-    Windows dev machines without psutil. Production is a Linux container and
-    does emit these, which is what the Grafana memory panel relies on -- but a
-    laptop scrape will legitimately show no process_* at all.
-    """
+    """prometheus_client's process collector reads /proc: present in the Linux
+    container, absent on Windows. Production is what the Grafana panel targets."""
     import platform
 
     body = _scrape()
