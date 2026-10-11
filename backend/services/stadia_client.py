@@ -73,13 +73,7 @@ def fetch_stadia_style() -> dict:
 
 @lru_cache(maxsize=1)
 def _fetch_stadia_style_cached() -> dict:
-    """Fetch and cache the style, retrying transient upstream failures.
-
-    The style is shared by every map instance and changes rarely. Caching the
-    successful response avoids making every passenger/driver map mount depend
-    on a fresh Stadia request, while the short retry handles occasional 502s
-    from the upstream tile service.
-    """
+    """Cache the rarely-changing style so map mounts don't hit Stadia, retrying transient 502s rather than caching failures."""
     last_error = None
     for attempt in range(2):
         try:
@@ -223,13 +217,7 @@ def _decode_polyline(encoded: str, precision: int = 6) -> list[list[float]]:
 
 
 def extract_route_details(data: dict) -> dict:
-    """Normalize Stadia/Valhalla route output for the rest of the app.
-
-    ``geometry`` stays the single stitched polyline every existing caller
-    relies on. ``legs`` exposes the same coordinates split per Valhalla leg
-    (one leg per consecutive pair of requested locations) so pooled routes can
-    be drawn segment by segment instead of as one line.
-    """
+    """Normalize Stadia/Valhalla output: geometry stays the single stitched polyline callers expect, legs split it per consecutive pair."""
     trip = data.get("trip") or {}
     geometry: list[list[float]] = []
     maneuvers: list[dict] = []
@@ -276,11 +264,7 @@ def extract_route_details(data: dict) -> dict:
 
 
 def extract_nearest_point(data) -> dict | None:
-    """Handle the response shapes used by Stadia's nearest-roads (Valhalla
-    /locate) endpoint. Valhalla's /locate returns a bare JSON *list* — one
-    entry per input location — not a dict wrapping a "locations" key, so this
-    must not assume the top-level response has a .get() method.
-    """
+    """Valhalla /locate returns a bare list (one entry per input), not a dict, so don't assume the response has .get()."""
     if isinstance(data, list):
         candidates = data
     else:

@@ -126,9 +126,7 @@ def run_clustering(
             for request in members:
                 request.cluster_id = next_cluster_id
                 request.virtual_stop_id = virtual_stop.id
-                # Keep the fine carpool stage in lockstep with the coarse status:
-                # this endpoint writes status directly, so a shared ride clustered
-                # here would otherwise keep carpool_status NULL forever.
+                # This endpoint writes status directly, so a shared ride must get its fine carpool stage here or it stays NULL forever.
                 if getattr(request, "is_shared", False):
                     set_carpool_stage(request, CARPOOL_CLUSTERED)
                 else:

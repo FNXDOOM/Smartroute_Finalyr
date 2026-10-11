@@ -20,11 +20,7 @@ class VRPRequest(BaseModel):
 
 
 class RouteLeg(BaseModel):
-    """One driving leg between two consecutive waypoints.
-
-    ``geometry`` is that leg's own polyline, so a client can draw the route
-    stop by stop instead of as a single line.
-    """
+    """One driving leg between two consecutive waypoints; `geometry` is that leg's own polyline so clients can draw the route stop by stop."""
 
     index: int
     geometry: List[List[float]] = Field(default_factory=list)
@@ -75,8 +71,7 @@ class RoutePlanResponse(BaseModel):
     total_distance_meters: float
     estimated_duration_seconds: float
     route_metadata: Optional[dict] = None
-    # Promoted from ``route_metadata`` so a driver client can draw the route
-    # without reaching into an untyped dict.
+    # Promoted from ``route_metadata`` so a driver client can draw the route without reaching into an untyped dict.
     geometry: List[List[float]] = Field(default_factory=list)
     legs: List[RouteLeg] = Field(default_factory=list)
     problem: str = "pdp"

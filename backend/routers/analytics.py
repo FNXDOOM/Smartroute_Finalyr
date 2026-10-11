@@ -54,7 +54,6 @@ def get_analytics_overview(
     total_route_plans = db.query(func.count(RoutePlan.id)).filter(RoutePlan.mode == LIVE_MODE).scalar() or 0
     total_tracking_events = db.query(func.count(TrackingEvent.id)).scalar() or 0
 
-    # Status breakdown
     status_rows = (
         db.query(RideRequest.status, func.count(RideRequest.id))
         .filter(RideRequest.mode == LIVE_MODE)
@@ -63,7 +62,6 @@ def get_analytics_overview(
     )
     rides_by_status = {row[0]: row[1] for row in status_rows}
 
-    # Vehicle counts
     vehicle_status_rows = (
         db.query(Vehicle.status, func.count(Vehicle.id))
         .filter(Vehicle.mode == LIVE_MODE)
@@ -78,11 +76,9 @@ def get_analytics_overview(
         else:
             active_vehicles += cnt
 
-    # Avg passengers per stop
     avg_passengers_row = db.query(func.avg(VirtualStop.passenger_count)).filter(VirtualStop.mode == LIVE_MODE).scalar()
     avg_passengers_per_virtual_stop = round(float(avg_passengers_row or 0.0), 2)
 
-    # Avg route distance
     avg_route_dist_row = db.query(func.avg(RoutePlan.total_distance_meters)).filter(RoutePlan.mode == LIVE_MODE).scalar()
     avg_route_distance_meters = round(float(avg_route_dist_row or 0.0), 2)
 
@@ -172,7 +168,6 @@ def get_analytics_daily(
     start_date = end_date - timedelta(days=days - 1)
     start_dt = datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc)
 
-    # Rides in window
     rides = (
         db.query(RideRequest)
         .filter(RideRequest.request_time >= start_dt, RideRequest.mode == LIVE_MODE)

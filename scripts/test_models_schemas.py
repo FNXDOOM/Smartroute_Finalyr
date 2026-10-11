@@ -1,7 +1,6 @@
 import sys
 from pathlib import Path
 
-# Add backend directory to sys.path
 BACKEND_ROOT = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND_ROOT))
 
@@ -20,22 +19,17 @@ from models.virtual_stop import VirtualStop
 def test_models_and_schemas():
     print("Testing Pydantic Schemas...")
     
-    # 1. User
     print("[OK] Clerk-backed user profile schema is available")
     
-    # 2. Ride Request
     ride_in = RideRequestCreate(pickup_lat=12.9716, pickup_lng=77.5946, dest_lat=12.9352, dest_lng=77.6245)
     print(f"[OK] RideRequestCreate Schema: {ride_in.model_dump()}")
     
-    # 3. Vehicle
     vehicle_in = VehicleCreate(license_plate="KA-01-EA-1234", capacity=6, status="idle", lat=12.9716, lng=77.5946)
     print(f"[OK] VehicleCreate Schema: {vehicle_in.model_dump()}")
     
-    # 4. Virtual Stop
     stop_in = VirtualStopCreate(cluster_id=1, h3_index="8928308280fffff", lat=12.9720, lng=77.5950, passenger_count=3)
     print(f"[OK] VirtualStopCreate Schema: {stop_in.model_dump()}")
     
-    # 5. Route
     vrp_in = VRPRequest(vehicle_ids=[1], virtual_stop_ids=[1, 2], depot_lat=12.97, depot_lng=77.59)
     print(f"[OK] VRPRequest Schema: {vrp_in.model_dump()}")
 

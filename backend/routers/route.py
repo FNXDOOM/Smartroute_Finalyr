@@ -250,8 +250,7 @@ def list_routes(
         .limit(limit)
         .all()
     )
-    # Repair older carpool routes that completed every ride but never stored
-    # the route-level completed state.
+    # Repair older carpool routes that completed every ride but never stored the route-level completed state.
     completed_route_ids = []
     for route in routes:
         if settle_carpool_run(db, route, notify=False):
@@ -289,9 +288,7 @@ def get_route_history(
         if not vehicle or vehicle.driver_user_id != current_user.id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Route not found")
 
-    # Plans written by the automatic dispatch job carry no road geometry, so a
-    # driver opening the map is the first chance to fetch it (cached on the
-    # plan, exactly once, for every later caller).
+    # Plans from the automatic dispatch job carry no road geometry, so a driver opening the map fetches it once and caches it on the plan.
     resolve_route_geometry(db, route_plan)
 
     return _route_plan_response(route_plan)
@@ -414,12 +411,7 @@ def complete_carpool_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Close a carpool run and release its vehicle.
-
-    This is the only path that closes a run reached through the driver's carpool
-    endpoints: individual drop-offs record the drop-off, and the driver decides
-    when the run is over.
-    """
+    """Close a carpool run and release its vehicle; the only endpoint that ends a driver-run, since drop-offs alone never do."""
     ensure_active_driver(current_user)
     try:
         run = CarpoolRun.open(db, route_id, current_user, statuses=CLOSABLE_ROUTE_STATUSES)

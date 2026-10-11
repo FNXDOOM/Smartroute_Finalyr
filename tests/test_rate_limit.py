@@ -1,21 +1,5 @@
-"""Rate-limiting tests — controlled, small-volume, no real traffic generation.
-
-Verifies the security-audit fixes:
-  - requests under limit pass; over limit get 429 (project error shape)
-  - Retry-After present; X-RateLimit-* headers on passing responses
-  - different client IPs tracked independently
-  - window resets (monotonic-clock based)
-  - exemptions: OPTIONS preflight, /health/*, /payments/webhook
-  - identity = request.client.host as resolved by uvicorn's trusted-proxy
-    chain; limiter never reads raw X-Forwarded-For (spoof-proof by design)
-  - trailing-slash/case variants cannot dodge endpoint rules
-  - oversized/chunked bodies rejected 413 before buffering
-  - per-USER payment caps enforced + isolated between users
-  - RATE_LIMIT_ENABLED=false disables everything
-
-All traffic is a handful of in-process ASGI requests (httpx ASGITransport) —
-no sockets, no load generation, mirrors tests/test_payments.py conventions.
-"""
+"""Rate-limit security-audit coverage: 429 shape and Retry-After, per-IP isolation, monotonic window resets,
+exemptions, path-variant rules, 413 body guards, per-user payment caps, kill switch — all via in-process ASGI, no sockets."""
 
 import asyncio
 import sys
@@ -93,9 +77,7 @@ def _request(
     return asyncio.run(go())
 
 
-# ---------------------------------------------------------------------------
-# A. Basic flooding: allow under limit, 429 over limit
-# ---------------------------------------------------------------------------
+# --- Basic flooding: allow under limit, 429 over limit ---
 
 
 def test_allows_up_to_limit_then_429(probe_app):
@@ -121,15 +103,12 @@ def test_success_response_has_rate_limit_headers(probe_app):
 
 
 def test_rule_limit_overrides_default_for_expensive_endpoint(probe_app):
-    # /predict has its own rule (30/min in prod) — distinct bucket from the
-    # default 5/min, so the same IP can hit both budgets independently.
+    # /predict has its own rule (30/min in prod): a distinct bucket, so one IP spends both budgets.
     codes = [_request(probe_app, "/predict/echo").status_code for _ in range(7)]
     assert codes == [200] * 7
 
 
-# ---------------------------------------------------------------------------
-# Isolation, reset, exemptions, identity
-# ---------------------------------------------------------------------------
+# --- Isolation, reset, exemptions, identity ---
 
 
 def test_clients_tracked_independently(probe_app):
@@ -172,9 +151,7 @@ def test_payments_webhook_exempt(probe_app):
 
 
 def test_identity_is_resolved_client_ip_not_spoofed_headers(probe_app):
-    """The limiter keys on request.client.host (uvicorn's trusted-proxy
-    resolution). Client-supplied forwarding headers must not create fresh
-    identities for an exhausted IP."""
+    """Forwarding headers must not mint a fresh identity: the limiter keys on request.client.host (uvicorn's trusted proxies)."""
     for _ in range(5):
         assert _request(probe_app, "/echo").status_code == 200
     assert _request(probe_app, "/echo").status_code == 429
@@ -197,15 +174,12 @@ def test_trailing_slash_and_case_cannot_dodge_rules(probe_app, monkeypatch):
     assert _request(probe_app, "/predict/echo").status_code == 200
     # Variants hit the same bucket.
     assert _request(probe_app, "/predict/echo/").status_code == 429
-    # Case variant: rate limiter still applies (FastAPI may 404 the route —
-    # the security property is that the limiter counts it as /predict/*).
-    assert _request(probe_app, "/PREDICT/echo").status_code in (429, 404)  # limiter must count it either way
-    assert rl.match_rule("/PREDICT/ECHO", "POST") is not None  # direct rule check
+    # Case variant: FastAPI may 404 it, but the limiter must still count it as /predict/*.
+    assert _request(probe_app, "/PREDICT/echo").status_code in (429, 404)
+    assert rl.match_rule("/PREDICT/ECHO", "POST") is not None
 
 
-# ---------------------------------------------------------------------------
-# D. Request-body abuse
-# ---------------------------------------------------------------------------
+# --- Request-body abuse ---
 
 
 def test_oversized_content_length_rejected_413(probe_app):
@@ -230,9 +204,7 @@ def test_small_body_passes(probe_app):
     assert resp.status_code == 200
 
 
-# ---------------------------------------------------------------------------
-# Per-user payment caps
-# ---------------------------------------------------------------------------
+# --- Per-user payment caps ---
 
 
 def _make_user_dep(limit: int):
@@ -285,9 +257,7 @@ def test_payment_routes_have_user_limit_dependencies():
     assert deps_by_path.get("/webhook", []) == [], "webhook must stay dependency-free"
 
 
-# ---------------------------------------------------------------------------
-# Kill switch
-# ---------------------------------------------------------------------------
+# --- Kill switch ---
 
 
 def test_disabled_when_rate_limit_enabled_false(probe_app, monkeypatch):

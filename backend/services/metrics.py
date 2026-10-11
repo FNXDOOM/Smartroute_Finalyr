@@ -1,10 +1,4 @@
-"""Prometheus exposition for the API process.
-
-Job health is derived from job_runs rather than scraped: the worker publishes no
-port and its heartbeat is in-process memory, so Postgres is the only channel to
-it. Process CPU/memory come from prometheus_client's /proc collector and are
-therefore absent on Windows dev machines.
-"""
+"""Prometheus exposition for the API: job health comes from job_runs, the only channel to the portless worker; /proc metrics are absent on Windows."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Iterator, Optional

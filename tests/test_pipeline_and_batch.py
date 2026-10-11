@@ -12,12 +12,7 @@ from services.background_jobs import run_auto_dispatch_pipeline
 
 
 def test_periodic_job_survives_a_raising_runner(caplog):
-    """A crashing job must not retire its own schedule in silence.
-
-    Nothing awaits these tasks, so an exception escaping the runner previously
-    ended the job for the lifetime of the worker and reported it nowhere — the
-    shape of "clustering just stopped happening".
-    """
+    """Nothing awaits these tasks, so an escaping exception used to retire the job silently."""
     import asyncio
     import logging
 
@@ -32,9 +27,7 @@ def test_periodic_job_survives_a_raising_runner(caplog):
 
         task = asyncio.ensure_future(_run_periodic("simulated_job", 0.01, runner))
         try:
-            # Poll for the third tick instead of sleeping a fixed slice: under a
-            # full-suite load a wall-clock window can be too short to observe the
-            # retries, which is a test bug, not a product bug.
+            # Poll for the third tick: a fixed wall-clock window can be too short under full-suite load.
             for _ in range(500):
                 if len(calls) >= 3:
                     break
@@ -51,12 +44,7 @@ def test_periodic_job_survives_a_raising_runner(caplog):
 
 
 def test_starting_a_demo_reclaims_abandoned_demo_runs():
-    """A presenter who closes the app mid-demo used to strand its riders forever.
-
-    The scheduler clusters live rides only, and reset clears just the run it is
-    handed, so abandoned presentation rows accumulated in the shared table with
-    no path to removal.
-    """
+    """A presenter closing the app mid-demo used to strand its riders: the scheduler clusters live rides only."""
     from datetime import timedelta
 
     from routers.rides import create_demo_shared_batch
@@ -110,7 +98,6 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
     """Pipeline test: cluster, route, assign 3 rides."""
     db = SessionLocal()
     try:
-        # Create test user if missing
         user = db.query(User).filter(User.email == "pipeline_tester@example.com").first()
         if not user:
             user = User(
@@ -124,7 +111,6 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
             db.commit()
             db.refresh(user)
 
-        # Create idle test vehicle if missing
         driver = db.query(User).filter(User.email == "pipeline_driver@example.com").first()
         if not driver:
             driver = User(
@@ -164,7 +150,6 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
             vehicle.driver_user_id = driver.id
             db.commit()
 
-        # Clean any old test pending rides
         db.query(RideRequest).filter(RideRequest.user_id == user.id).delete()
         db.commit()
 
@@ -197,14 +182,12 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
             db.refresh(r)
             assert r.status == "pending"
 
-        # Run full dispatch pipeline
         result = run_auto_dispatch_pipeline(db, triggered_by_user_id=user.id, is_scheduled=False)
 
         assert result["clusters_formed"] >= 1, f"Expected >=1 cluster, got {result}"
         assert result["routes_optimized"] >= 1, f"Expected >=1 route, got {result}"
         assert result["assigned_rides"] >= 2, f"Expected >=2 rides assigned, got {result}"
 
-        # Verify rides assigned
         assigned_count = 0
         for r in created_rides:
             db.refresh(r)

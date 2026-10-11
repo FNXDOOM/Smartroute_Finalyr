@@ -125,7 +125,6 @@ def assign_idle_vehicles_to_routes(
 
     for vehicle_idx, route_idx in matched_pairs:
         if not feasible_matrix[vehicle_idx][route_idx]:
-            # Over capacity: skip pair.
             continue
         vehicle = vehicles[vehicle_idx]
         route = routes[route_idx]

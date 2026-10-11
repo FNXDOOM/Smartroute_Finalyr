@@ -6,8 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 
-// Shared status styles — strict neutral + sparing semantic.
-// Active / in-motion = solid black. Done = Uber blue. Failed = red. Waiting = neutral gray.
+// Status colors: active / in-motion solid black, done Uber blue, failed red, waiting neutral gray.
 export const STATUS_STYLES = {
   pending: 'border-[#E2E2E2] bg-[#F6F6F6] text-[#333333] dark:border-[#333333] dark:bg-[#2A2A2A] dark:text-[#E2E2E2]',
   clustered: 'border-[#E2E2E2] bg-[#F6F6F6] text-[#333333] dark:border-[#333333] dark:bg-[#2A2A2A] dark:text-[#E2E2E2]',

@@ -71,8 +71,7 @@ function markerElement(label, type = 'pickup') {
 
   const isDest = type === 'destination'
 
-  // Premium high-contrast: solid black pins, white glyph, white ring.
-  // Pickup = ▲ square-pin, destination = ★ circle — shape carries meaning.
+  // Pickup = ▲ square pin, destination = ★ circle — the shape carries the meaning, not the color.
   const bg = '#000000'
   const borderRadius = isDest ? '50%' : '50% 50% 50% 0'
 
@@ -105,7 +104,6 @@ function vehicleMarkerElement() {
   el.className = 'sr-vehicle-root'
   el.style.cssText = `position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;`
 
-  // Subtle neutral aura — no color glow.
   const aura = document.createElement('div')
   aura.className = 'sr-vehicle-aura'
   aura.style.cssText = `
@@ -117,7 +115,6 @@ function vehicleMarkerElement() {
     pointer-events: none;
   `
 
-  // Premium vehicle badge: solid black, white ring, crisp glyph.
   const inner = document.createElement('div')
   inner.className = 'sr-vehicle-body sr-drop'
   inner.style.cssText = `
@@ -191,9 +188,7 @@ function cleanupMap(map, animationRef, routeAnimationRef, markersRef) {
 const EMPTY_ARRAY = []
 
 function setupBaseSourcesAndLayers(map) {
-  // Reusable after setStyle reloads (setStyle removes custom sources/layers).
-  // Guards keep initial load idempotent.
-  // Route = solid black with soft white casing (Uber-style clarity).
+  // setStyle drops custom sources/layers, so this re-runs after a style reload; the getSource guards keep the initial load idempotent.
   if (!map.getSource('route')) {
     map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } })
     map.addLayer({
@@ -321,10 +316,7 @@ export default function AppMap({
 
     const resizeMap = () => {
       if (cancelled || !map) return
-      // Driver navigation is inside a flex layout whose final size can settle
-      // after the map has been constructed. A frame-delayed resize keeps the
-      // WebGL viewport aligned with the visible container instead of painting
-      // only a stale strip of tiles.
+      // The flex layout can settle after the map is built, so the resize waits a frame or the WebGL viewport paints a stale strip of tiles.
       requestAnimationFrame(() => {
         if (!cancelled && map) map.resize()
       })
@@ -344,10 +336,7 @@ export default function AppMap({
         return
       }
 
-      // The token lookup is asynchronous. During that await React may unmount
-      // or remount this component (especially in development StrictMode), so
-      // do not read the ref again without validating that it is still the
-      // live DOM element captured by this effect.
+      // React may unmount or remount during the token await (StrictMode), so the ref is only safe with the live-element check below.
       const container = containerRef.current
       if (cancelled || !container || !(container instanceof HTMLElement)) return
 
@@ -387,9 +376,7 @@ export default function AppMap({
       map.on('error', (e) => {
         const rawMessage = e?.error?.message || e?.error?.status || e?.message || ''
         const message = String(rawMessage).toLowerCase()
-        // Style loading and tile loading emit the same MapLibre event. Do not
-        // hide tile/source failures just because the style shell loaded: that
-        // produces a blank map with only controls and attribution visible.
+        // Style and tile failures share this MapLibre event; trusting isStyleLoaded alone would hide a blank map behind its controls.
         if (!cancelled && (
           !map.isStyleLoaded() ||
           message.includes('tile') ||
@@ -431,8 +418,7 @@ export default function AppMap({
       cleanupMap(map, animationRef, routeAnimationRef, markersRef)
       mapRef.current = null
     }
-    // Map init runs once; overlay/vehicle updates are handled by the
-    // effects below, so prop changes must not re-create the map.
+    // Map init runs once; the effects below handle prop changes, so they must not re-create the map.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getToken])
 
@@ -478,7 +464,6 @@ export default function AppMap({
 
   useEffect(() => {
     const map = mapRef.current
-    // Check source readiness before live updates.
     if (map?.getSource('route')) {
       updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers })
     }
@@ -495,7 +480,6 @@ export default function AppMap({
     animateVehicleAlongPath(map, vehicleAnimation, markersRef, routeAnimationRef, followCamera)
   }, [vehicles, vehicleAnimation, vehicleMotion, vehicleRenderMode, followCamera])
 
-  // Fit bounds when route appears
   useEffect(() => {
     const map = mapRef.current
     if (!map?.isStyleLoaded() || routeGeometry.length < 2 || followCamera) return
@@ -583,7 +567,6 @@ function updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells
     stopFeatures.push({ type: 'Feature', properties: { color, markerLabel }, geometry: { type: 'Point', coordinates: [point.lng, point.lat] } })
   }
 
-  // Draw rich waypoints — neutral stop system
   waypoints.forEach((wp, i) => {
     const isDepot = wp.waypoint_type === 'depot'
     const isPickup = wp.waypoint_type === 'pickup'
@@ -607,7 +590,6 @@ function updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells
 
   map.__smartRouteMarkers = next
 
-  // Pulse radar ring for rider search
   map.__smartRoutePulse?.remove()
   map.__smartRoutePulse = null
   if (pickupPulse && pickup?.lat != null && pickup?.lng != null) {

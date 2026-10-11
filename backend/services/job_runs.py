@@ -1,13 +1,4 @@
-"""JobRun bookkeeping: one owner for starting a run and recording its failure.
-
-Every pipeline job opened a ``JobRun``, did its work, recorded a success summary
-and committed; on any exception it rolled the session back, re-loaded the run,
-recorded the failure and re-raised. That dance was copied into each job body, so
-the mechanics live here once.
-
-Job bodies keep their own success: they call :func:`finish` with the summary
-they produced. Only the failure path is automatic.
-"""
+"""JobRun bookkeeping: one owner for opening a run and recording its failure; job bodies record their own success."""
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -60,11 +51,7 @@ def running(
     triggered_by_user_id: Optional[int] = None,
     is_scheduled: bool = True,
 ) -> Iterator[JobRun]:
-    """Open a job run and fail it automatically if the body raises.
-
-    The body records its own success via :func:`finish` and commits; an
-    exception rolls back, records the failure and propagates.
-    """
+    """Roll back, record the failure and re-raise if the body raises; success recording stays with the body."""
     job_run = start(db, job_name, triggered_by_user_id, is_scheduled)
     try:
         yield job_run

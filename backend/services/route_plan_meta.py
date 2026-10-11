@@ -1,17 +1,4 @@
-"""The typed interface to a route plan's ``metadata`` JSON bag.
-
-``RoutePlan.route_metadata`` is an untyped dict that nine modules read and write,
-each with its own ``(metadata or {}).get(key, default)`` and its own idea of the
-key set, the value types and the invariants. Nothing could tell a caller what is
-in the bag, and renaming a key was a silent breakage.
-
-This module is the single interface to the bag. Creation (``persist_shared_route``)
-is the one place allowed to write the initial shape wholesale; everything after
-that reads and mutates through here.
-
-The wire keys are part of the API contract — the frontend reads
-``route_metadata`` directly — so they must not change.
-"""
+"""Typed interface to the RoutePlan.route_metadata JSON bag; these wire keys are read straight by the frontend, so they must not change."""
 
 from typing import Any, Dict, List, Optional
 

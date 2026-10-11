@@ -26,9 +26,7 @@ class Payment(Base):
     # Server-side signature verification result: 0 = unverified, 1 = verified.
     verified = Column(Integer, default=0, nullable=False)
     failure_reason = Column(String, nullable=True)
-    # Raw Razorpay event payloads (webhooks / callbacks) for diagnostics.
-    # Named razorpay_metadata in Python; column is "metadata" (JSON),
-    # mirroring the Notification model pattern.
+    # Raw Razorpay event payloads (webhooks/callbacks) for diagnostics; Python name differs from the "metadata" column, mirroring Notification.
     razorpay_metadata = Column("metadata", JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(

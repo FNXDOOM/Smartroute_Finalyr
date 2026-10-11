@@ -1,8 +1,5 @@
 """The Prometheus surface: what it records, what it must never leak, who can reach it.
-
-The route-template assertion matters most: labelling by concrete path would let a
-scanner mint an unbounded series per URL.
-"""
+Assertions pin the route TEMPLATE because labelling by concrete path would let a scanner mint an unbounded series per URL."""
 
 import asyncio
 import sys
@@ -41,8 +38,7 @@ def test_metrics_endpoint_is_public_and_in_prometheus_format():
 
 
 def test_process_metrics_only_exist_where_proc_does():
-    """prometheus_client's process collector reads /proc: present in the Linux
-    container, absent on Windows. Production is what the Grafana panel targets."""
+    """prometheus_client's process collector reads /proc: present in the Linux container, absent on Windows."""
     import platform
 
     body = _scrape()

@@ -1,9 +1,5 @@
-"""Pooled shared-ride routing: leg splitting, the pickup/delivery solver, and
-the passenger-visible route endpoint.
-
-The suite follows this repo's convention of exercising services and route
-functions directly with a real session, rather than spinning up an HTTP client.
-"""
+"""Pooled shared-ride routing: leg splitting, the pickup/delivery solver and the passenger-visible route
+endpoint, exercising services and route functions directly with a real session."""
 
 import sys
 from pathlib import Path
@@ -126,12 +122,11 @@ def test_extract_route_details_splits_each_leg_and_keeps_the_stitched_geometry()
 
     details = extract_route_details(payload)
 
-    # The stitched polyline existing callers rely on is unchanged in order...
+    # The stitched polyline callers rely on keeps its order, and each leg carries its own geometry and metrics.
     assert len(details["geometry"]) == 3
     assert details["geometry"][0] == pytest.approx([77.6408, 12.9784], abs=1e-5)
     assert details["geometry"][-1] == pytest.approx([77.6066, 12.9756], abs=1e-5)
 
-    # ...and each leg now carries its own coordinates, distance and duration.
     assert [leg["index"] for leg in details["legs"]] == [0, 1]
     assert len(details["legs"][0]["geometry"]) == 2
     assert len(details["legs"][1]["geometry"]) == 2
@@ -197,8 +192,7 @@ def test_pool_solver_reuses_a_seat_after_a_drop_off_where_cvrp_cannot():
     pytest.importorskip("ortools.constraint_solver")
     from services.routing.vrp_solver import solve_shared_ride_pdp, solve_vrp
 
-    # Two riders, one seat. Only a model that hands the seat back at a drop-off
-    # can serve both, which is exactly what the pickups-only CVRP could not do.
+    # Two riders, one seat: only a model that frees the seat at a drop-off serves both, which pickups-only CVRP cannot.
     nodes = [
         {"lat": DEPOT_LAT, "lng": DEPOT_LNG, "kind": "depot", "demand": 0},
         {"lat": 12.9719, "lng": 77.6412, "kind": "pickup", "demand": 1},
@@ -321,8 +315,7 @@ def test_builder_does_not_assign_a_pickup_only_route_when_pdp_is_infeasible(monk
         enrich=False,
     )
 
-    # A pickup-only fallback has no passenger drop-offs and must never be
-    # persisted as an assigned passenger route.
+    # A pickup-only fallback has no drop-offs and must never be persisted as an assigned passenger route.
     assert routes == []
 
 
@@ -358,8 +351,7 @@ def test_private_ride_gets_a_dedicated_vehicle_and_never_pools():
         enrich=False,
     )
 
-    # Each private ride takes one vehicle and is the only stop on it; the shared
-    # pool is deferred (never merged onto a private vehicle).
+    # Each private ride takes one vehicle alone; the shared pool is deferred, never merged onto a private vehicle.
     assert len(routes) == 2
     assert sorted(route.stop_ids for route in routes) == [[11], [12]]
     assert {route.ride_ids[0] for route in routes} == {201, 202}
@@ -369,8 +361,7 @@ def test_private_ride_gets_a_dedicated_vehicle_and_never_pools():
 
 def test_private_ride_is_never_merged_into_a_shared_route():
     pytest.importorskip("ortools.constraint_solver")
-    # Enough vehicles for everyone: the shared pair must still be solved as its
-    # own pool, and the private ride must be alone on its vehicle.
+    # Even with vehicles to spare, the shared pair solves as its own pool and the private ride stays alone.
     private = _StubStop(21, [_StubRequest(301, is_shared=False)])
     shared = _StubStop(22, [_StubRequest(302), _StubRequest(303)])
 
@@ -395,12 +386,7 @@ def test_private_ride_is_never_merged_into_a_shared_route():
 
 
 def test_route_history_serves_promoted_legs_and_resolves_geometry_once(monkeypatch):
-    """A driver's route plan must expose geometry/legs, resolving them once.
-
-    Plans written by the automatic dispatch job carry stops but no road
-    geometry, so the first driver view fetches it and every later view is
-    served from the cached copy.
-    """
+    """Dispatch plans carry stops but no road geometry, so the first driver view fetches it and later ones read the cache."""
     db = SessionLocal()
     created_plan_id = None
     created_ride_id = None
@@ -644,8 +630,7 @@ def test_ride_route_endpoint_serves_pooled_legs_without_calling_the_router(monke
         db.commit()
         created_plan_id = persisted.route_plan.id
 
-        # Geometry is already cached on the plan, so a poll must never reach the
-        # routing provider.
+        # Geometry is already cached on the plan, so a poll must never reach the routing provider.
         def _explode(*args, **kwargs):
             raise AssertionError("cached route geometry must not hit the router")
 

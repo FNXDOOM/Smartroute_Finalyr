@@ -1,15 +1,4 @@
-/**
- * Razorpay Checkout integration (browser side).
- *
- * SECURITY: this module only ever receives PUBLIC values — the Razorpay
- * Key ID (rzp_test_… or rzp_live_…), the Razorpay order ID, and the amount the
- * server computed. The Key Secret NEVER reaches the frontend: checkout is
- * opened with an order_id created on the backend, and the payment is only
- * trusted after the backend verifies the signature server-side.
- *
- * Script loading follows Razorpay's current recommendation: inject
- * https://checkout.razorpay.com/v1/checkout.js once, lazily, and reuse it.
- */
+/** Razorpay Checkout, browser side: only public values (key id, order id, server-computed amount) arrive here — the Key Secret never does. */
 
 const RAZORPAY_CHECKOUT_SRC = 'https://checkout.razorpay.com/v1/checkout.js'
 
@@ -39,18 +28,7 @@ function loadRazorpayScript() {
   return scriptPromise
 }
 
-/**
- * Open Razorpay Checkout.
- *
- * @param {object} checkoutData - Response of POST /payments/create-order
- *   (razorpay_key_id, razorpay_order_id, amount [paise], currency, customer_*).
- * @param {object} handlers - { onSuccess(resp), onFailure(err), onDismiss() }
- *   NOTE: onSuccess does NOT mean the payment is confirmed. The caller must
- *   still post resp to /payments/verify and only show success after the
- *   backend confirms (verified=true).
- * @param {object} [theme] - { theme: { color: '#000000' } } passed to Checkout.
- * @returns {Promise<{cancelled: boolean, error?: Error, response?: object}>}
- */
+/** Opens Checkout with the POST /payments/create-order response; onSuccess is not confirmation — the caller must still post it to /payments/verify. */
 export async function openRazorpayCheckout(checkoutData, handlers, theme) {
   if (!checkoutData?.razorpay_order_id || !checkoutData?.razorpay_key_id) {
     handlers?.onFailure?.(new Error('Missing checkout configuration'))

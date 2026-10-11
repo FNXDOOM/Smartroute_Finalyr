@@ -1,12 +1,4 @@
-"""The demand model's train/serve contract.
-
-Where the artifact lives and the feature order it was trained on. The training
-script and the serving path both import these, so the two cannot drift apart —
-which would silently feed the model its features in the wrong order.
-
-Deliberately dependency-free: the training script imports it without pulling in
-the ORM or the request models.
-"""
+"""Train/serve contract for the demand model: artifact path and feature order, dependency-free so training can import it without the ORM."""
 
 from pathlib import Path
 

@@ -1,8 +1,7 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
-/* Uber-inspired card: white, 1px #E2E2E2, 12px radius, 20–24px padding.
-   Shadow only for floating content. */
+/* Uber-inspired card: neutral 1px border; shadow only for floating content. */
 const Card = React.forwardRef(({ className, ...props }, ref) => (
   <div
     ref={ref}

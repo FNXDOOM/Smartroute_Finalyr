@@ -97,7 +97,6 @@ def create_ride_request(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Pickup and destination must be within the supported India service area",
         )
-    # H3 spatial index
     h3_idx = get_h3_index(ride_in.pickup_lat, ride_in.pickup_lng, resolution=9)
 
     new_request = RideRequest(
@@ -193,10 +192,7 @@ def create_demo_clustered_riders(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Creates 3 sample passenger ride requests in a dense cluster heading along a common corridor.
-    Designed for 1-click live presentations of HDBSCAN clustering and pre-dispatch CVRP routing.
-    """
+    """Create 3 clustered sample rides along one corridor for live HDBSCAN + pre-dispatch CVRP demos."""
     demo_run_id = demo_run_id or uuid4().hex
     custom_coordinates = (pickup_lat, pickup_lng, dest_lat, dest_lng)
     if any(value is not None for value in custom_coordinates) and not all(
@@ -414,13 +410,7 @@ DEMO_RUN_TTL_HOURS = 24
 
 
 def _reclaim_stale_demo_runs(db: Session, keep_demo_run_id: str) -> int:
-    """Delete abandoned presentation runs so they cannot accumulate forever.
-
-    The scheduler only clusters live rides, and reset only clears the run it is
-    handed, so a presenter who closes the app mid-demo strands its riders in
-    `pending` permanently. Reclaiming when a new demo starts keeps the shared
-    table bounded without introducing another scheduled job.
-    """
+    """Reclaim TTL-old presentation runs: a presenter who closes the app strands its riders in pending forever, and only the handed run is ever reset."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=DEMO_RUN_TTL_HOURS)
     stale_run_ids = [
         row[0]
@@ -559,12 +549,7 @@ def get_ride_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Pooled route this ride belongs to, with per-leg geometry.
-
-    ``None`` means the ride is not on an optimized shared route — for example a
-    ride a driver accepted manually, which is deliberately unlinked from its
-    virtual stop.
-    """
+    """Pooled route this ride belongs to, with per-leg geometry; None when it is not on an optimized shared route, e.g. a manually accepted ride deliberately unlinked from its stop."""
     ride = db.query(RideRequest).filter(RideRequest.id == ride_id).first()
     if not ride:
         raise HTTPException(
@@ -614,8 +599,7 @@ def get_ride_route(
         None,
     )
 
-    # A leg is the drive between two consecutive stops, so leg k joins stops k
-    # and k+1 — only trust that mapping when the router returned every leg.
+    # Leg k joins stops k and k+1, so only trust that mapping when the router returned every leg.
     legs_aligned = len(stored_legs) == max(0, len(stops) - 1)
     legs: List[RideRouteLeg] = []
     for position, leg in enumerate(stored_legs):
@@ -683,12 +667,7 @@ def get_ride_route(
 
 
 def _has_live_route(db: Session, ride: RideRequest) -> bool:
-    """Return whether this ride is on a live route (a run being served).
-
-    ``needs_reoptimization`` is still live: the driver keeps serving the riders
-    already on board, so a status write must not be treated as if the rider had
-    no route at all.
-    """
+    """Whether this ride is on a live route; needs_reoptimization still counts, because the driver keeps serving riders already on board."""
     if not ride.virtual_stop_id:
         return False
     candidates = db.query(RouteWaypointRecord).join(RoutePlan).filter(
@@ -710,8 +689,7 @@ def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
     """Close a carpool route when its last passenger reaches the destination."""
     if not ride.is_shared or not ride.virtual_stop_id:
         return
-    # autoflush is off, so flush the status change that triggered this call or
-    # the roster below reads the previous state.
+    # autoflush is off, so flush the status change that triggered this call or the roster below reads the previous state.
     db.flush()
     route_plans = (
         db.query(RoutePlan)
@@ -778,9 +756,7 @@ def update_ride_request_status(
 
     if current_user.role == "driver":
         ensure_active_driver(current_user)
-        # A driver advances rides carried by their own vehicle — the same rule the
-        # dedicated carpool endpoints enforce. An unrouted ride has no serving
-        # driver to compare against, so the manual dispatch flows still work.
+        # A driver only advances rides carried by their own vehicle, as the carpool endpoints do; an unrouted ride has no serving driver to compare against, so manual dispatch stays editable.
         serving_vehicle = _vehicle_serving_ride(db, ride)
         if serving_vehicle and serving_vehicle.driver_user_id != current_user.id:
             raise HTTPException(
@@ -824,9 +800,7 @@ def update_ride_request_status(
             if pickup_waypoint else None
         )
         if route_plan and not route_plan_meta.is_driver_accepted(route_plan):
-            # Arrived/Start trip is itself an explicit driver acceptance from
-            # the active-trip card. Keep the UI flow usable even when the
-            # driver did not first open the navigation screen.
+            # Arrived/Start trip is itself an explicit driver acceptance from the active-trip card, so the flow works without the navigation screen first.
             route_plan_meta.mark_driver_accepted(route_plan, datetime.now(timezone.utc).isoformat())
             vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
             if vehicle:

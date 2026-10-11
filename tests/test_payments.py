@@ -1,15 +1,5 @@
-"""Razorpay payment tests.
-
-Covers: order creation, auth, server-side amount, signature verification
-(valid/invalid), wrong-order rejection, ownership, duplicate verification,
-webhook signature, duplicate webhooks, and failure handling. Razorpay's HTTP
-API is fully mocked — no real credentials or network calls.
-
-Follows the existing test convention (see tests/test_mobile_auth.py):
-in-memory SQLite, only the tables needed. ride_requests/payments are created
-from a plain MetaData (no geoalchemy2 events — SQLite lacks SpatiaLite), while
-the ORM models map onto them normally.
-"""
+"""Razorpay payment tests: orders, signatures, webhooks and failure handling, with the HTTP API fully mocked.
+Rides and payments come from a plain MetaData because SQLite has no SpatiaLite, matching tests/test_mobile_auth.py."""
 
 import asyncio
 import hashlib
@@ -132,15 +122,12 @@ from services.razorpay_service import (  # noqa: E402
 from routers import payments as payments_router  # noqa: E402
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+# --- Fixtures ---
 
 @pytest.fixture()
 def db():
     session = TestingSessionLocal()
-    # The in-memory engine is shared across tests in this module; clear all
-    # rows so fixed order IDs (order_payment-1) never collide between tests.
+    # The in-memory engine is shared across tests, so clear every row: fixed order IDs (order_payment-1) would collide.
     session.query(Payment).delete()
     session.query(RideRequest).delete()
     session.query(User).delete()
@@ -222,9 +209,7 @@ def set_webhook_secret(monkeypatch):
     return monkeypatch
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+# --- Helpers ---
 
 def _make_payment(db, user, ride, order_id="order_payment-1", status="pending", amount=1500):
     p = Payment(
@@ -284,15 +269,12 @@ def _signed_body(payload: dict, secret=TEST_WEBHOOK_SECRET):
     return body, hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
-# ---------------------------------------------------------------------------
-# Signature helpers (service layer)
-# ---------------------------------------------------------------------------
+# --- Signature helpers (service layer) ---
 
 def test_signature_valid_and_invalid(set_secrets):
     sig = _valid_signature("order_1", "pay_1")
     assert verify_payment_signature("order_1", "pay_1", sig) is True
     assert verify_payment_signature("order_1", "pay_1", "deadbeef") is False
-    # Tampered payment id / order id must fail.
     assert verify_payment_signature("order_1", "pay_2", sig) is False
     assert verify_payment_signature("order_2", "pay_1", sig) is False
 
@@ -305,17 +287,13 @@ def test_webhook_signature_valid_and_invalid(set_webhook_secret):
     assert verify_webhook_signature(b"tampered", sig) is False
 
 
-# ---------------------------------------------------------------------------
-# Fare computation (server-side amount)
-# ---------------------------------------------------------------------------
+# --- Fare computation (server-side amount) ---
 
 def test_fare_computation_server_side():
-    # swift-x: base 12 + 6/km, clamped to [12, 15]
+    # swift-x: base 12 + 6/km, clamped to the advertised [12, 15] rupee band
     assert compute_fare_amount_paise("swift-x", 0.0) == 1200
-    # 1 km swift-x = 12 + 6*1 = 18 rupees → clamped to the tier max of 15
-    # rupees = 1500 paise (tier prices stay inside the advertised ₹12–15 band).
     assert compute_fare_amount_paise("swift-x", 1.0) == 1500
-    assert compute_fare_amount_paise("swift-x", 50.0) == 1500  # clamped to max
+    assert compute_fare_amount_paise("swift-x", 50.0) == 1500
     # Moto: base 6 + 4/km, clamp [6, 9]
     assert compute_fare_amount_paise("swift-moto", 0.0) == 600
     assert compute_fare_amount_paise("swift-moto", 0.5) == 800
@@ -382,9 +360,7 @@ def test_fare_rejects_unknown_option():
         compute_fare_amount_paise("nonexistent", 5.0)
 
 
-# ---------------------------------------------------------------------------
-# Order creation
-# ---------------------------------------------------------------------------
+# --- Order creation ---
 
 def test_create_order_happy_path(db, user, ride, fake_client, set_secrets, monkeypatch):
     monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
@@ -392,7 +368,6 @@ def test_create_order_happy_path(db, user, ride, fake_client, set_secrets, monke
         PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), db, user
     )
 
-    # 1 km swift-x = 12 + 6*1 = 18 rupees → clamped to max 15 = 1500 paise.
     assert resp.amount == 1500
     assert resp.razorpay_order_id == f"order_payment-{resp.payment_id}"
     assert resp.razorpay_key_id == TEST_KEY_ID
@@ -459,12 +434,7 @@ def test_create_order_blocked_when_ride_already_paid(db, user, ride, fake_client
 
 
 def test_create_order_resumes_unpaid_order_no_double_charge(db, user, ride, fake_client, set_secrets, monkeypatch):
-    """A failed-verification attempt must resume the SAME Razorpay order.
-
-    Root-cause regression test: a transient network error during verification
-    left the payment 'pending'; retrying Pay used to create a second order,
-    double-charging the customer. It must now reopen the original order.
-    """
+    """Regression: a transient verification failure used to open a second order and double-charge."""
     monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
     stuck = _make_payment(db, user, ride, order_id="order_stuck", status="pending", amount=1500)
 
@@ -472,7 +442,6 @@ def test_create_order_resumes_unpaid_order_no_double_charge(db, user, ride, fake
         PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), db, user
     )
 
-    # Same internal payment, same Razorpay order, no new charge, no new row.
     assert resp.payment_id == stuck.id
     assert resp.razorpay_order_id == "order_stuck"
     assert db.query(Payment).filter(Payment.user_id == user.id).count() == 1
@@ -507,9 +476,7 @@ def test_create_order_does_not_resume_other_users_payment(db, user, other_user, 
     assert resp.payment_id != db.query(Payment).filter(Payment.razorpay_order_id == "order_someone_else").first().id
 
 
-# ---------------------------------------------------------------------------
-# Verification
-# ---------------------------------------------------------------------------
+# --- Verification ---
 
 def test_verify_success_marks_paid(db, user, ride, fake_client, set_secrets):
     payment = _make_payment(db, user, ride)
@@ -548,9 +515,7 @@ def test_verify_rejects_invalid_signature(db, user, ride, fake_client, set_secre
 
 
 def test_verify_network_error_is_retryable_not_terminal(db, user, ride, fake_client, set_secrets, monkeypatch):
-    """A transient Razorpay API outage during the fetch step must NOT mark
-    the payment failed — the customer may already have paid. It surfaces as
-    502 with the payment still pending, so verification can be retried."""
+    """A transient outage during the fetch must stay 502/retryable, never terminal: the customer may already have paid."""
     payment = _make_payment(db, user, ride)
 
     def unreachable(payment_id):
@@ -672,9 +637,7 @@ def test_verify_rejects_amount_mismatch(db, user, ride, fake_client, set_secrets
     assert payment.failure_reason == "amount_mismatch"
 
 
-# ---------------------------------------------------------------------------
-# Webhooks
-# ---------------------------------------------------------------------------
+# --- Webhooks ---
 
 def test_webhook_marks_payment_paid(db, user, ride, set_webhook_secret):
     payment = _make_payment(db, user, ride)
@@ -749,9 +712,7 @@ def test_webhook_never_downgrades_paid_payment(db, user, ride, set_webhook_secre
     assert payment.status == "paid"
 
 
-# ---------------------------------------------------------------------------
-# Razorpay client (HTTP layer, mocked)
-# ---------------------------------------------------------------------------
+# --- Razorpay client (HTTP layer, mocked) ---
 
 def test_client_create_order_requires_config():
     client = RazorpayClient(key_id="", key_secret="")
@@ -765,9 +726,7 @@ def test_client_create_order_http_error(monkeypatch):
     def raise_http_error(*args, **kwargs):
         raise httpx.ConnectError("connection failed")
 
-    # The client calls httpx.request, not httpx.post: patching the wrong name
-    # leaves a real HTTPS call to api.razorpay.com in place, which only looked
-    # correct because an offline machine raises ConnectError by itself.
+    # The client calls httpx.request, not httpx.post: the wrong name leaves a real HTTPS call that an offline box "passes" by raising ConnectError.
     monkeypatch.setattr(razorpay_service.httpx, "request", raise_http_error)
     client = RazorpayClient(key_id="k", key_secret="s")
     with pytest.raises(RazorpayError):

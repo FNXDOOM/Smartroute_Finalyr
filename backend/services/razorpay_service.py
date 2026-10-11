@@ -1,16 +1,4 @@
-"""Server-side Razorpay client and payment helpers.
-
-The Razorpay Key Secret and Webhook Secret live ONLY here (server side).
-No function in this module returns a secret, and no secret is ever logged.
-
-Integration follows Razorpay's current recommended flow:
-  1. Backend creates a Razorpay Order (amount comes from server-side fares).
-  2. Frontend opens Razorpay Checkout with the public Key ID + order_id.
-  3. Backend verifies the checkout signature (HMAC-SHA256 of
-     ``razorpay_order_id|razorpay_payment_id`` keyed by the Key Secret).
-  4. Webhooks are verified with HMAC-SHA256 of the raw request body keyed by
-     the Webhook Secret (X-Razorpay-Signature header).
-"""
+"""Server-side Razorpay client: secrets live only here, no function returns one, and nothing logs one."""
 
 import hashlib
 import hmac
@@ -24,9 +12,7 @@ from config import RAZORPAY_API_BASE, RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZO
 
 logger = logging.getLogger(__name__)
 
-# Server-side fare table. Prices are in RUPEES; converted to paise (x100)
-# when a Razorpay order is created. The client NEVER supplies amounts —
-# it may only name one of these option IDs.
+# Server-side fares in RUPEES (x100 for paise per order); the client may only name an option ID, never an amount.
 RIDE_FARES: Dict[str, Dict[str, Any]] = {
     "swift-x": {"name": "SwiftX", "base_rupees": 12, "per_km_rupees": 6, "min_rupees": 12, "max_rupees": 15},
     "swift-xl": {"name": "SwiftXL", "base_rupees": 18, "per_km_rupees": 8, "min_rupees": 18, "max_rupees": 22},
@@ -36,9 +22,7 @@ RIDE_FARES: Dict[str, Dict[str, Any]] = {
 
 VALID_FARE_IDS = set(RIDE_FARES)
 
-# Transient network failures worth retrying (DNS blips, VPN/proxy toggles,
-# connection resets). Real HTTP error responses (4xx/5xx) are NOT retried —
-# they are definitive answers and must fail fast.
+# Retry only these transient failures; 4xx/5xx are definitive answers and must fail fast.
 _TRANSIENT_EXCEPTIONS = (
     httpx.ConnectError,
     httpx.ConnectTimeout,
@@ -54,18 +38,10 @@ def is_configured() -> bool:
     return bool(RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET)
 
 class RazorpayError(Exception):
-    """Raised when the Razorpay API request fails.
-
-    The exception message intentionally contains no secret material and no
-    raw Razorpay error bodies (those can echo back auth challenges).
-    """
+    """Carries no secret material and no raw Razorpay bodies, which can echo back auth challenges."""
 
 class RazorpayClient:
-    """Minimal Razorpay Orders API client (basic auth, httpx).
-
-    Mirrors the project's service-client pattern (see stadia_client.py,
-    clerk_service.py): small, dependency-light, dependency-injection friendly.
-    """
+    """Minimal Razorpay Orders API client (basic auth, httpx)."""
 
     def __init__(self, key_id: Optional[str] = None, key_secret: Optional[str] = None, timeout: float = 10.0):
         self._key_id = key_id if key_id is not None else RAZORPAY_KEY_ID
@@ -77,14 +53,7 @@ class RazorpayClient:
         return bool(self._key_id and self._key_secret)
 
     def _request(self, method: str, url: str, **kwargs):
-        """HTTP request with bounded retry on transient connection errors.
-
-        Intermittent ``ConnectError`` (VPN/proxy toggles, DNS blips, firewall)
-        is the main cause of "checkout succeeded but verification failed":
-        the payment itself happens in the browser, so only the backend's
-        outbound Razorpay call fails. Retries only transient exceptions;
-        HTTP error responses still fail fast. Never logs secrets or bodies.
-        """
+        """Bounded retry on transient connection errors, the usual cause of "checkout succeeded but verification failed"."""
         last_exc: Optional[Exception] = None
         for attempt in range(1, RAZORPAY_HTTP_ATTEMPTS + 1):
             try:
@@ -165,10 +134,7 @@ def verify_payment_signature(
     *,
     key_secret: Optional[str] = None,
 ) -> bool:
-    """Verify the Checkout handler signature:
-
-    HMAC-SHA256(order_id + '|' + payment_id, key_secret) == signature.
-    """
+    """Verify the checkout signature: HMAC-SHA256(order_id|payment_id, key_secret) == signature."""
     secret = key_secret if key_secret is not None else RAZORPAY_KEY_SECRET
     if not secret:
         return False
@@ -180,10 +146,7 @@ def verify_payment_signature(
     return hmac.compare_digest(expected, signature or "")
 
 def verify_webhook_signature(body: bytes, signature: str, *, webhook_secret: Optional[str] = None) -> bool:
-    """Verify the webhook signature:
-
-    HMAC-SHA256(raw_request_body, webhook_secret) == X-Razorpay-Signature.
-    """
+    """Verify the webhook signature: HMAC-SHA256(raw_request_body, webhook_secret) == X-Razorpay-Signature."""
     secret = webhook_secret if webhook_secret is not None else RAZORPAY_WEBHOOK_SECRET
     if not secret:
         return False
@@ -191,12 +154,7 @@ def verify_webhook_signature(body: bytes, signature: str, *, webhook_secret: Opt
     return hmac.compare_digest(expected, signature or "")
 
 def compute_fare_amount_paise(ride_option_id: str, distance_km: float) -> int:
-    """Compute the ride fare in paise from the server-side fare table.
-
-    ``distance_km`` comes from the server-side route estimate (backend
-    routing), never from the client. Result is clamped to the tier's
-    [min, max] band and rounded to the nearest rupee.
-    """
+    """Fare in paise from the server table; distance_km is the server-side route estimate, never client input."""
     fare = RIDE_FARES.get(ride_option_id)
     if fare is None:
         raise ValueError(f"Unknown ride option: {ride_option_id}")

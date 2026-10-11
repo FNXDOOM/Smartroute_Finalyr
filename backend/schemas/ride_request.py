@@ -8,7 +8,6 @@ class RideRequestBase(BaseModel):
     pickup_lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False, description="Pickup longitude")
     dest_lat: float = Field(..., ge=-90, le=90, allow_inf_nan=False, description="Destination latitude")
     dest_lng: float = Field(..., ge=-180, le=180, allow_inf_nan=False, description="Destination longitude")
-    # Labels from mobile client
     pickup_label: Optional[str] = Field(None, max_length=200)
     destination_label: Optional[str] = Field(None, max_length=200)
     ride_option_id: Optional[str] = Field(None, max_length=40)
@@ -35,8 +34,7 @@ class RideRequestResponse(RideRequestBase):
     h3_index: Optional[str] = None
     cluster_id: Optional[int] = None
     virtual_stop_id: Optional[int] = None
-    # Fine per-rider carpool stage (see utils/carpool_status.py). Null for
-    # private rides. Additive: clients that only read ``status`` are unaffected.
+    # Fine per-rider carpool stage (see utils/carpool_status.py), null for private rides; additive, so clients reading only ``status`` are unaffected.
     carpool_status: Optional[str] = None
     request_time: Optional[datetime] = None
 
@@ -74,11 +72,7 @@ class RideRouteStop(BaseModel):
 
 
 class RideRouteResponse(BaseModel):
-    """The pooled route this ride belongs to, as the passenger's map draws it.
-
-    Route plans are shared: ``stops`` covers every boarding stop and drop-off on
-    the vehicle's route, and ``is_mine`` marks the ones this passenger uses.
-    """
+    """The pooled route as the passenger's map draws it; `stops` covers the whole shared route and `is_mine` marks the ones this passenger uses."""
 
     route_id: str
     vehicle_id: int
@@ -95,9 +89,7 @@ class RideRouteResponse(BaseModel):
     my_leg_indices: List[int] = Field(default_factory=list)
     total_distance_meters: float = 0
     estimated_duration_seconds: float = 0
-    # Carpool lifecycle surfaced to the passenger: whether the assigned driver
-    # has accepted the run yet, the route's own state, and this rider's fine
-    # carpool stage (utils/carpool_status.py).
+    # Carpool lifecycle surfaced to the passenger: driver acceptance of the run, the route's own state, and this rider's fine stage (utils/carpool_status.py).
     driver_accepted: bool = False
     route_status: str = "solved"
     carpool_status: Optional[str] = None

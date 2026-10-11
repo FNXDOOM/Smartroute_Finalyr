@@ -1,27 +1,11 @@
 """Application-level rate limiting and request-size guard.
 
-Scope of protection (be explicit about what this does NOT do):
-  - This is application-level throttling: it protects endpoints, the database,
-    and expensive downstream calls (Stadia, Razorpay, bcrypt) from per-client
-    flooding. It is NOT DDoS protection — volumetric attacks must be absorbed
-    at the edge (nginx/NPM connection+rate limits, cloud WAF/CDN, AWS Shield).
-
-Design:
-  - In-process sliding-window counters (collections.deque). No Redis: the
-    production stack runs exactly one `api` container (worker is a separate
-    non-HTTP process), so per-process memory is the shared state. If the api
-    service is ever scaled to N replicas, per-IP limits effectively multiply
-    by N; move the store to Redis (same interface) before scaling out.
-  - Keyed by client IP as resolved by uvicorn's ProxyHeadersMiddleware from
-    the trusted proxy chain (--proxy-headers + forwarded-allow-ips in
-    docker-compose.prod.yml). We deliberately never read X-Forwarded-For
-    ourselves: uvicorn walks the XFF chain right-to-left and stops at the
-    first untrusted hop, so a client-supplied XFF cannot change its identity.
-  - Exemptions: OPTIONS (CORS preflight), /health/* (probes), and
-    /payments/webhook — Razorpay webhook delivery must never be throttled;
-    its X-Razorpay-Signature verification IS the access control.
-  - 429 responses match the project error shape ({"detail": ...}) and carry
-    Retry-After + X-RateLimit-* headers. Nothing sensitive is logged.
+Per-client throttling only — NOT DDoS protection, which belongs at the edge.
+The sliding window lives in process memory, which is correct only while a single
+`api` container runs: at N replicas every per-IP limit multiplies by N, so move
+the store to Redis before scaling out. Client IP comes from uvicorn's
+--proxy-headers, which stops at the first untrusted XFF hop — reading
+X-Forwarded-For directly here would let a client spoof its own key.
 """
 
 import json
@@ -41,13 +25,7 @@ from utils.auth_utils import get_current_user
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Rules — one entry per (prefix). A rule matches when the request path equals
-# the prefix or starts with prefix + "/". First match wins; unmatched paths
-# use the default limit. Methods are "*" or a tuple of uppercase methods.
-# NOTE: matching ignores query strings, case differences and trailing slashes
-# (paths are normalised below) so those cannot be used to dodge a rule.
-# ---------------------------------------------------------------------------
+# First matching prefix wins; paths are normalised so case, trailing slash and query strings cannot dodge a rule.
 
 
 class RateLimitRule:
@@ -69,11 +47,7 @@ class RateLimitRule:
         return False
 
 
-# Expensive / abuse-prone endpoints get stricter limits than the default.
-#   auth: bcrypt login + account creation (brute-force / enumeration cost)
-#   predict/cluster/route: CPU-heavy ML + OR-tools work
-#   routing/geocode/maps: proxies to Stadia Maps (paid quota, rate-limited upstream)
-#   payments: creates real Razorpay orders / runs verification
+# Stricter where abuse is expensive: bcrypt, CPU-heavy ML/OR-Tools, paid Stadia quota, real money.
 RATE_LIMIT_RULES = (
     RateLimitRule("auth_login", ("/auth/login",), limit=15, window_seconds=300, methods=("POST",)),
     RateLimitRule("auth_register", ("/auth/register",), limit=5, window_seconds=3600, methods=("POST",)),
@@ -89,12 +63,9 @@ RATE_LIMIT_RULES = (
     RateLimitRule("jobs_run", ("/jobs/run",), limit=10, window_seconds=60, methods=("POST",)),
 )
 
-# Paths that must never be throttled.
-# /metrics: a scraper polls every few seconds from one container IP, and a
-# truncated payload would read as an outage rather than as throttling.
+# Never throttled: probes, Razorpay webhook delivery (the signature is the access control), and the Prometheus scrape.
 RATE_LIMIT_EXEMPT_PREFIXES = ("/payments/webhook", "/health", "/metrics")
 
-# Body-carrying methods guarded by MAX_BODY_BYTES.
 _BODY_METHODS = ("POST", "PUT", "PATCH")
 
 
@@ -119,9 +90,7 @@ def is_exempt(path: str) -> bool:
     )
 
 
-# ---------------------------------------------------------------------------
-# Sliding-window store (per-process memory)
-# ---------------------------------------------------------------------------
+# Sliding-window store, per-process memory.
 
 
 class SlidingWindowStore:
@@ -168,12 +137,7 @@ store = SlidingWindowStore()
 
 
 def client_ip(request: Request) -> str:
-    """Client identity for rate limiting.
-
-    Uses request.client.host, which uvicorn has already resolved through the
-    trusted-proxy XFF chain (see module docstring). Never trust raw
-    X-Forwarded-For headers here — client-supplied values are spoofable.
-    """
+    """uvicorn's already-resolved client host; never read raw X-Forwarded-For, it is spoofable."""
     if request.client is None or not request.client.host:
         return "unknown"
     return request.client.host
@@ -184,10 +148,7 @@ def _limit_key(scope: str, identifier: str, rule_name: str) -> str:
 
 
 def check_ip_limit(request: Request) -> Tuple[bool, int, int, float]:
-    """Apply the endpoint rule (or default) for this client IP.
-
-    Returns (allowed, limit, remaining, seconds_until_reset).
-    """
+    """Apply the endpoint rule (or default) for this client IP: (allowed, limit, remaining, reset_after)."""
     ip = client_ip(request)
     rule = match_rule(request.url.path, request.method)
     if rule is not None:
@@ -199,14 +160,10 @@ def check_ip_limit(request: Request) -> Tuple[bool, int, int, float]:
 
 
 def enforce_user_rate_limit(name: str, limit: int, window_seconds: int) -> Callable:
-    """Dependency factory: per-USER limit for endpoints where per-IP is not
-    enough (authenticated payment endpoints).
+    """Per-USER limit for endpoints where per-IP is not enough (authenticated payments).
 
-    Declares get_current_user as a sub-dependency: FastAPI's per-request
-    dependency cache guarantees the user is resolved (and authenticated)
-    BEFORE this check runs, and the auth lookup is not duplicated. Raises
-    429 (project-style {"detail"}) — a cheap in-memory check that runs
-    before any expensive downstream work in the endpoint body.
+    Depends on get_current_user so FastAPI's request-scoped dependency cache resolves
+    the user first without repeating the auth lookup.
     """
 
     def _dependency(
@@ -242,12 +199,7 @@ def _json_error(status_code: int, detail: str, headers: Optional[dict] = None) -
 
 
 class RateLimitBodyGuardMiddleware(BaseHTTPMiddleware):
-    """Outermost guard: request-size cap + per-IP rate limiting.
-
-    Registered last in main.py so it runs FIRST (cheapest checks before any
-    downstream work). Body-size rejection happens on Content-Length before the
-    body is ever read, so oversized payloads are dropped without buffering.
-    """
+    """Size cap + per-IP limit. Registered first in main.py, so it is the innermost middleware and its 429s get counted."""
 
     async def dispatch(self, request: Request, call_next):
         # Preflight must always pass or browsers cannot call the API at all.

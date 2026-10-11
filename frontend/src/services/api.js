@@ -5,14 +5,7 @@ const appBootstrapRequests = new Map();
 
 export const setAuthTokenGetter = (getter) => { authTokenGetter = getter; };
 
-/**
- * The message a failed request should surface.
- *
- * Every call site used to read `error?.response?.data?.detail` itself, which
- * both duplicated the error shape and rendered FastAPI's validation errors
- * (a list of per-field objects) as "[object Object]". Callers pass a fallback
- * for the case where the backend said nothing useful.
- */
+/** Message a failed request should surface; FastAPI sends detail as a per-field array, which renders as "[object Object]" if read raw. */
 export function apiErrorMessage(error, fallback = '') {
   const detail = error?.response?.data?.detail;
   if (Array.isArray(detail)) {
@@ -179,8 +172,7 @@ export const routeApi = {
 export const analyticsApi = {
   overview: async () => (await client.get('/analytics/overview')).data,
   daily: async (days = 14) => (await client.get('/analytics/daily', { params: { days } })).data,
-  // Prometheus is proxied server-side: the browser never queries it, and never
-  // supplies the PromQL — the API runs a fixed whitelist.
+  // Prometheus is proxied server-side behind a fixed PromQL whitelist; the browser never queries it.
   monitoring: async () => (await client.get('/analytics/monitoring')).data,
 };
 
@@ -194,10 +186,7 @@ export const predictApi = {
     (await client.get('/predict/demand', { params: { latitude: lat, longitude: lng } })).data,
 };
 
-// Payments (Razorpay)
-// NOTE: checkout responses contain only PUBLIC values (key id, order id,
-// amount). The Razorpay Key Secret never reaches this client; payment state
-// is confirmed only via the backend /payments/verify response.
+// Payments (Razorpay): only public values cross this boundary; the Key Secret stays server-side and state is confirmed via /payments/verify.
 export const paymentsApi = {
   createOrder: async (payload) => (await client.post('/payments/create-order', payload)).data,
   verify: async (razorpayResponse) => (await client.post('/payments/verify', {

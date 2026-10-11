@@ -31,17 +31,10 @@ _clerk_jwks_client: Optional[jwt.PyJWKClient] = None
 
 
 def get_websocket_token(websocket: WebSocket) -> Optional[str]:
-    """Extract a bearer token for WebSocket auth.
+    """Bearer token for WebSocket auth: header, then `bearer, <JWT>` subprotocol, then HttpOnly cookie.
 
-    Preferred (web): ``Authorization: Bearer <JWT>`` header or the
-    ``bearer, <JWT>`` WebSocket subprotocol pair, plus HttpOnly cookie
-    fallback for gateway-terminated deployments.
-
-    Native-mobile fallback: ``?token=<JWT>`` query param. Browsers can use
-    subprotocols, but the Flutter ``web_socket_channel`` client connects
-    with a plain query-param token, so accept it here rather than forcing
-    every mobile client to negotiate subprotocols. Query tokens never get
-    logged — only read from the already-parsed query dict.
+    `?token=<JWT>` is accepted last for Flutter's web_socket_channel, which cannot negotiate
+    subprotocols. It is read from the parsed query dict and never logged.
     """
     authorization = websocket.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
@@ -162,13 +155,10 @@ def decode_clerk_token(token: str) -> dict:
 
 
 def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
-    """Get or provision User from Clerk JWT.
+    """Provision a user from a Clerk JWT: the token gives identity, the database gives role.
 
-    The token carries identity only. Role and driver status live in the database
-    and are written by the admin approval flow, because a token claim can be
-    forged or self-edited: Clerk's ``public_metadata`` is writable by the signed
-    in user unless the instance restricts it, and reading authorization out of it
-    would let any passenger promote themselves to admin.
+    Role is never read from claims — Clerk public_metadata is user-writable unless the instance
+    restricts it, so a claim-driven role would let any passenger promote themselves to admin.
     """
     clerk_user_id = payload.get("sub")
     if not clerk_user_id:
@@ -251,12 +241,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
 
 
 def ensure_active_driver(user: User) -> User:
-    """Block a driver whose account is not approved and active.
-
-    Endpoints that check ``role`` inline instead of using :func:`require_roles`
-    must call this too, or suspending a driver changes nothing they can do.
-    Admins are unaffected — they act in their own capacity, not as a driver.
-    """
+    """Reject a driver who is not approved and active; inline role checks must call this too or
+    suspension changes nothing. Admins are unaffected — they act in their own capacity."""
     if user.role == "driver" and user.driver_status != "active":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

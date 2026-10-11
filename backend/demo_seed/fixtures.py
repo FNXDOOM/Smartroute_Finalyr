@@ -21,7 +21,6 @@ from models.job_run import JobRun
 from models.demand_snapshot import DemandSnapshot
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 
-# Constants
 random.seed(42)
 
 # Bengaluru landmarks
@@ -84,7 +83,6 @@ def fake_h3(lat: float, lng: float) -> str:
 
 # Seed funcs
 def seed_users(db: Session) -> list[User]:
-    """Seed users."""
     demo = [
         ("Arjun Sharma",   "arjun.sharma@demo.com",   "+91-98765-43210", "passenger"),
         ("Priya Nair",     "priya.nair@demo.com",     "+91-87654-32109", "passenger"),
@@ -116,7 +114,6 @@ def seed_users(db: Session) -> list[User]:
                 print("  ! using default dev admin password (set SEED_ADMIN_PASSWORD to override)")
                 password = "password123"
         else:
-            # Demo password: password123.
             password = "password123"
         u = User(
             name=name, email=email, phone=phone, role=role,
@@ -130,7 +127,6 @@ def seed_users(db: Session) -> list[User]:
 
 
 def seed_vehicles(db: Session) -> list[Vehicle]:
-    """Seed vehicles."""
     vehicles = []
     statuses = ["idle", "idle", "idle", "active", "active", "idle", "en_route", "idle", "idle", "idle"]
     for i, (plate, cap) in enumerate(VEHICLE_PLATES):
@@ -152,7 +148,6 @@ def seed_vehicles(db: Session) -> list[Vehicle]:
 
 
 def seed_rides(db: Session, users: list[User], n: int = 60) -> list[RideRequest]:
-    """Seed rides."""
     passengers = [u for u in users if u.role == "passenger"]
     rides = []
     for i in range(n):
@@ -216,7 +211,6 @@ def seed_virtual_stops(db: Session, rides: list[RideRequest]) -> list[VirtualSto
 
 
 def seed_cluster_runs(db: Session, admin: User, rides: list[RideRequest]) -> list[ClusterRun]:
-    """Seed cluster runs."""
     runs = []
     for i in range(5):
         n_rides = random.randint(8, 20)
@@ -253,7 +247,6 @@ def seed_cluster_runs(db: Session, admin: User, rides: list[RideRequest]) -> lis
 
 
 def seed_tracking_events(db: Session, vehicles: list[Vehicle]) -> None:
-    """Seed tracking events."""
     events = []
     for v in vehicles:
         if not v.lat:
@@ -274,7 +267,6 @@ def seed_tracking_events(db: Session, vehicles: list[Vehicle]) -> None:
 
 
 def seed_notifications(db: Session, users: list[User], rides: list[RideRequest]) -> None:
-    """Seed notifications."""
     types = [
         ("ride_requested",      "Ride request received",     "Your ride request has been received and is pending dispatch."),
         ("ride_status_updated", "Ride status updated",       "Your ride has been assigned to a vehicle."),
@@ -298,7 +290,6 @@ def seed_notifications(db: Session, users: list[User], rides: list[RideRequest])
 
 
 def seed_job_runs(db: Session, admin: User) -> list[JobRun]:
-    """Seed job runs."""
     jobs = []
     job_types = [
         ("cluster_job",  "clustering"),
@@ -326,7 +317,6 @@ def seed_job_runs(db: Session, admin: User) -> list[JobRun]:
 
 
 def seed_demand_snapshots(db: Session, job_runs: list[JobRun]) -> None:
-    """Seed demand snapshots."""
     count = 0
     for job in job_runs[:5]:
         for loc in random.sample(BENGALURU_LOCATIONS, random.randint(4, 8)):
@@ -347,7 +337,6 @@ def seed_demand_snapshots(db: Session, job_runs: list[JobRun]) -> None:
 
 
 def seed_rebalance_suggestions(db: Session, vehicles: list[Vehicle], job_runs: list[JobRun]) -> None:
-    """Seed rebalance suggestions."""
     reasons = [
         "High demand predicted in this zone",
         "No vehicles within 2 km of cluster centroid",

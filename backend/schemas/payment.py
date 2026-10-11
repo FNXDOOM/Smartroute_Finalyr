@@ -6,11 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class PaymentCreate(BaseModel):
-    """Request to start a Razorpay checkout.
-
-    NOTE: no amount/price field exists here BY DESIGN — the backend computes
-    the payable amount from server-side data (fare table + route distance).
-    """
+    """Starts a Razorpay checkout; no amount/price field here BY DESIGN — the backend computes it from fare table + route distance."""
 
     ride_request_id: Optional[int] = Field(
         None, ge=1, description="Ride to pay for (optional for wallet top-ups)"
@@ -24,10 +20,7 @@ class PaymentCreate(BaseModel):
 
 
 class PaymentCheckoutResponse(BaseModel):
-    """Everything Checkout needs — contains only PUBLIC values.
-
-    The Razorpay Key Secret is never included in any response schema.
-    """
+    """Everything Checkout needs, public values only — the Razorpay Key Secret is never in any response schema."""
 
     payment_id: int
     internal_order_id: int

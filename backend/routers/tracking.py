@@ -41,17 +41,14 @@ class TrackingConnection:
 
 class ConnectionManager:
     def __init__(self):
-        """Initialize the ConnectionManager."""
         self.active_connections: List[TrackingConnection] = []
 
     async def connect(self, websocket: WebSocket, user_id: int, role: str):
-        """Register a WebSocket connection."""
         # Flutter omits bearer; accept without subprotocol.
         await accept_connection(websocket, "bearer")
         self.active_connections.append(TrackingConnection(websocket, user_id, role))
 
     def disconnect(self, websocket: WebSocket):
-        """Remove a WebSocket connection."""
         self.active_connections = [entry for entry in self.active_connections if entry.websocket is not websocket]
 
     async def _send_snapshot(self, entry: TrackingConnection, db: Session, vehicles, events) -> None:
@@ -350,11 +347,7 @@ async def update_vehicle_location(
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """
-    WebSocket endpoint for live vehicle tracking.
-    Web clients send the JWT as the ``bearer`` WebSocket subprotocol;
-    native mobile clients (Flutter) send ``?token=<JWT>`` instead.
-    """
+    """Live tracking WebSocket; the JWT arrives via the `bearer` subprotocol from web clients and `?token=` from Flutter."""
     token = get_websocket_token(websocket)
     if not token:
         await websocket.close(code=4401, reason="Missing authentication token")

@@ -126,13 +126,7 @@ def test_cross_cell_corridor_match_keeps_each_rider_in_the_group():
 
 
 def test_corridor_matched_riders_share_one_cluster():
-    """Riders the corridor pass pools must end up in a single cluster.
-
-    The matcher returns a group of two, but the job assigned each member its own
-    cluster id, so they were dispatched as separate one-passenger routes and the
-    corridor match never became a carpool. Coordinates are a real production pair:
-    857 m apart at pickup, identical destination.
-    """
+    """The job gave each corridor match its own cluster, so they never pooled. Coordinates are a real production pair."""
     db = SessionLocal()
     user_id = None
     try:
@@ -182,9 +176,7 @@ def test_corridor_matched_riders_share_one_cluster():
 
 
 def test_manual_cluster_run_keeps_the_carpool_stage_in_step():
-    """POST /cluster/run wrote `status` by hand, so a shared ride clustered
-    through it was left with carpool_status NULL forever — the two axes only
-    stay in lockstep if every writer advances both."""
+    """POST /cluster/run wrote status by hand, leaving carpool_status NULL: every writer must advance both axes."""
     from routers.cluster import run_clustering
     from schemas.cluster import ClusterTriggerRequest
 
@@ -266,8 +258,7 @@ def test_private_rides_never_pool_and_shared_rides_do():
             "nearby shared riders should still form one pool"
         )
     finally:
-        # The dispatch job reads every clustered ride in the database, so
-        # leaving these behind would break unrelated tests (and the next run).
+        # The dispatch job reads every clustered ride, so leftovers break unrelated tests and the next run.
         if user_id is not None:
             db.query(RideRequest).filter(RideRequest.user_id == user_id).delete()
             db.commit()

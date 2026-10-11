@@ -6,8 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 
-// The backend refuses every driver-capable endpoint unless driver_status is
-// "active", so this screen stands in for all of them and has to say why.
+// The backend refuses every driver-capable endpoint unless driver_status is "active", so this screen stands in for all of them.
 const STATUS_COPY = {
   pending_verification: {
     Icon: Hourglass,

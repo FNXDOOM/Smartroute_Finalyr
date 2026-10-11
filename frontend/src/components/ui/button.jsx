@@ -3,13 +3,7 @@ import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva } from "class-variance-authority";
 import { cn } from "cn"
 
-/*
- * Uber-inspired button system:
- * - Primary: black bg / white text, 48px min-height, 8px radius, 600 weight
- * - Secondary: white bg / black text / 1px #D6D6D6
- * - Text: no bg/border, understated hover
- * - 150–200ms transitions, visible focus
- */
+/* Uber-inspired variant scale: solid-black primary, neutral outlines, visible focus, 200ms transitions. */
 const buttonVariants = cva(
   "group/button inline-flex shrink-0 items-center justify-center rounded-lg border font-semibold whitespace-nowrap transition-[background-color,border-color,color,transform,box-shadow] duration-200 outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black dark:focus-visible:outline-white active:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-[#D93025] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {

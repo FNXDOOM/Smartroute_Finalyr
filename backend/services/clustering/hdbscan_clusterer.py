@@ -5,7 +5,6 @@ from utils.geo import haversine_meters
 
 
 def _extract_pickup_coords(request) -> Tuple[float, float]:
-    """Extract pickup coordinates from a ride request."""
     if hasattr(request, "pickup_lat") and hasattr(request, "pickup_lng"):
         return float(request.pickup_lat), float(request.pickup_lng)
     if hasattr(request, "lat") and hasattr(request, "lng"):
@@ -16,22 +15,7 @@ def _extract_pickup_coords(request) -> Tuple[float, float]:
 def cluster_passengers(
     requests: list, min_cluster_size: int = 2
 ) -> np.ndarray:
-    """
-    Apply density-based clustering to passenger pickup locations.
-    Returns array of integer cluster labels (-1 = noise/outlier).
-
-    Strategy
-    --------
-    1. Primary: HDBSCAN with ``cluster_selection_method='leaf'`` and
-       ``cluster_selection_epsilon`` set to 300 m in radians.  This mode
-       picks the finest-grained clusters that sit within the epsilon
-       neighbourhood, which is the correct behaviour for ride-sharing grouping.
-    2. Fallback: sklearn DBSCAN with the same epsilon if hdbscan is not installed.
-
-    The 300 m radius comfortably groups passengers waiting on the same block
-    or within a typical shared-taxi boarding window.
-        300 m / 6_371_000 m ≈ 4.71e-5 rad
-    """
+    """HDBSCAN leaf selection (finest clusters inside a 300 m epsilon), DBSCAN fallback; -1 labels are noise."""
     coords = np.array([_extract_pickup_coords(r) for r in requests], dtype=float)
 
     if len(coords) < min_cluster_size:
@@ -66,10 +50,7 @@ def cluster_passengers(
 
 
 def get_cluster_groups(requests: list, labels: np.ndarray) -> dict:
-    """
-    Groups requests by their cluster label.
-    Returns dict: {cluster_id -> list of request objects}. Excludes noise (-1).
-    """
+    """Group requests by cluster label, dropping noise (-1)."""
     groups: dict = {}
     for req, label in zip(requests, labels):
         if label == -1:

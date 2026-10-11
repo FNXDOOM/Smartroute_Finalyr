@@ -1,8 +1,4 @@
-// MapLibre is the largest thing this app ships (~247 KiB gzipped). Importing it
-// directly puts it in the executing chunk's import graph, so a view cannot run
-// any of its code until the renderer has downloaded — even on screens that never
-// draw a map. This boundary keeps MapLibre out of every view bundle and lets a
-// map arrive after the surrounding chrome has already painted.
+// Keeps MapLibre (~247 KiB gzipped) out of every view bundle, with the Suspense boundary here so a map-chunk fetch only swaps the map, not the whole screen.
 import { Suspense, lazy } from 'react'
 
 const MapLibreMap = lazy(() => import('./AppMap'))

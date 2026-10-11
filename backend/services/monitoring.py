@@ -1,10 +1,4 @@
-"""Reads the monitoring stack for the admin panel.
-
-Prometheus only runs under the `monitoring` compose profile, so every function
-degrades to a plain "not running" answer rather than an exception. Only the
-fixed QUERIES whitelist is ever sent: caller-supplied PromQL would hand out a
-query language over the metrics store.
-"""
+"""Admin-panel reads of the monitoring stack: degrade to "not running" off-profile, and only the fixed QUERIES whitelist is ever sent."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List

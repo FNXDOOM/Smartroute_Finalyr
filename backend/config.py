@@ -25,8 +25,7 @@ ALLOWED_ORIGINS = [
 AUTH_PROVIDER = os.getenv("AUTH_PROVIDER", "clerk").lower()
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "")
 CLERK_ISSUER = os.getenv("CLERK_ISSUER", "")
-# Local JWT for Flutter; Clerk for web.
-# Required: no predictable fallback. Startup fails when missing/placeholder.
+# Local JWT for Flutter, Clerk for web. No predictable fallback: startup fails when missing or placeholder.
 LOCAL_JWT_SECRET = os.getenv("LOCAL_JWT_SECRET", "").strip()
 _LOCAL_JWT_PLACEHOLDER = "dev-only-change-me-in-production"
 if not LOCAL_JWT_SECRET or LOCAL_JWT_SECRET == _LOCAL_JWT_PLACEHOLDER:
@@ -70,17 +69,12 @@ STADIA_MAP_STYLE_PATH = os.getenv(
     "STADIA_MAP_STYLE_PATH", "styles/alidade_smooth.json"
 ).strip().lstrip("/")
 
-# Rate limiting / abuse protection (application level; see utils/rate_limit.py).
-# These guard endpoints and downstream services per client — they are NOT DDoS
-# protection; volumetric attacks must be absorbed at the proxy/edge layer.
+# Per-client throttling for endpoints and downstream services — NOT DDoS protection, which belongs at the edge.
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_DEFAULT_PER_MINUTE = int(os.getenv("RATE_LIMIT_DEFAULT_PER_MINUTE", "120"))
-# JSON-only API: cap request bodies before they are buffered.
-MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "1048576"))  # 1 MiB
+MAX_BODY_BYTES = int(os.getenv("MAX_BODY_BYTES", "1048576"))  # 1 MiB; JSON-only API, capped before buffering
 
-# Internal Prometheus for the admin Monitoring panel. Only exists when the
-# `monitoring` compose profile is enabled; services/monitoring.py treats an
-# unreachable value as "not installed", never as an error.
+# Internal Prometheus for the admin Monitoring panel; absent unless the `monitoring` profile runs, and treated as "not installed" rather than an error.
 PROMETHEUS_BASE_URL = os.getenv("PROMETHEUS_BASE_URL", "http://prometheus:9090").strip().rstrip("/")
 
 # Razorpay payments. KEY_SECRET/WEBHOOK_SECRET must NEVER reach the frontend.

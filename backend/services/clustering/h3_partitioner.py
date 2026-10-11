@@ -4,7 +4,6 @@ import h3
 
 
 def get_h3_index(lat: float, lng: float, resolution: int = 9) -> str:
-    """Get H3 index string for given lat/lng and resolution"""
     if hasattr(h3, "latlng_to_cell"):
         return h3.latlng_to_cell(lat, lng, resolution)
     elif hasattr(h3, "geo_to_h3"):
@@ -13,11 +12,7 @@ def get_h3_index(lat: float, lng: float, resolution: int = 9) -> str:
 
 
 def get_h3_center(cell: str) -> Tuple[float, float]:
-    """Return the centre coordinate of an H3 cell, or ``(0.0, 0.0)``.
-
-    Degrades to the origin when the installed H3 build exposes no centre API,
-    matching the tolerant behaviour the demand/rebalance paths rely on.
-    """
+    """Cell centre, or the origin when the installed H3 build exposes no centre API."""
     try:
         if hasattr(h3, "cell_to_latlng"):
             lat, lng = h3.cell_to_latlng(cell)
@@ -31,12 +26,7 @@ def get_h3_center(cell: str) -> Tuple[float, float]:
 
 
 def neighbouring_h3_cells(cell: str, k: int = 1) -> Set[str]:
-    """The cell itself plus every cell within ``k`` rings of it.
-
-    Route matching must not treat a single H3 cell as a hard boundary, so the
-    clustering pass expands each cell to its neighbours. Degrades to the cell
-    alone if the installed H3 build exposes no ring API.
-    """
+    """Cell plus everything within k rings: one H3 cell is not a carpool boundary. Cell alone if the build has no ring API."""
     if hasattr(h3, "grid_disk"):
         return set(h3.grid_disk(cell, k))
     elif hasattr(h3, "k_ring"):
@@ -45,10 +35,7 @@ def neighbouring_h3_cells(cell: str, k: int = 1) -> Set[str]:
 
 
 def partition_requests(ride_requests: list, resolution: int = 9) -> dict:
-    """
-    Partition ride requests into H3 hexagonal cells.
-    Returns a dict mapping h3_index -> list of requests.
-    """
+    """Bucket requests by H3 cell: h3_index -> list of requests."""
     buckets = {}
     for req in ride_requests:
         lat = req.pickup_lat if hasattr(req, "pickup_lat") else req["pickup_lat"]

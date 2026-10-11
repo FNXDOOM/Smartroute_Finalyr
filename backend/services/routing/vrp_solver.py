@@ -9,10 +9,7 @@ from services.stadia_client import matrix as stadia_matrix
 from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_states import ROUTE_SOLVED
 
-# The pooled PDP search runs GUIDED_LOCAL_SEARCH, which has no early exit: it
-# spends whatever ``time_limit`` says. That makes this a fixed cost on every
-# dispatch tick *and* on every test that builds a pooled route, so CI can lower
-# it without touching the production default.
+# GUIDED_LOCAL_SEARCH always spends the full time_limit, so CI lowers it via SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS instead of this default.
 DEFAULT_SHARED_RIDE_SOLVER_SECONDS = 15
 
 
@@ -26,9 +23,7 @@ def shared_ride_solver_time_limit() -> int:
 
 # Stadia's matrix endpoint accepts at most 25 sources x 25 targets per call.
 MATRIX_CHUNK_SIZE = 25
-# Above this many nodes the OSM fallback would spend more time downloading a
-# road graph than the solver spends searching; fall back to straight-line
-# distance instead of blocking a dispatch job.
+# Past this many nodes, downloading an OSM graph costs more than solving, so use straight-line distance instead.
 OSM_MATRIX_NODE_CAP = 25
 
 
@@ -67,8 +62,6 @@ def build_road_distance_matrix(stops: List[Dict]) -> List[List[int]]:
         ) * 1.35),
     )
     if len(stops) > OSM_MATRIX_NODE_CAP:
-        # Straight-line distances are good enough for a large pool, and this
-        # keeps a dispatch job from downloading an OSM graph mid-run.
         return matrix
 
     graph = build_road_graph(centre_lat, centre_lng, dist=radius)
@@ -106,11 +99,7 @@ def _fetch_matrix_block(
     source_key: tuple,
     target_key: tuple,
 ) -> tuple:
-    """Cached Stadia matrix block, keyed by rounded coordinates.
-
-    Raises ``_MatrixUnavailable`` on any failure so failures are never cached
-    (a transient upstream error must not poison every later solve).
-    """
+    """Stadia block cached by rounded coords; raises _MatrixUnavailable so a transient failure is never cached."""
     source_points = [{"lat": lat, "lon": lng} for lat, lng in source_key]
     target_points = [{"lat": lat, "lon": lng} for lat, lng in target_key]
     try:
@@ -312,24 +301,7 @@ def solve_shared_ride_pdp(
     depot_idx: int = 0,
     time_limit_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Solve a pooled shared ride: pickups *and* destinations.
-
-    ``nodes`` is the depot (index ``depot_idx``), then one pickup node per
-    pooled boarding stop, then one destination node per ride request. Every
-    node is ``{"lat", "lng", "kind", "demand"}`` with ``kind`` in
-    ``depot | pickup | destination``, and every destination carries
-    ``pair_index`` pointing at the pickup node that boards the same passenger.
-
-    A pickup adds its demand to the vehicle load and the paired destination
-    hands it back, so a vehicle that has dropped a passenger has the seat free
-    again — the reason a pooled route can serve more passengers in one run than
-    its capacity allows at any single moment.
-
-    Returns the same shape as :func:`solve_vrp`, where ``stop_indices`` are
-    indices into ``nodes``. The route is open-ended: it stops at its last
-    destination rather than driving back to the depot, so no leg is emitted
-    that has no stop attached to it.
-    """
+    """Pooled PDP over depot + pickup + destination nodes; each destination carries pair_index at its boarding pickup and returns its demand."""
     try:
         from ortools.constraint_solver import routing_enums_pb2, pywrapcp
     except ImportError:
@@ -345,8 +317,7 @@ def solve_shared_ride_pdp(
     if not pickups or not destinations:
         return {"routes": [], "total_distance_m": 0, "status": "no_stops"}
 
-    # A zero-demand copy of the depot as each vehicle's end keeps the route open:
-    # the final arc is a free hop to it instead of a real return trip.
+    # Each vehicle ends on a zero-demand depot copy, so the final arc is a free hop rather than a return trip.
     end_node = len(nodes)
     matrix_nodes = [dict(node) for node in nodes]
     matrix_nodes.append({
@@ -380,9 +351,7 @@ def solve_shared_ride_pdp(
     transit_cb_idx = routing.RegisterTransitCallback(distance_callback)
     routing.SetArcCostEvaluatorOfAllVehicles(transit_cb_idx)
 
-    # A real distance dimension is used for pickup-before-delivery precedence.
-    # The load dimension alone only describes occupancy; it is not a reliable
-    # ordering constraint for every OR-Tools version.
+    # Precedence uses the distance dimension; the load dimension isn't a reliable ordering constraint in every OR-Tools version.
     max_route_distance = max(1, sum(max(row) for row in distance_matrix))
     routing.AddDimension(
         transit_cb_idx,
@@ -411,8 +380,7 @@ def solve_shared_ride_pdp(
         True,
         "Load",
     )
-    # Some OR-Tools builds return a success flag rather than the dimension, so
-    # look the dimension up by name instead of trusting the return value.
+    # Some OR-Tools builds return a success flag from AddDimension, so look the dimension up by name.
     load_dimension = routing.GetDimensionOrDie("Load")
 
     for index in destinations:

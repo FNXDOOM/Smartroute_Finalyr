@@ -1376,9 +1376,7 @@ function PendingDriversPanel({ setView, toast }) {
   )
 }
 
-// ---------------------------------------------------------------------------
 // Monitoring
-// ---------------------------------------------------------------------------
 
 // Jobs run every 60s, so past five minutes means a schedule stopped, not that traffic is quiet.
 const JOB_STALE_SECONDS = 300

@@ -28,9 +28,7 @@ class RideRequest(Base):
     mode = Column("ride_mode", String, default="live", nullable=False, index=True)  # live | presentation_demo
     # Carpool (True, default) vs private (False). A private ride is never pooled.
     is_shared = Column(Boolean, nullable=False, default=True, server_default=text("true"), index=True)
-    # Per-rider carpool stage (see utils/carpool_status.py): the fine-grained
-    # position within the carpool lifecycle. Null for private rides; kept in
-    # sync with ``status`` so older clients that only read ``status`` work.
+    # Fine-grained carpool stage (see utils/carpool_status.py); null for private rides and kept in sync with ``status`` so older clients still work.
     carpool_status = Column(String, nullable=True)
     demo_run_id = Column(String, nullable=True, index=True)
     h3_index = Column(String, index=True, nullable=True)
@@ -40,10 +38,8 @@ class RideRequest(Base):
     destination_location = Column(PortableGeometry, nullable=True)
     # Python-side default: per-row timestamps.
     request_time = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=func.now())
-    # Labels from mobile client
     pickup_label = Column(String, nullable=True)
     destination_label = Column(String, nullable=True)
-    # Ride-option display metadata
     ride_option_id = Column(String, nullable=True)
     ride_option_name = Column(String, nullable=True)
     ride_option_price = Column(String, nullable=True)

@@ -1,7 +1,4 @@
-"""Analytics aggregation: the daily rollup, the monitoring endpoint, and who may read them.
-
-Counts are asserted as deltas because the scratch database persists between runs.
-"""
+"""Analytics rollups and monitoring access; counts are asserted as deltas because the scratch database persists between runs."""
 
 import sys
 from datetime import datetime, timedelta, timezone

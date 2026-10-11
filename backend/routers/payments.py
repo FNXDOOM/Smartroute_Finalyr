@@ -1,14 +1,4 @@
-"""Razorpay payment endpoints: create order, verify checkout, receive webhooks.
-
-Security model:
-  - All checkout endpoints require an authenticated user (Clerk/local JWT).
-  - Amounts are computed server-side; nothing amount-related is accepted
-    from the client.
-  - The internal order is always validated to belong to the caller.
-  - Only backend verification of the Razorpay signature marks a payment PAID.
-  - The webhook endpoint verifies X-Razorpay-Signature against the raw body.
-  - Everything is idempotent: duplicate verifications/webhooks are no-ops.
-"""
+"""Razorpay checkout and webhook endpoints: amounts computed server-side, PAID only after signature verification, idempotent replays."""
 
 import json
 import logging
@@ -46,10 +36,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Per-USER caps layered on top of the per-IP middleware limits: a shared-NAT
-# attacker must not be able to exhaust Razorpay order creation by consuming
-# the whole IP budget. These are cheap in-memory checks; the user is already
-# authenticated by the time they run.
+# Per-user caps over the per-IP middleware: a shared-NAT attacker must not exhaust the IP budget on order creation.
 _limit_orders_per_user = enforce_user_rate_limit("payments_create_order", 15, 600)
 _limit_verify_per_user = enforce_user_rate_limit("payments_verify", 30, 600)
 
@@ -90,11 +77,7 @@ def _get_owned_payment(db: Session, payment_id: int, current_user: User) -> Paym
 
 
 def _route_distance_km(ride: RideRequest) -> float:
-    """Server-side distance for fare computation.
-
-    Uses the backend's own routing service (same source the UI shows);
-    falls back to a haversine estimate if the routing provider is down.
-    """
+    """Server-side route distance for fare computation; haversine fallback if the routing provider is down."""
     from utils.geo import haversine_meters
 
     try:
@@ -145,11 +128,7 @@ def _resolve_ride_amount(
 
 
 def _fire_payment_notification(db: Session, payment: Payment, outcome: str) -> None:
-    """Notify the rider via the existing notification service + WS push.
-
-    Best-effort by design: the payment state is already committed, so a
-    notification failure must never surface as a failed payment request.
-    """
+    """Best-effort rider notification: the payment is already committed, so a notification failure must never read as a failed payment."""
     from services.notifications import create_notification
 
     try:
@@ -192,11 +171,7 @@ def create_payment_order(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Create an internal Payment row + Razorpay Order for the authenticated user.
-
-    Returns only public checkout data (Key ID, order ID, amount, customer
-    info). The Key Secret never leaves the server.
-    """
+    """Create an internal Payment row + Razorpay Order; returns only public checkout data, never the Key Secret."""
     client = _require_razorpay_configured()
 
     ride_id, amount = _resolve_ride_amount(
@@ -217,10 +192,7 @@ def create_payment_order(
                 detail="This ride has already been paid",
             )
 
-        # Resume the user's most recent unpaid payment for this ride instead of
-        # creating a second Razorpay order. Prevents double-charging when a
-        # previous attempt failed after checkout (e.g. transient network error
-        # during verification) but the customer may already have been charged.
+        # Resume the rider's latest unpaid payment for this ride rather than opening a second Razorpay order: an earlier attempt may already have charged them.
         resumable = (
             db.query(Payment)
             .filter(
@@ -254,9 +226,7 @@ def create_payment_order(
         db.refresh(payment)
 
     if payment.razorpay_order_id:
-        # Resumed payment that already has a Razorpay order — reopen checkout
-        # for the SAME order. Razorpay allows only one successful payment per
-        # order, so this can never double-charge.
+        # Reopen checkout on the SAME order: Razorpay allows one successful payment per order, so this can never double-charge.
         logger.info(
             "Resuming existing payment: payment_id=%d order_id=%s",
             payment.id,
@@ -334,11 +304,7 @@ def verify_payment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Verify the Checkout signature server-side and mark the payment PAID.
-
-    Idempotent: re-verification of an already-verified payment returns the
-    same success state without side effects.
-    """
+    """Verify the Checkout signature server-side and mark the payment PAID; re-verifying a verified payment is a no-op."""
     _require_razorpay_configured()
 
     # Look up by Razorpay order ID, enforcing ownership.
@@ -394,8 +360,7 @@ def verify_payment(
             detail="Payment verification failed",
         )
 
-    # 2. Defence in depth: confirm via the Razorpay API that the payment
-    #    belongs to the stored order and matches amount/currency/state.
+    # 2. Defence in depth: confirm through the Razorpay API that the payment belongs to the stored order and matches amount/currency/state.
     try:
         rzp_payment = _require_razorpay_configured().fetch_payment(verify_in.razorpay_payment_id)
     except RazorpayError as exc:
@@ -461,12 +426,7 @@ async def razorpay_webhook(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    """Razorpay webhook receiver.
-
-    Verifies X-Razorpay-Signature against the RAW request body using the
-    webhook secret, then updates payment state idempotently. There is no
-    user authentication by design — the signature IS the authentication.
-    """
+    """Verify X-Razorpay-Signature against the RAW body and update payment state idempotently; no user auth by design, the signature IS the authentication."""
     signature = request.headers.get("X-Razorpay-Signature", "")
     body = await request.body()
 

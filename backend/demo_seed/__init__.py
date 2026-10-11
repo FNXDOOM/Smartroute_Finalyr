@@ -1,21 +1,4 @@
-"""The demo seeders, behind one interface.
-
-Two scenarios exist, and they produce different data for different purposes:
-
-``fixtures``
-    The Bengaluru fixture dataset: users, vehicles, rides, stops, cluster runs,
-    notifications, job runs and demand snapshots. Pure local data, no network.
-
-``pipeline``
-    A city-parameterised demo (``CITY_PRESETS``) that also drives the real
-    clustering and route-optimisation pipeline, so it needs the routing provider.
-
-Both are reachable from the command line; this module is the single entry
-point::
-
-    python backend/seed.py [--reset]                  # fixtures
-    python scripts/seed_db.py [--city CITY] [--reset]  # pipeline
-"""
+"""Demo seeders: `fixtures` builds the offline Bengaluru dataset; `pipeline` is city-parameterised and drives the real clustering/routing, so it needs the routing provider."""
 
 SCENARIOS = ("fixtures", "pipeline")
 

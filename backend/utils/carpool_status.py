@@ -1,12 +1,8 @@
-"""Per-rider carpool lifecycle stage.
+"""Per-rider carpool lifecycle stage, kept in lockstep with the coarse RideRequest.status.
 
-The backend's ``RideRequest.status`` is a coarse, client-agnostic axis
-(pending -> clustered -> assigned -> arriving -> ready_for_pickup ->
-in_progress -> completed). Carpool needs a finer, *per-rider* stage: the driver
-confirms one rider at a time, so two riders on the same route are legitimately
-at different points. This module owns that finer stage and keeps the coarse
-``status`` in lockstep, so every existing client that only reads ``status``
-keeps working unchanged.
+Carpool needs a finer axis than status: the driver confirms one rider at a time, so two riders on
+the same route are legitimately at different points. Syncing both here keeps every client that only
+reads ``status`` working unchanged.
 """
 
 from typing import Optional
@@ -54,8 +50,7 @@ CARPOOL_TO_RIDE_STATUS = {
     CARPOOL_CANCELLED: RIDE_CANCELLED,
 }
 
-# Coarse status -> the stage a manual status write implies. Keeps a legacy
-# PATCH /rides/{id}/status from desyncing the two axes.
+# What a manual status write implies, so a legacy PATCH /rides/{id}/status cannot desync the two axes.
 RIDE_STATUS_TO_CARPOOL = {
     RIDE_PENDING: CARPOOL_PENDING,
     RIDE_CLUSTERED: CARPOOL_CLUSTERED,
@@ -67,8 +62,7 @@ RIDE_STATUS_TO_CARPOOL = {
     RIDE_CANCELLED: CARPOOL_CANCELLED,
 }
 
-# The forward ladder a rider walks. ``cancelled`` is terminal and deliberately
-# off it, so an unknown or cancelled stage never satisfies a minimum.
+# The forward ladder a rider walks; `cancelled` is deliberately off it so an unknown or cancelled stage never satisfies a minimum.
 CARPOOL_PROGRESS_STAGES = (
     CARPOOL_PENDING,
     CARPOOL_SEARCHING,
@@ -91,11 +85,7 @@ def stage_at_least(stage: Optional[str], minimum: str) -> bool:
     return CARPOOL_PROGRESS_STAGES.index(stage) >= CARPOOL_PROGRESS_STAGES.index(minimum)
 
 def set_carpool_stage(ride, stage: str) -> None:
-    """Advance a shared ride to ``stage`` and keep its coarse status in sync.
-
-    A no-op for private rides: they are never tracked on the carpool axis and
-    keep ``carpool_status`` null.
-    """
+    """Advance a shared ride to ``stage`` and sync its coarse status; a no-op for private rides."""
     if not getattr(ride, "is_shared", False):
         return
     if stage not in CARPOOL_TO_RIDE_STATUS:

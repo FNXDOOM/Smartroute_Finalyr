@@ -1,16 +1,8 @@
-"""The status vocabularies for the ride, route and vehicle axes.
+"""Status vocabularies for the ride, route and vehicle axes, plus their shared predicates.
 
-Three status axes were re-listed as string literals across routers, services and
-jobs — the coarse ``RideRequest.status``, the ``RoutePlan.status`` and the
-``Vehicle.status``. Nothing owned them, so renaming a value was a silent
-breakage and predicates like "is this route live?" or "may this vehicle be
-dispatched?" were re-derived at each call site.
-
-This module owns all three vocabularies and their shared predicates. The fine
-per-rider carpool ladder stays in ``utils/carpool_status.py``.
-
-The values are part of the wire contract (clients and the frontend read them),
-so they must not change.
+These were re-listed as string literals across routers, services and jobs, so renaming a value
+broke silently. The values are part of the wire contract — clients and the frontend read them —
+so they must not change. The fine per-rider carpool ladder lives in utils/carpool_status.py.
 """
 
 from typing import Optional, Tuple
@@ -36,15 +28,13 @@ RIDE_STATUSES: Tuple[str, ...] = (
     RIDE_CANCELLED,
 )
 
-# A ride that has left the pipeline: it is never advanced, rewritten or counted
-# as outstanding work again.
+# A ride that has left the pipeline: never advanced, rewritten or counted as outstanding again.
 RIDE_TERMINAL_STATUSES = frozenset({RIDE_COMPLETED, RIDE_CANCELLED})
 # A ride still in the pipeline (anything not terminal).
 RIDE_IN_PIPELINE_STATUSES: Tuple[str, ...] = tuple(
     status for status in RIDE_STATUSES if status not in RIDE_TERMINAL_STATUSES
 )
-# A ride already bound to a route and not yet finished — the set a detach
-# demotes when an itinerary goes stale.
+# Bound to a route and not yet finished — what a detach demotes when an itinerary goes stale.
 RIDE_BOUND_STATUSES = (RIDE_ASSIGNED, RIDE_ARRIVING)
 # A ride the simulator/serving path considers on board a route.
 RIDE_SERVING_STATUSES = (RIDE_ASSIGNED, RIDE_ARRIVING, RIDE_IN_PROGRESS)
@@ -59,9 +49,7 @@ ROUTE_COMPLETED = "completed"
 ROUTE_CANCELLED = "cancelled"
 ROUTE_SUPERSEDED = "superseded"
 
-# A plan a driver is currently serving. A co-passenger cancellation leaves it
-# ``needs_reoptimization`` while the rest of its riders are still on board, so
-# it is still live; only ``completed`` ends the run.
+# A co-passenger cancellation leaves a plan needs_reoptimization while other riders are on board, so it stays live; only completed ends the run.
 LIVE_ROUTE_STATUSES: Tuple[str, ...] = (ROUTE_SOLVED, ROUTE_NEEDS_REOPTIMIZATION)
 CLOSABLE_ROUTE_STATUSES: Tuple[str, ...] = (*LIVE_ROUTE_STATUSES, ROUTE_COMPLETED)
 

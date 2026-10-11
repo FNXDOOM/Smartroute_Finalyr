@@ -20,9 +20,7 @@ from backend.services.prediction.feature_engineering import encode_h3_index
 from backend.services.clustering.h3_partitioner import get_h3_index
 from backend.services.prediction.model_contract import FEATURE_ORDER, MODEL_PATH
 
-# Config: city centre and spread
-
-# Dubai (matches the seed_db.py default)
+# Dubai — note seed_db.py defaults to --city bengaluru, so this model is trained on a different city than the demo seeds.
 CITY_CENTER    = (25.2048, 55.2708)
 SPREAD_DEGREES = 0.15          # ~15 km radius
 N_DAYS         = 180           # 6 months of synthetic history
@@ -31,8 +29,6 @@ H3_RESOLUTION  = 9
 
 rng = np.random.default_rng(42)
 
-
-# Demand shape: urban ride patterns
 
 HOUR_MULTIPLIERS = {
     0: 0.3, 1: 0.2, 2: 0.15, 3: 0.1, 4: 0.1, 5: 0.2,
@@ -57,7 +53,6 @@ def _make_zone_centers(n: int) -> list[tuple[float, float, float]]:
     """Return lat/lng/demand for N zones."""
     zones = []
     for _ in range(n):
-        # Closer zones get higher demand
         radius = rng.uniform(0, SPREAD_DEGREES)
         angle  = rng.uniform(0, 2 * 3.14159)
         lat    = CITY_CENTER[0] + radius * float(np.cos(angle))
@@ -74,7 +69,6 @@ def generate_dataset() -> pd.DataFrame:
 
     zone_centers = _make_zone_centers(N_ZONES)
 
-    # Precompute H3 and encoded zones
     zone_h3 = [
         get_h3_index(lat, lng, H3_RESOLUTION)
         for lat, lng, _ in zone_centers
@@ -91,7 +85,6 @@ def generate_dataset() -> pd.DataFrame:
             hour_mult = HOUR_MULTIPLIERS[hour]
 
             for zone_idx, (_, _, base_demand) in enumerate(zone_centers):
-                # Expected demand per zone/hour/day
                 expected = base_demand * hour_mult * dow_mult
                 # Add Poisson noise for counts
                 actual = int(rng.poisson(max(0.1, expected)))
@@ -159,7 +152,6 @@ def train(df: pd.DataFrame) -> XGBRegressor:
 
 
 def main():
-    """Run the command-line entry point."""
     print("=" * 60)
     print("  SmartRouteAI — Demand Model Training (Synthetic)")
     print(f"  City   : {CITY_CENTER}")

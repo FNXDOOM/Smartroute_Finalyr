@@ -1,11 +1,5 @@
-"""Shared pytest setup: where the test database lives, and what it must never be.
-
-CI runs against ``sqlite:///./.testdb/ci_test.db``, so the schema is created here.
-Two guards stop a bare ``pytest`` doing damage: a hosted ``DATABASE_URL`` is
-refused (``create_db_tables()`` issues real DDL and ``backend/.env`` points at
-production), and outbound sockets are refused (osmnx is installed in CI but not
-locally, so road-graph fetches make CI crawl while local runs skip snapping).
-"""
+"""Session setup: build the scratch schema, refusing a hosted DATABASE_URL (create_db_tables() issues real DDL)
+and outbound sockets (osmnx is in CI but not locally, so road-graph fetches make CI crawl)."""
 
 import os
 import socket
@@ -48,10 +42,7 @@ def is_external_address(address) -> bool:
 
 @pytest.fixture(scope="session", autouse=True)
 def _keep_the_suite_hermetic():
-    """Refuse outbound sockets so CI behaves like a laptop: no Overpass road-graph fetches.
-
-    Opt out with ``TEST_ALLOW_NETWORK=1``.
-    """
+    """Refuse outbound sockets so CI behaves like a laptop; opt out with ``TEST_ALLOW_NETWORK=1``."""
     if os.getenv("TEST_ALLOW_NETWORK") == "1":
         yield
         return

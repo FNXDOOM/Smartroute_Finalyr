@@ -1,26 +1,4 @@
-"""The carpool run lifecycle.
-
-One owner for four facts that were previously re-derived at every call site:
-
-1. which route statuses count as a *live* run (``LIVE_ROUTE_STATUSES``),
-2. the per-rider stage ladder and its legal transitions (``CarpoolRun``),
-3. the roster (non-cancelled riders on the run's waypoints),
-4. completion and the vehicle release it performs.
-
-Callers state an intent; this module decides whether it is legal, keeps the
-coarse ``status`` in lockstep with the fine carpool stage, emits the
-notifications, and raises :class:`CarpoolRefused` when the intent is refused.
-FastAPI does not appear here, so the background jobs can drive a run too.
-
-Two invariants are structural rather than remembered:
-
-* **A rider never walks backwards.** Every per-rider hop is monotonic: a rider
-  already at or past the target is left untouched, so a retried request can not
-  rewind a confirmed or dropped-off rider.
-* **Liveness is one constant.** Accept and every drive endpoint read the same
-  ``LIVE_ROUTE_STATUSES``, so a plan that is ``needs_reoptimization`` is still
-  drivable instead of stranding its remaining riders.
-"""
+"""Carpool run lifecycle: one owner for live-run statuses, the rider stage ladder, the roster, and completion."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -66,8 +44,7 @@ from utils.carpool_status import (
 )
 from utils.ride_scope import LIVE_MODE
 
-# Refusal code -> HTTP status. The single source for the mapping; the routers
-# raise from ``status_code`` below rather than re-declaring it.
+# Single source for refusal code -> HTTP status; routers read ``status_code`` below instead of re-declaring it.
 HTTP_STATUS_FOR_CODE = {"not_found": 404, "forbidden": 403, "conflict": 409, "invalid": 400}
 
 
@@ -106,11 +83,7 @@ _RIDER_HOPS = {
 # -- roster ------------------------------------------------------------------
 
 def route_rides(db: Session, route_plan: RoutePlan) -> List[RideRequest]:
-    """Every non-cancelled passenger ride served by a carpool route.
-
-    Cancelled riders are excluded because a stale ``passenger_ids`` entry must
-    never be advanced, notified, or counted as outstanding work.
-    """
+    """Non-cancelled rides on the route; a stale cancelled id must never be advanced or counted."""
     ride_ids = {
         passenger_id
         for waypoint in route_plan.waypoints or []
@@ -127,20 +100,12 @@ def route_rides(db: Session, route_plan: RoutePlan) -> List[RideRequest]:
 
 
 def riders_not_dropped_off(rides: List[RideRequest]) -> List[RideRequest]:
-    """Riders still owed a drop-off, i.e. anything blocking completion.
-
-    Takes the output of :func:`route_rides`, so cancelled riders are already out.
-    """
+    """Riders still owed a drop-off; takes route_rides output, so cancelled riders are already out."""
     return [ride for ride in rides if ride.status != RIDE_COMPLETED]
 
 
 def route_plan_serving_ride(db: Session, ride: RideRequest) -> Optional[RoutePlan]:
-    """The live route whose waypoints carry this ride, or None if unrouted.
-
-    A run in ``needs_reoptimization`` is still being driven, so it counts as
-    live; treating it as unassigned would let another driver write over the
-    driver currently serving the rider.
-    """
+    """Live route serving this ride; needs_reoptimization stays live, else another driver overwrites the active one."""
     if not ride.virtual_stop_id:
         return None
     candidates = (
@@ -162,12 +127,7 @@ def route_plan_serving_ride(db: Session, ride: RideRequest) -> Optional[RoutePla
 
 
 def run_is_open_to_riders(route_plan: RoutePlan) -> bool:
-    """Whether a run may still take on new riders.
-
-    A ride may join only before the driver has accepted (or started/finished)
-    the run. Once accepted the itinerary is fixed; a new rider waits for another
-    compatible route instead of silently changing a live one.
-    """
+    """New riders join only before driver acceptance; after that the itinerary is fixed, not silently rewritten."""
     if route_plan_meta.is_driver_accepted(route_plan):
         return False
     return route_plan_meta.run_status(route_plan) not in {route_plan_meta.ACCEPTED, route_plan_meta.COMPLETED}
@@ -182,12 +142,7 @@ def close_carpool_run(
     *,
     notify: bool = True,
 ) -> None:
-    """Complete the run, its riders and the vehicle serving it.
-
-    ``rides`` is the roster the caller already established as fully dropped off.
-    ``notify=False`` is for the read-path repair, which must not turn a listing
-    request into a rider-visible side effect.
-    """
+    """Close run, riders, vehicle. rides must already be fully dropped off; notify=False keeps read paths side-effect free."""
     route_plan_meta.mark_run_completed(route_plan, datetime.now(timezone.utc).isoformat())
     route_plan.status = ROUTE_COMPLETED
 
@@ -215,12 +170,7 @@ def close_carpool_run(
 
 
 def settle_carpool_run(db: Session, route_plan: RoutePlan, *, notify: bool = True) -> bool:
-    """Close a run whose riders are all dropped off. Returns True if it closed.
-
-    Idempotent and safe to call from a listing endpoint; it never closes a run
-    that still owes a drop-off. ``notify=False`` keeps a read path free of the
-    ``carpool_route_completed`` fan-out.
-    """
+    """Close a fully dropped-off run, if it is time. Idempotent, so listing endpoints may call it."""
     if not route_plan_meta.is_carpool(route_plan) or route_plan.status == ROUTE_COMPLETED:
         return False
     rides = route_rides(db, route_plan)
@@ -233,12 +183,7 @@ def settle_carpool_run(db: Session, route_plan: RoutePlan, *, notify: bool = Tru
 # -- membership --------------------------------------------------------------
 
 def detach_ride(db: Session, ride: RideRequest) -> None:
-    """Remove a rider from its route's waypoints.
-
-    This is the one sanctioned backward move: the survivors of a now-stale
-    itinerary drop back to ``clustered`` so the dispatcher can re-solve them.
-    With no riders left the plan is cancelled and its vehicle released.
-    """
+    """Remove a rider from its route. The one sanctioned backward move: survivors drop to clustered for re-solve."""
     if not ride.virtual_stop_id:
         ride.cluster_id = None
         return
@@ -377,11 +322,7 @@ class CarpoolRun:
 
     @classmethod
     def accept(cls, db: Session, route_id: str, actor: User) -> RoutePlan:
-        """Accept a run so its riders may begin progressing.
-
-        Retry-safe: riders already at or past ``driver_accepted`` are left alone
-        and are not notified again.
-        """
+        """Accept a run so riders start progressing. Retry-safe: riders at or past driver_accepted are neither moved nor re-notified."""
         run = cls._load(
             db,
             route_id,
@@ -549,10 +490,7 @@ class CarpoolRun:
         return self._hop("board", ride, emit)
 
     def confirm_dropoff(self, ride_id: int) -> RideRequest:
-        """Confirm an individual passenger reached their destination.
-
-        Records the drop-off only; the driver closes the run explicitly.
-        """
+        """Record one passenger's drop-off; the driver still closes the run explicitly."""
         ride = self._rider(ride_id)
         route_plan = self.route_plan
 
@@ -603,10 +541,7 @@ class CarpoolRun:
                 + ", ".join(str(ride.id) for ride in outstanding)
                 + " still need to be dropped off before the run can be completed",
             )
-        # Claim the plan with a conditional UPDATE rather than testing
-        # route_plan.status: two concurrent completions that both read
-        # "not completed" would otherwise each notify every rider. The database
-        # re-checks the predicate against the committed row, so exactly one wins.
+        # Atomic claim via the conditional UPDATE, not a status check: two racers that both read "not completed" would each notify every rider.
         claimed = self._db.query(RoutePlan).filter(
             RoutePlan.id == self.route_plan.id,
             RoutePlan.status != ROUTE_COMPLETED,

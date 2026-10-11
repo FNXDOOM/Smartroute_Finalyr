@@ -1,13 +1,4 @@
-/**
- * RazorpayPayment — reusable "Pay" button + checkout flow.
- *
- * States: idle → creating (backend create-order) → paying (checkout open) →
- * verifying (backend /payments/verify) → paid | failed | cancelled.
- *
- * SECURITY: success is shown ONLY after the backend verifies the payment
- * signature server-side (/payments/verify returns verified=true). Razorpay
- * Checkout returning control to the frontend is NOT treated as success.
- */
+/** Pay button + checkout flow. Success shows only after the backend's /payments/verify confirms the signature — Checkout returning control is not payment. */
 import { useEffect, useState } from 'react'
 import { CheckCircle2, CreditCard, Loader2, TriangleAlert } from 'lucide-react'
 import { paymentsApi } from '../services/api.js'

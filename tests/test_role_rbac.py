@@ -33,11 +33,7 @@ def test_default_user_provisions_as_passenger():
 
 
 def test_jwt_role_claim_cannot_grant_a_role():
-    """A token claim must never carry authorization.
-
-    Clerk's public_metadata is writable by the signed-in user on a default
-    instance, so honouring a role claim there is a self-service admin grant.
-    """
+    """Clerk's public_metadata is writable by the signed-in user, so honouring a role claim is a self-service admin grant."""
     db = TestingSessionLocal()
     try:
         payload = {
@@ -121,8 +117,7 @@ def test_rejected_driver_application_is_not_granted_the_role():
 
 
 def test_suspended_driver_is_blocked_even_on_a_mixed_allowlist():
-    """require_roles used to skip the status check whenever passengers were also
-    allowed, which is how a suspended driver kept operating."""
+    """require_roles used to skip the status check whenever passengers were also allowed, so a suspended driver kept operating."""
     mixed_guard = require_roles(["driver", "passenger"])
     suspended = User(
         id=104,
@@ -172,13 +167,7 @@ def _get_as(user, path):
 
 
 def test_suspended_driver_is_refused_by_the_converted_endpoints():
-    """The gate must actually be wired, not merely available.
-
-    These routers used to re-check `role` by hand and never consult
-    `driver_status`, so suspending a driver changed nothing. They now depend on
-    require_roles(), so this asserts the dependency graph end to end rather than
-    calling the helper directly.
-    """
+    """These routers re-checked `role` by hand and ignored driver_status, so this walks the dependency graph rather than the helper."""
     suspended = User(
         id=801,
         name="Suspended Sam",

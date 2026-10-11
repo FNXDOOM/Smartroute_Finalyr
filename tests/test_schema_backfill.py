@@ -1,17 +1,5 @@
-"""The schema and test-infrastructure layer that has no database to exercise.
-
-Two things the SQLite suite can never prove by running:
-
-* The additive Postgres backfill. Both runtime paths (create_db_tables and
-  run_startup_migrations) execute the same list, produced by a pure function —
-  so these tests pin that list, catching a dropped column or a
-  rename-after-add regression.
-* What tests/conftest.py refuses to do: migrate a hosted database, litter the
-  repo root with scratch files, or reach the internet.
-
-The suite runs on SQLite, so the Postgres path has no database to exercise in
-CI.
-"""
+"""Pin the Postgres backfill list, which SQLite can never execute: both runtime paths share this one
+pure function, so a dropped column or a rename-after-add regression surfaces only here."""
 
 import os
 import socket
@@ -98,9 +86,7 @@ def test_a_missing_table_is_skipped_entirely():
     assert not any("vehicles" in statement for statement in statements)
 
 
-# -- what the statements must never be pointed at -----------------------------
-# The DDL above is real: run against a hosted database it migrates it.
-# tests/conftest.py refuses to call create_db_tables() in that case.
+# --- the DDL above is real, so conftest refuses to run create_db_tables() on a hosted database ---
 
 def test_a_hosted_database_would_be_left_alone(monkeypatch):
     monkeypatch.delenv("TEST_DB_ALLOW_REMOTE", raising=False)
@@ -120,8 +106,7 @@ def test_the_opt_in_is_explicit(monkeypatch):
     assert not conftest.hits_hosted_database(hosted)
 
 
-# -- where the scratch databases live -----------------------------------------
-# prepare_scratch_database() deletes files, so pin exactly which ones it may touch.
+# --- prepare_scratch_database() deletes files, so pin exactly which ones it may touch ---
 
 def _aged_folder(tmp_path, names, active):
     scratch = tmp_path / ".testdb"
@@ -164,9 +149,7 @@ def test_a_postgres_url_needs_no_folder(tmp_path, monkeypatch):
     assert not (tmp_path / ".testdb").exists()
 
 
-# -- the suite must not reach the internet ------------------------------------
-# Written offline, where road snapping fails fast. A networked runner turns
-# that same call into a real Overpass fetch per grid cell.
+# --- written offline, where road snapping fails fast; a networked runner turns this into a real Overpass fetch per grid cell ---
 
 def test_only_a_host_string_can_be_external():
     assert conftest.is_external_address(("api.stadiamaps.com", 443))

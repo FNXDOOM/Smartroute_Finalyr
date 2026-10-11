@@ -1,10 +1,4 @@
-"""The carpool matching rules: who may pool with whom, along which corridor.
-
-Pure predicates and geometry, plus the one DB-coupled entry point that inserts a
-new rider into a running but not-yet-accepted plan. Kept out of
-``background_jobs`` so the matching rules have one home and can be exercised
-without the scheduler.
-"""
+"""Carpool matching rules (who may pool with whom, along which corridor); pure predicates, so they run without the scheduler."""
 
 import math
 from typing import List, Set, Tuple
@@ -32,8 +26,7 @@ from utils.ride_states import (
     vehicle_is_dispatchable,
 )
 
-# Pickup clustering is only the first gate. Keep riders with destinations in
-# the same corridor so the PDP solver does not create unreasonable detours.
+# Pickup clustering alone would pool far-apart destinations, so each pool also stays inside one corridor.
 MAX_DESTINATION_SPREAD_METERS = 7000
 MAX_CARPOOL_DETOUR_METERS = 5000
 MAX_CARPOOL_DETOUR_RATIO = 1.45
@@ -86,12 +79,7 @@ def pickup_corridor_distance_meters(request: RideRequest, other: RideRequest) ->
 
 
 def split_compatible_shared_group(requests: List[RideRequest]) -> List[List[RideRequest]]:
-    """Split a pickup cluster into destination-compatible carpool pools.
-
-    HDBSCAN deliberately only knows about pickup density. This second, small
-    greedy pass keeps destinations close enough that the resulting route is a
-    plausible shared trip while preserving deterministic request ordering.
-    """
+    """Split a pickup cluster into destination-compatible pools; HDBSCAN only sees pickup density."""
     groups: List[List[RideRequest]] = []
     for request in sorted(requests, key=lambda item: (item.request_time, item.id)):
         placed = False
@@ -151,13 +139,7 @@ def split_compatible_shared_group(requests: List[RideRequest]) -> List[List[Ride
 def find_cross_cell_corridor_groups(
     requests: List[RideRequest],
 ) -> Tuple[List[List[RideRequest]], Set[int]]:
-    """Find shared riders whose pickups lie along one another's route corridor.
-
-    H3 is intentionally a fast spatial pre-filter, not a hard carpool boundary.
-    This pass runs over the remaining shared requests so a rider in a nearby
-    cell can join when their pickup lies within the 150 m corridor of another
-    rider's pickup-to-destination route.
-    """
+    """Corridor pass over riders H3 left out: H3 is a spatial pre-filter, not a carpool boundary, so nearby cells can still pool."""
     groups: List[List[RideRequest]] = []
     matched_ids: Set[int] = set()
     for request in sorted(requests, key=lambda item: (item.request_time, item.id)):
@@ -198,13 +180,7 @@ def attach_to_existing_run(
     mode: str,
     demo_run_id: str | None,
 ) -> bool:
-    """Insert a new request into an unstarted carpool route when safe.
-
-    The request must be close to an existing pickup stop, have a destination
-    in the same corridor, and leave the route at three or fewer passengers.
-    The route is then rebuilt as a pickup-and-delivery problem so the driver
-    receives a real ordered itinerary instead of an appended JSON waypoint.
-    """
+    """Insert a rider into an unstarted run, then rebuild it as a PDP so the driver gets a real itinerary, not an appended waypoint."""
     plans_query = db.query(RoutePlan).filter(
         RoutePlan.mode == mode,
         RoutePlan.status == ROUTE_SOLVED,
@@ -215,9 +191,7 @@ def attach_to_existing_run(
     for route_plan in plans_query.order_by(RoutePlan.created_at.desc()).all():
         if route_plan_meta.problem(route_plan) != "pdp":
             continue
-        # A rider may join a route only before the driver has accepted (or
-        # started/finished) it. Once accepted, the rider must wait for another
-        # compatible route rather than silently changing a live itinerary.
+        # Riders join only before driver acceptance; after that they wait for another route instead of rewriting a live itinerary.
         if not run_is_open_to_riders(route_plan):
             continue
         vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
@@ -237,8 +211,7 @@ def attach_to_existing_run(
             RideRequest.status.in_(RIDE_BOUND_STATUSES),
         ).all()
         if len(active_requests) != len(passenger_ids):
-            # Do not rewrite a route that has already started or contains stale
-            # passenger assignments.
+            # A run that started or has stale ids must not be rewritten.
             continue
 
         pickup_waypoints = [
@@ -294,8 +267,7 @@ def attach_to_existing_run(
             stop = existing_stop
             walk_meters = existing_walk_meters
         else:
-            # The request is on the route corridor but not at an existing curb;
-            # add a dedicated road stop and let PDP place it in the itinerary.
+            # On the corridor but not at an existing curb: give it a dedicated stop and let PDP place it.
             new_stop = VirtualStop(
                 cluster_id=(db.query(VirtualStop.cluster_id).order_by(VirtualStop.cluster_id.desc()).first() or (0,))[0] + 1,
                 mode=mode,
@@ -341,9 +313,7 @@ def attach_to_existing_run(
                 stop.passenger_count = max(0, int(stop.passenger_count or 0) - 1)
             continue
 
-        # Superseding this plan discards its acceptance, so re-read it now that
-        # the expensive rebuild is done: a driver who accepted while we were
-        # solving must not find their run replaced underneath them.
+        # Re-read after the slow rebuild: a driver who accepted meanwhile must not find their run superseded underneath them.
         db.refresh(route_plan)
         if not run_is_open_to_riders(route_plan):
             request.status = original_status

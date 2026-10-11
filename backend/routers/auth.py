@@ -221,8 +221,7 @@ def verify_driver(
     elif decision == "rejected" and target.role == "driver":
         # A declined application must not leave the applicant holding the role.
         target.role = "passenger"
-    # `suspended` keeps the role so an admin can reinstate it, and every driver
-    # endpoint refuses the account while the status says so.
+    # `suspended` keeps the role so an admin can reinstate it; every driver endpoint refuses the account while the status says so.
     db.commit()
     db.refresh(target)
 

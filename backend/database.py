@@ -35,12 +35,8 @@ PortableGeometry = (
 )
 
 
-# -- additive Postgres backfill ----------------------------------------------
-# ``create_all`` skips tables that already exist, so a column added to a model
-# is absent from an old table until it is backfilled. The statements live here
-# once: both the create path (right after create_all) and the startup path
-# execute the same ordered list, so adding a column means editing one place
-# instead of keeping two hand-written copies in step.
+# create_all skips existing tables, so a new model column is missing from an old table until backfilled.
+# One ordered list, used by both the create path and startup, so a column is added in exactly one place.
 _RIDE_SCOPED_TABLES = ("ride_requests", "cluster_runs", "route_plans", "virtual_stops", "vehicles")
 
 
@@ -55,12 +51,7 @@ def _ride_scoped_backfill(table: str):
 
 
 def postgres_backfill_statements(*, table_exists, column_exists):
-    """Yield the additive Postgres backfill DDL, in the order it must run.
-
-    ``table_exists``/``column_exists`` gate the statements so a fresh or
-    half-built database is skipped rather than hard-erroring, and so the legacy
-    ``mode`` -> ``ride_mode`` rename runs before the column is added.
-    """
+    """Ordered backfill DDL; the existence callables skip a half-built DB and put the mode -> ride_mode rename before the add."""
     if table_exists("users"):
         yield "ALTER TABLE users ADD COLUMN IF NOT EXISTS clerk_user_id VARCHAR"
         yield "ALTER TABLE users ADD COLUMN IF NOT EXISTS driver_status VARCHAR NOT NULL DEFAULT 'active'"
@@ -120,8 +111,7 @@ def create_db_tables(bind_engine=None):
             return column in {item["name"] for item in inspector.get_columns(table)}
 
         with target_engine.begin() as connection:
-            # create_all just created/verified every table, so only the column
-            # checks matter here.
+            # create_all just ran, so every table exists and only column checks matter.
             for statement in postgres_backfill_statements(
                 table_exists=lambda _table: True,
                 column_exists=_column_exists,
@@ -214,22 +204,13 @@ def create_db_tables(bind_engine=None):
                 ))
 
 
-# Fast, idempotent additive migrations for Postgres. Postgres supports
-# ``ADD COLUMN IF NOT EXISTS``, so this avoids create_db_tables()'s pg_catalog
-# reflection - which can exceed a remote database's statement timeout and leave
-# the app querying columns the table never got (a missing column 500s every ORM
-# query). Run at API/worker startup so a skipped ``alembic upgrade head`` can
-# never silently break the running app. SQLite is skipped: the test/dev path
-# uses create_db_tables(), which reflects safely there.
-#
-# Hardened for production:
-#   * one writer at a time - a transaction advisory lock stops the API replicas
-#     and worker running this concurrently (which can deadlock or raise
-#     "tuple concurrently updated" / duplicate index names);
-#   * tables that do not exist are skipped, so a fresh or half-built database
-#     cannot hard-error here;
-#   * the legacy ``mode`` -> ``ride_mode`` rename is applied when needed, so old
-#     values are not silently dropped.
+# Idempotent additive Postgres migrations, run at API and worker startup so a skipped
+# `alembic upgrade head` cannot leave the app querying columns the table never got.
+# Deliberately avoids create_db_tables()'s pg_catalog reflection, which can exceed a remote
+# statement timeout and half-apply. A transaction advisory lock serialises the API and the
+# worker — concurrent runs deadlock or raise "tuple concurrently updated" — missing tables
+# are skipped, and the legacy mode -> ride_mode rename is applied so old values survive.
+# SQLite is a no-op here: the test and dev path uses create_db_tables().
 # Arbitrary constant shared by every process that runs this function.
 _STARTUP_MIGRATION_LOCK_KEY = 0x5A1D0001
 

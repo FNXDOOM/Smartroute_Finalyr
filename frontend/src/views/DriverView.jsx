@@ -158,8 +158,7 @@ export default function DriverView({ user, view, setView, toast }) {
 
   useEffect(() => { const timer = setTimeout(() => { void loadData() }, 0); return () => clearTimeout(timer) }, [loadData])
 
-  // Presence is the dispatch availability signal. An idle vehicle whose
-  // driver has closed the app must not receive new automatic routes.
+  // Presence is the dispatch availability signal: a driver who closed the app must not keep receiving automatic routes.
   useEffect(() => {
     let stopped = false
     const beat = () => { if (!stopped) void authApi.driverPresence().catch(() => {}) }
@@ -369,8 +368,7 @@ export default function DriverView({ user, view, setView, toast }) {
     setNavRoute(null)
   }
 
-  // Route history is the source of truth. A completed route is removed by
-  // the API, so do not keep rendering the copy held by the map screen.
+  // Route history is the source of truth: the API removes a completed route, so the map screen must stop rendering its copy.
   useEffect(() => {
     if (loading || !navRoute?.route_id) return
     const stillActive = routes.some((item) => (
@@ -884,8 +882,7 @@ function StatCard({ icon: Icon, label, value, sub }) {
 
 // Live navigation map
 function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActive, simProgress, simSpeed, simCoords, simBearing, onToggleSim, previewRide, runRide, onClearPreview, onResetSim }) {
-  // A persisted assigned route is the source of truth. A single ride is only
-  // used for the driver's preview action.
+  // The persisted assigned route is the source of truth; a single ride only backs the driver's preview.
   const contextRide = (simActive || simProgress > 0) && runRide ? runRide : previewRide
   const activePath = useMemo(() => route ? pathForRoute(route) : contextRide ? pathForRide(contextRide) : [], [route, contextRide])
   const routeWaypoints = route?.waypoints || EMPTY_WAYPOINTS
@@ -1200,8 +1197,7 @@ function carpoolDistanceMeters(aLat, aLng, bLat, bLng) {
 function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, onAcceptRoute, onAnnouncePickup, onMarkArrived, onConfirmPickup, onDepart, onConfirmDropoff, onCompleteRun }) {
   const route = routes?.find((item) => (
     item.vehicle_id === vehicle?.id &&
-    // A co-passenger cancellation leaves the plan needing re-optimization while
-    // the riders already served stay live, so the run must remain drivable.
+    // A co-passenger cancellation leaves the plan needing re-optimization while served riders stay live, so the run must remain drivable.
     ['solved', 'needs_reoptimization'].includes(item.status) &&
     item.route_metadata?.carpool_run &&
     item.route_metadata?.carpool_run_status !== 'completed' &&

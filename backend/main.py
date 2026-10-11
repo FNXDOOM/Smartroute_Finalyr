@@ -33,16 +33,13 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application startup and shutdown tasks."""
-    # Keep the schema in step with the models even if `alembic upgrade head`
-    # was skipped (additive, idempotent, Postgres-only). A database blip must
-    # not stop the API from booting - the failure is logged and the process
-    # still serves (so the health check keeps the task alive).
+    # Additive backfill in case `alembic upgrade head` was skipped. A DB blip must not stop the
+    # API from booting, so the failure is logged and the process still serves.
     try:
         run_startup_migrations()
     except SQLAlchemyError as exc:
         logging.getLogger(__name__).error("Startup schema backfill failed: %s", exc)
-    # Jobs run in worker; API owns WS broadcast loop.
-    # Opt-in: run jobs in API for local dev.
+    # Jobs run in the worker; the API only owns the WS broadcast loop.
     if ENABLE_TRACKING_BROADCAST:
         tracking.start_simulation()
     if ENABLE_BACKGROUND_JOBS_IN_API:
@@ -54,8 +51,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
 
-# Registered LAST so it wraps everything and executes FIRST: request-size cap
-# and per-IP rate limiting run before any auth, DB, or external API work.
+# Added first, so Starlette's prepend leaves it innermost; it still runs before any endpoint work.
 # NOT DDoS protection — volumetric attacks are handled at the proxy/edge.
 app.add_middleware(RateLimitBodyGuardMiddleware)
 

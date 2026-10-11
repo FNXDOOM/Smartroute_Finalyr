@@ -37,10 +37,8 @@ const DriverApplyView = lazy(() => import('./views/DriverApplyView'))
 import DriverLoginForm from './components/DriverLoginForm.jsx'
 import DriverVerificationGate from './components/DriverVerificationGate.jsx'
 
-// Constants
 const authInitStartedAt = Date.now()
 
-// Route-icon brand mark.
 function SmartRouteMark({ size = 18 }) {
   return <RouteIcon aria-hidden="true" size={size} strokeWidth={2.5} />
 }
@@ -51,7 +49,6 @@ function initialView() {
   return 'login'
 }
 
-// Toast system — premium neutral cards, sparing semantic indicators
 function ToastBar({ toasts, dismiss }) {
   const styles = {
     success: { icon: CheckCircle2, cls: 'text-[#276EF1]', bar: '#276EF1' },
@@ -84,7 +81,6 @@ function ToastBar({ toasts, dismiss }) {
   )
 }
 
-// Auth screens
 // Clerk needs explicit light/dark tokens — strict black/white.
 function getClerkAppearance(theme) {
   const dark = theme === 'dark'
@@ -215,7 +211,6 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
             onSwitchToPassenger={() => setPortal('passenger')}
           />
         ) : (
-          /* Clerk Passenger Sign In / Sign Up Form */
           <Card className="auth-passenger-card shadow-none">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-2">
@@ -245,7 +240,7 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
   )
 }
 
-// Loading screen — solid black, minimal ring, clear hierarchy
+// Loading screen
 function LoadingScreen({ onGuestLogin }) {
   return (
     <div className="loading-screen flex max-h-full min-h-0 h-full w-full flex-col items-center justify-center gap-4 overflow-y-auto p-6 text-center">
@@ -319,7 +314,6 @@ export default function App() {
   useEffect(() => { clerkUserRef.current = clerkUser }, [clerkUser])
   const fetchedRef   = useRef(null)
 
-  // Auth timeout indicator
   useEffect(() => {
     if (isLoaded) return
     const elapsed = Date.now() - authInitStartedAt
@@ -518,7 +512,6 @@ function roleHome(role) {
 }
 
 // App shell
-// Sidebar, TopBar, mobile nav; logic unchanged.
 function AppShell({ user, view, setView, unreadCount, onLogout, notifications, setNotifications, toast, theme, onToggleTheme, onRefreshProfile }) {
   const [mobileOpen, setMobileOpen] = useState(false)
 
@@ -723,8 +716,7 @@ function AppShell({ user, view, setView, unreadCount, onLogout, notifications, s
   )
 }
 
-// Role router
-// Full-height views have maps
+// Role router; FULLHEIGHT_VIEWS are the map-bearing screens.
 const FULLHEIGHT_VIEWS = ['home','tracking','driver-map','driver-routes','presentation-demo']
 
 function RoleRouter({ user, view, setView, notifications, setNotifications, toast, onRefreshProfile }) {

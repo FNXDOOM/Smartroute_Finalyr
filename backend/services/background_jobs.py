@@ -95,11 +95,7 @@ def _create_clustered_stop(
     mode: str,
     demo_run_id: Optional[str],
 ) -> Dict:
-    """Create one virtual stop for a group of rides and mark them clustered.
-
-    Shared by the HDBSCAN groups and by the private-ride singletons, so the two
-    paths cannot drift on stop generation, road snapping or status handling.
-    """
+    """One virtual stop for a group of rides, marked clustered; shared by HDBSCAN groups and private singletons so they can't drift."""
     centroid_lat = sum(req.pickup_lat for req in members) / len(members)
     centroid_lng = sum(req.pickup_lng for req in members) / len(members)
     candidate_stops = generate_virtual_stops(members, n_stops=1)
@@ -111,8 +107,7 @@ def _create_clustered_stop(
         for request in members
     )
     if max_walk_meters > MAX_PICKUP_WALK_METERS:
-        # Snapping would strand the rider further than they agreed to walk, so
-        # keep the exact requested point as the safe fallback.
+        # Never snap a rider further than they agreed to walk; fall back to the exact requested pickup.
         snapped_lat, snapped_lng, snapped_node_id = members[0].pickup_lat, members[0].pickup_lng, "requested-pickup"
 
     virtual_stop = VirtualStop(
@@ -159,13 +154,7 @@ def _create_per_rider_stops(
     mode: str,
     demo_run_id: Optional[str],
 ) -> List[Dict]:
-    """One dedicated pickup stop per rider, all sharing one cluster id.
-
-    Riders pooled onto the same route do not have to share a curb: each one gets
-    its own stop within the walking limit of its own pickup (falling back to the
-    exact pickup when road snapping would exceed it). The PDP solver then orders
-    those stops onto the single route.
-    """
+    """One stop per rider under a shared cluster id: each walks to its own curb and PDP orders them onto one route."""
     payloads: List[Dict] = []
     for member in members:
         member_cell = member.h3_index or get_h3_index(
@@ -245,13 +234,7 @@ def run_cluster_job(
                 "noise_requests_count": 0,
             }
 
-        # Give a new carpool request first chance to join an existing route.
-        # This is what makes carpooling continuous instead of batching only
-        # requests that arrived in the same clustering tick.
-        #
-        # A shared request that has not been pooled yet is actively being
-        # matched, so its fine carpool stage says "searching" while the coarse
-        # status stays "pending" for older clients.
+        # Existing runs get first refusal, so carpooling is continuous rather than per-tick; unmatched shared rides show "searching" while still "pending".
         for request in requests:
             if request.is_shared:
                 set_carpool_stage(request, CARPOOL_SEARCHING)
@@ -271,9 +254,7 @@ def run_cluster_job(
             if not request.h3_index:
                 request.h3_index = get_h3_index(request.pickup_lat, request.pickup_lng, resolution=resolution)
 
-        # Private rides are never pooled with anyone: pull them out of the
-        # HDBSCAN pool and give each its own singleton stop, so the normal
-        # dispatch step still assigns it a vehicle (a private ride for one).
+        # Private rides never pool: pull them from HDBSCAN and give each a singleton stop so dispatch still assigns it a vehicle.
         shared_requests = [request for request in requests if request.is_shared]
         private_requests = [request for request in requests if not request.is_shared]
 
@@ -285,16 +266,10 @@ def run_cluster_job(
         clusters_formed = 0
         clustered_shared_ids: set[int] = set()
 
-        # H3 keeps the normal clustering pass fast, but neighboring H3 cells
-        # must not be a hard boundary. The local H3 pass runs first; the
-        # corridor pass below only sees requests that did not form a local
-        # compatible group.
+        # Ordering: the fast local H3 pass runs first; the corridor pass below only sees requests it left unmatched.
 
         for bucket_h3_index in sorted(buckets):
-            # H3 is a fast spatial pre-filter, not a hard boundary. Build the
-            # candidate set from this cell plus its immediate neighbours, and
-            # skip riders a previous bucket already placed, so a rider near a
-            # cell edge can still pool with someone on the other side.
+            # Candidates are this cell plus neighbours, minus riders already placed, so edge riders can pool across cells.
             bucket_requests = [
                 request
                 for cell in sorted(neighbouring_h3_cells(bucket_h3_index))
@@ -310,9 +285,7 @@ def run_cluster_job(
 
             for _, members in grouped_requests.items():
                 for compatible_members in split_compatible_shared_group(members):
-                    # A carpool is only dispatched once at least two compatible
-                    # riders are available. Keep a singleton pending so it can
-                    # be matched by a later clustering/attachment pass.
+                    # A carpool needs two compatible riders; keep singletons pending for a later pass.
                     if len(compatible_members) < MIN_CARPOOL_PASSENGERS:
                         continue
                     # One dedicated stop per rider, all under one cluster id.
@@ -335,10 +308,7 @@ def run_cluster_job(
         ]
         corridor_groups, _ = find_cross_cell_corridor_groups(unmatched_shared_requests)
         for corridor_group in corridor_groups:
-            # One cluster per corridor pool with a dedicated stop per rider, the
-            # same shape the local bucket pass produces. Assigning a fresh cluster
-            # id per rider here split matched riders into separate one-passenger
-            # routes, so the corridor match never actually became a carpool.
+            # One cluster id per corridor pool, one stop per rider; a per-rider id split them into single-passenger routes, so no carpool formed.
             cluster_groups_payload.extend(
                 _create_per_rider_stops(
                     db,
@@ -594,9 +564,7 @@ def run_auto_dispatch_pipeline(
     with job_runs.running(
         db, "auto_dispatch_pipeline", triggered_by_user_id=triggered_by_user_id, is_scheduled=is_scheduled
     ) as job_run:
-        # Do not leave rides stranded on a route whose driver went offline
-        # before accepting it. Release those offers before building the next
-        # dispatch plan so another online driver can receive them.
+        # Release offers stuck on a driver who went offline before accepting, so another online driver can take them.
         if mode == LIVE_MODE:
             presence_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DRIVER_PRESENCE_TIMEOUT_SECONDS)
             stale_routes = (
@@ -647,7 +615,6 @@ def run_auto_dispatch_pipeline(
                     vehicle.assigned_route_id = None
                     vehicle.status = VEHICLE_IDLE
 
-        # Step 1: cluster pending requests
         cluster_res = run_cluster_job(
             db,
             triggered_by_user_id=triggered_by_user_id,
@@ -710,9 +677,7 @@ def run_auto_dispatch_pipeline(
             vehicle_scope = vehicle_scope.filter(Vehicle.id == demo_vehicle.id)
         else:
             vehicle_scope = vehicle_scope.filter(Vehicle.mode == LIVE_MODE)
-            # A vehicle is dispatchable only when its assigned driver has
-            # recently opened the driver app. Vehicle ``idle`` alone is not
-            # proof that anyone is available to accept the route.
+            # Vehicle "idle" alone is no proof anyone can accept; require a driver who recently opened the app.
             presence_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DRIVER_PRESENCE_TIMEOUT_SECONDS)
             vehicle_scope = vehicle_scope.join(User, User.id == Vehicle.driver_user_id).filter(
                 User.role == "driver",
@@ -827,14 +792,10 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
 
         updates_count = 0
         for ride in active_rides:
-            # Shared routes are controlled stop-by-stop from the carpool run
-            # screen. Passenger readiness and driver pickup/drop-off events
-            # must never be simulated by the generic timer.
+            # Shared rides advance stop-by-stop from the carpool run screen; the generic timer must never simulate those events.
             if ride.is_shared:
                 continue
-            # A solved route is only an offer to the driver. Do not simulate
-            # arrival, trip progress, or completion until the assigned driver
-            # explicitly accepts the route.
+            # A solved route is only an offer: nothing progresses until the assigned driver explicitly accepts.
             waypoint = db.query(RouteWaypointRecord).filter(
                 RouteWaypointRecord.stop_id == ride.virtual_stop_id
             ).first()
@@ -895,9 +856,7 @@ def run_scheduled_auto_dispatch_job(db: Session) -> Dict:
 async def _run_periodic(name: str, interval_seconds: int, runner):
     """Run a background job repeatedly at the configured interval."""
     def run_once() -> None:
-        # Job runners are synchronous and can perform database, routing, and
-        # solver work. Keep them off FastAPI's event loop so auth/profile and
-        # passenger requests remain responsive while auto-dispatch runs.
+        # Runners do blocking DB/routing/solver work, so they stay off FastAPI's event loop.
         db = SessionLocal()
         try:
             runner(db)
@@ -912,10 +871,7 @@ async def _run_periodic(name: str, interval_seconds: int, runner):
             except asyncio.CancelledError:
                 raise
             except Exception:
-                # One unexpected exception must not retire the job in silence:
-                # nothing awaits these tasks, so a bare raise here stops the
-                # schedule for the remaining lifetime of the worker with no
-                # error surfaced anywhere.
+                # Log, don't re-raise: nothing awaits these tasks, so a raise would silently retire the schedule for the worker's lifetime.
                 logger.exception("background job %s raised; schedule continues", name)
             now = datetime.now(timezone.utc)
             if name in {"cluster_pending_rides", "auto_dispatch_pipeline"}:
@@ -942,10 +898,7 @@ def start_background_jobs() -> None:
     STATE.running = True
     loop = asyncio.get_running_loop()
     _TASKS.clear()
-    # Live rides must progress through the complete pipeline automatically:
-    # cluster -> corridor match -> PDP route -> idle vehicle assignment.
-    # Keep the standalone clustering endpoint for manual/admin diagnostics,
-    # but do not leave production rides stranded in `clustered`.
+    # Live rides need the whole chain (cluster -> corridor match -> PDP -> assignment); the standalone cluster job is admin-only.
     _TASKS.append(loop.create_task(_run_periodic("auto_dispatch_pipeline", AUTO_DISPATCH_INTERVAL_SECONDS, run_scheduled_auto_dispatch_job)))
     _TASKS.append(loop.create_task(_run_periodic("refresh_demand_snapshots", DEMAND_INTERVAL_SECONDS, run_demand_refresh_job)))
     _TASKS.append(loop.create_task(_run_periodic("rebalance_idle_vehicles", REBALANCE_INTERVAL_SECONDS, run_vehicle_rebalance_job)))

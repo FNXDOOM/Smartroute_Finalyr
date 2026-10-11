@@ -1,20 +1,4 @@
-"""Pooled shared-ride routing: one pickup + destination route per vehicle.
-
-Both the admin/driver optimize endpoint (``routers/route.py``) and the
-automatic dispatch job (``services/background_jobs.py``) need the same three
-things: turn pooled virtual stops into an optimized route, split that route's
-road geometry per leg, and persist it as a ``RoutePlan`` with its passengers
-marked as assigned. This module owns that once so the two paths cannot drift.
-
-The pool is a pickup-and-delivery problem, not the pickups-only CVRP it used to
-be: every ride request contributes a destination node paired with the boarding
-stop its passenger walks to. A destination hands its demand back to the
-vehicle, so seats are only occupied between a boarding stop and its drop-off.
-
-A *private* ride (``RideRequest.is_shared`` False) is deliberately kept out of
-the shared solver: it gets a dedicated vehicle and its stop is never merged with
-any other, so "Normal" really means alone.
-"""
+"""Pooled shared-ride routing: one pickup+destination route per vehicle, owned by the optimize endpoint and the dispatch job so they can't drift."""
 
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -36,12 +20,11 @@ from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_ASSIGNED, ROUTE_SOLVED, VEHICLE_ACTIVE
 
 
-# Valhalla accepts a bounded number of locations per routing request, so long
-# routes are enriched in overlapping windows (one leg per consecutive pair).
+# Valhalla caps locations per request, so long routes are enriched in overlapping windows (one leg per consecutive pair).
 ROUTE_LOCATION_WINDOW = 24
-# Bound the upstream work a single lazy resolution may trigger.
+# Bound the upstream work one lazy resolution may trigger.
 MAX_ENRICHMENT_CHUNKS = 6
-# Fallback speed used when the router returns no duration (~30 km/h).
+# ~30 km/h, used when the router returns no duration.
 FALLBACK_METRES_PER_SECOND = 8.33
 MIN_CARPOOL_PASSENGERS = 2
 MAX_CARPOOL_PASSENGERS = 3
@@ -121,11 +104,7 @@ def _merge_route_details(chunks: Sequence[Dict]) -> Dict:
 
 
 def enrich_route_geometry(points: Sequence[Dict]) -> Optional[Dict]:
-    """Road geometry (with a per-leg split) for an ordered list of waypoints.
-
-    Best effort: returns ``None`` when the router is unconfigured, fails, or the
-    route is longer than one enrichment run should attempt.
-    """
+    """Road geometry with a per-leg split for ordered waypoints; None if the router is unconfigured, fails, or the route is too long."""
     if not STADIA_API_KEY or len(points) < 2:
         return None
     chunks: List[Dict] = []
@@ -156,12 +135,7 @@ def _finalize_route(
     problem: str,
     fallback_distance_m: float = 0.0,
 ) -> Optional[BuiltRoute]:
-    """Enrich an ordered waypoint list into a persistable [BuiltRoute].
-
-    Returns None when there is nothing to drive. Ride ids, drop-off ids and stop
-    ids are derived from the waypoints so the solver and the private-ride path
-    cannot disagree on what a route serves.
-    """
+    """Ride/dropoff/stop ids derive from the waypoints so solver and private-ride path can't disagree; None if nothing to drive."""
     if len(waypoints) < 2:
         return None
 
@@ -228,16 +202,7 @@ def build_shared_routes(
     request_statuses: Optional[Iterable[str]] = None,
     enrich: bool = True,
 ) -> List[BuiltRoute]:
-    """Solve routes over the supplied virtual stops.
-
-    Private rides are never pooled: each private stop is matched to a dedicated
-    vehicle and kept out of the shared solver, so it cannot be merged with any
-    other stop. Shared stops are solved as one pickup-and-delivery problem.
-
-    ``request_statuses`` selects which requests take part (``None`` pools every
-    request at a stop — the manual optimize endpoint's behaviour; the dispatch
-    job passes ``("clustered",)``).
-    """
+    """Solve routes over these virtual stops; request_statuses picks the pool (None = all at a stop, dispatch passes clustered)."""
     vehicles = list(vehicles or [])
     if not vehicles:
         return []
@@ -251,14 +216,11 @@ def build_shared_routes(
         return []
 
     def _is_private(requests: List[RideRequest]) -> bool:
-        # getattr default True: a request object without the flag is shared, the
-        # same default the column carries.
+        # Default True mirrors the is_shared column default: a request without the flag is shared.
         return all(getattr(request, "is_shared", True) is False for request in requests)
 
     private_pooled = [(stop, requests) for stop, requests in pooled if _is_private(requests)]
-    # A corridor match intentionally creates one stop per rider. Do not use
-    # the number of requests attached to an individual stop as the pooling
-    # decision; count all shared riders across the candidate route instead.
+    # Corridor matches make one stop per rider on purpose, so pool on total shared riders for the route, never a stop's own request count.
     shared_pooled = [
         (stop, requests)
         for stop, requests in pooled
@@ -266,9 +228,7 @@ def build_shared_routes(
     ]
     shared_passenger_count = sum(len(requests) for _, requests in shared_pooled)
 
-    # One dedicated vehicle per private ride. If there are more private stops
-    # than free vehicles the extras are left alone (they stay "clustered" and a
-    # later dispatch with a free vehicle picks them up) — never pooled.
+    # One vehicle per private ride; extras stay clustered for a later dispatch rather than being pooled onto someone else's route.
     reserved_private = private_pooled[:len(vehicles)]
     vehicle_offset = len(reserved_private)
     remaining_vehicles = vehicles[vehicle_offset:]
@@ -308,8 +268,7 @@ def build_shared_routes(
     ):
         return built_routes
 
-    # Carpool policy is intentionally stricter than the physical vehicle
-    # capacity: one shared run carries at most three passengers.
+    # Carpool policy is stricter than physical vehicle capacity: three passengers per shared run.
     capacities = [min(MAX_CARPOOL_PASSENGERS, max(1, int(vehicle.capacity or 1))) for vehicle in remaining_vehicles]
     smallest_capacity = min(capacities)
 
@@ -343,9 +302,7 @@ def build_shared_routes(
         vehicle_capacities=capacities,
     )
     if solution.get("status") != ROUTE_SOLVED:
-        # A pickup-only route is not a valid passenger route: it has no
-        # destination waypoint and would falsely mark riders as assigned.
-        # Leave the shared pool clustered so a later run can split/retry it.
+        # A pickup-only route has no drop-off waypoint and would falsely mark riders assigned; leave the pool clustered to retry.
         return built_routes
 
     for route_data in solution.get("routes", []):
@@ -378,8 +335,7 @@ def build_shared_routes(
                 })
 
         route = _finalize_route(
-            # Offset past the vehicles reserved for private rides so the caller
-            # (which indexes its own vehicle list) still finds the right one.
+            # Offset past the vehicles reserved for private rides so the caller's own vehicle indexing still lines up.
             vehicle_index=vehicle_index + vehicle_offset,
             waypoints=waypoints,
             depot_lat=depot_lat,
@@ -427,9 +383,7 @@ def persist_shared_route(
             "vehicle_capacity": vehicle.capacity,
             "assigned_stop_ids": built.stop_ids,
             "assigned_dropoff_request_ids": built.destination_ride_ids,
-            # Assignment and driver acceptance are separate lifecycle events.
-            # The simulator must not move passengers until the driver accepts
-            # this route from the driver application.
+            # Assignment and driver acceptance are separate events; nothing moves until the driver accepts in the app.
             "driver_accepted": False,
             "driver_accepted_at": None,
             "carpool_run": any(getattr(request, "is_shared", False) for request in route_requests),
@@ -465,8 +419,7 @@ def persist_shared_route(
         if not ride:
             continue
         if allowed is None or ride.status in allowed:
-            # Shared rides move on the carpool axis too, so the passenger can
-            # see the finer stage; private rides only have the coarse status.
+            # Shared rides also carry the finer carpool stage so the passenger sees it; private rides only have the coarse status.
             if getattr(ride, "is_shared", False):
                 set_carpool_stage(ride, CARPOOL_ASSIGNED)
             else:
@@ -483,13 +436,7 @@ def persist_shared_route(
 
 
 def resolve_route_geometry(db: Session, route_plan: RoutePlan) -> Optional[Dict]:
-    """Road geometry and per-leg split for a route plan, resolving once.
-
-    Route plans written by the automatic dispatch job carry no road geometry,
-    so a passenger opening the map is the first chance to fetch it. Both the
-    result and a failed attempt are cached on the plan, so a client polling
-    every few seconds can never hammer the router.
-    """
+    """Route geometry resolved once on first read; successes and failures are both cached so polling clients can't hammer the router."""
     geometry = route_plan_meta.geometry(route_plan)
     if geometry:
         return {

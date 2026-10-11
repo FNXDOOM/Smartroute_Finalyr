@@ -1,8 +1,7 @@
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 
-/* Uber-inspired input: white, 1px #D6D6D6, 48–52px height, 8px radius.
-   Focus: black border + soft ring. Placeholder neutral gray. */
+/* Uber-inspired input: 1px #D6D6D6 border, black focus border with a soft ring. */
 const Input = React.forwardRef(({ className, type, ...props }, ref) => (
   <input
     type={type}

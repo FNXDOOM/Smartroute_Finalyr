@@ -16,7 +16,6 @@ class NotificationConnectionManager:
     """Per-user WebSocket connections."""
 
     def __init__(self):
-        """Initialize the NotificationConnectionManager."""
         self.connections_by_user: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, user_id: int, subprotocol: str | None = None):

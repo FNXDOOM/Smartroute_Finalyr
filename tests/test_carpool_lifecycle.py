@@ -1,9 +1,5 @@
-"""Carpool lifecycle: the per-rider stage machine, its guards, and the
-rule that a route closed by driver acceptance cannot take new riders.
-
-Follows this repo's convention of calling router/service functions directly
-with a real session instead of spinning up an HTTP client.
-"""
+"""Carpool lifecycle: the per-rider stage machine, its guards, and that a route closed by driver
+acceptance takes no new riders. Routers and services are called directly with a real session, per repo convention."""
 
 import sys
 from pathlib import Path
@@ -243,8 +239,7 @@ def test_carpool_lifecycle_walks_every_stage_then_completes():
         confirm_carpool_pickup(route_id=route_id, ride_id=ride_b.id, db=db, current_user=driver)
         depart_carpool_route(route_id=route_id, db=db, current_user=driver)
 
-        # The final drop-off records the drop-off but leaves the run open: only
-        # an explicit completion closes it and releases the vehicle.
+        # The final drop-off leaves the run open: only an explicit completion closes it and releases the vehicle.
         confirm_carpool_dropoff(route_id=route_id, ride_id=ride_b.id, db=db, current_user=driver)
         db.refresh(ride_a)
         db.refresh(ride_b)
@@ -399,8 +394,7 @@ def test_repeated_accept_does_not_resurrect_a_dropped_off_rider():
 
 
 def test_a_co_passenger_cancellation_does_not_lock_out_the_remaining_riders():
-    """A cancellation rewrites the plan to needs_reoptimization; the driver can
-    still finish the riders already on board and get their vehicle back."""
+    """Cancellation rewrites the plan to needs_reoptimization; the driver must still finish riders already on board."""
     db = SessionLocal()
     persisted = None
     try:
@@ -459,8 +453,7 @@ def test_depart_requires_someone_to_have_boarded():
 
 
 def test_only_the_assigned_driver_can_patch_a_riders_status():
-    """A second driver must not be able to complete another driver's rider,
-    which would close that run, release its vehicle and notify its riders."""
+    """A second driver must not complete another driver's rider: that closes the run, releases its vehicle and notifies its riders."""
     db = SessionLocal()
     persisted = None
     try:
@@ -515,13 +508,7 @@ def test_only_the_assigned_driver_can_patch_a_riders_status():
 
 
 def test_completion_claims_the_plan_so_a_double_submit_closes_once():
-    """A stale in-memory status must not let a run close twice.
-
-    The completion check used to read route_plan.status off the ORM identity map;
-    a concurrent request that had already completed the row in the database was
-    invisible, so both callers notified every rider. The claim is now a
-    conditional UPDATE, which the database re-evaluates.
-    """
+    """The claim is a conditional UPDATE: reading status off the identity map hid a concurrent close, so both callers notified."""
     from sqlalchemy import update as sa_update
     from services.carpool_lifecycle import CarpoolRun
 
@@ -536,8 +523,7 @@ def test_completion_claims_the_plan_so_a_double_submit_closes_once():
             confirm_carpool_dropoff(route_id=route_id, ride_id=ride.id, db=db, current_user=driver)
 
         run = CarpoolRun.open(db, route_id, driver, statuses=CLOSABLE_ROUTE_STATUSES)
-        # Another worker commits the completion without touching this session's
-        # cached object, leaving route_plan.status stale.
+        # Another worker commits the completion, leaving this session's cached route_plan.status stale.
         db.execute(
             sa_update(RoutePlan)
             .where(RoutePlan.id == persisted.route_plan.id)
@@ -592,12 +578,7 @@ def test_private_rides_stay_off_the_carpool_axis():
 
 
 def test_re_announcing_does_not_rewind_a_confirmed_rider():
-    """A retried announce must not walk a rider back from confirmed to arriving.
-
-    The endpoint used to gate on the coarse status set {assigned, arriving,
-    ready_for_pickup} and then blindly set DRIVER_ARRIVING, so a rider who had
-    already walked over and confirmed was sent back to "waiting to board".
-    """
+    """A retried announce used to blind-set DRIVER_ARRIVING, rewinding a rider who had already confirmed."""
     db = SessionLocal()
     persisted = None
     try:
@@ -634,11 +615,7 @@ def test_re_announcing_does_not_rewind_a_confirmed_rider():
 
 
 def test_the_history_repair_closes_a_run_without_notifying_riders():
-    """The listing repair must not turn a GET into a rider-visible side effect.
-
-    ``list_routes`` settles stale carpool runs, but it must keep the riders'
-    notification stream untouched — only an explicit completion notifies.
-    """
+    """list_routes settles stale runs, but only an explicit completion may notify riders."""
     from services.carpool_lifecycle import settle_carpool_run
 
     db = SessionLocal()
@@ -675,10 +652,7 @@ def test_the_history_repair_closes_a_run_without_notifying_riders():
 
 
 def test_a_pre_acceptance_cancellation_leaves_the_run_drivable():
-    """A co-passenger cancelling before the driver accepts moves the plan to
-    needs_reoptimization; the driver must still be able to accept it and finish
-    the riders who remain, then get the vehicle back.
-    """
+    """Cancelling before acceptance moves the plan to needs_reoptimization, but the driver must still be able to run it."""
     db = SessionLocal()
     persisted = None
     try:
@@ -689,8 +663,7 @@ def test_a_pre_acceptance_cancellation_leaves_the_run_drivable():
         db.refresh(persisted.route_plan)
         assert persisted.route_plan.status == "needs_reoptimization"
 
-        # Accepting used to 404 ("Route not found") and every drive endpoint
-        # 409 ("Accept the carpool run first"), stranding rider A.
+        # Accepting used to 404 and every drive endpoint 409, stranding rider A.
         accept_route(route_id=route_id, db=db, current_user=driver)
         db.refresh(ride_a)
         assert ride_a.carpool_status == "driver_accepted"
