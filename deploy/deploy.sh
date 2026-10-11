@@ -355,12 +355,12 @@ rm -f "${TMP_SECRET}"
 echo "Wrote ${ENV_FILE} (mode 0600)."
 
 # --- 4. Migrations with the NEW image, before switching traffic. ---
-# Runs on smartroute-net so it reaches the self-hosted db container; the
-# DATABASE_URL override points past the Supabase URL still in the secret.
+# Runs via compose (not docker run): compose creates smartroute-net on a fresh
+# EC2 and starts the db dependency (health-gated) first, so the one-off can
+# reach it. The DATABASE_URL override in compose points past the Supabase URL
+# still in the secret.
 echo "Running alembic upgrade head with ${API_IMAGE}..."
-if ! docker run --rm --network smartroute-net --env-file "${ENV_FILE}" \
-    -e DATABASE_URL="postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute" \
-    "${API_IMAGE}" alembic upgrade head; then
+if ! compose run --rm api alembic upgrade head; then
   echo "ERROR: migrations failed. Aborting without restarting containers." >&2
   exit 1
 fi
