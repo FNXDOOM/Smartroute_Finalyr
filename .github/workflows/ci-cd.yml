@@ -242,6 +242,7 @@ jobs:
 
           echo "Uploading deployment bundle (no repo)..."
           ${SCP} docker-compose.prod.yml "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/docker-compose.prod.yml"
+          ${SCP} docker-compose.monitoring.yml "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/docker-compose.monitoring.yml"
           ${SCP} deploy/deploy.sh "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/deploy/deploy.sh"
           # Prometheus and Grafana mount these. Shipped even when the monitoring
           # profile is off so the two environments never diverge on config.

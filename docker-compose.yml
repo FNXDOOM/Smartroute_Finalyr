@@ -1,5 +1,27 @@
 services:
-  # DB: Supabase via DATABASE_URL in backend/.env.
+  # DB: self-hosted PostGIS (the schema uses geoalchemy2 Geometry columns, so
+  # plain postgres is not enough). Overrides the Supabase URL in backend/.env.
+  db:
+    image: postgis/postgis:16-3.4
+    # POSTGRES_PASSWORD stays a default, not `${VAR:?}`: Compose interpolates
+    # the whole file even when db is not the service being started.
+    environment:
+      POSTGRES_USER: smartroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartroute}
+      POSTGRES_DB: smartroute
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    # 127.0.0.1 only: psql/GUI tools on this machine, nothing from outside.
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartroute -d smartroute"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # Prod: no public ports on app services. NPM is the only entrypoint.
   frontend:
     build:
@@ -33,6 +55,9 @@ services:
     environment:
       PROCESS_ROLE: api
       ENABLE_TRACKING_BROADCAST: "true"
+      # Overrides the Supabase URL in backend/.env: the db service is the
+      # database now.
+      DATABASE_URL: postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute
       # CORS for dockerized frontend.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-http://localhost:3000,http://localhost:5173}
@@ -40,6 +65,9 @@ services:
     expose:
       - "8000"
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
       interval: 30s
@@ -56,7 +84,11 @@ services:
     environment:
       PROCESS_ROLE: worker
       ENABLE_TRACKING_BROADCAST: "false"
+      DATABASE_URL: postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     # No HTTP in worker.
     healthcheck:
       disable: true
@@ -76,51 +108,17 @@ services:
     depends_on:
       - api
 
-  # ---------- monitoring: opt-in, never published ----------
-  # Start with:  docker compose --profile monitoring up -d
-  #
-  # No host ports: Prometheus has no authentication and Grafana is not wired
-  # into the app's Clerk login, so both stay inside this network. The admin
-  # panel reads Prometheus through the authenticated GET /analytics/monitoring
-  # rather than embedding Grafana.
-  prometheus:
-    image: prom/prometheus:v3.1.0
-    profiles: ["monitoring"]
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=15d
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    expose:
-      - "9090"
-    depends_on:
-      - api
-    restart: unless-stopped
+  # ---------- monitoring ----------
+  # Prometheus + Grafana live in docker-compose.monitoring.yml as their own
+  # containers, attached to this stack's network (smartroute-net).
 
-  grafana:
-    image: grafana/grafana:11.4.0
-    profiles: ["monitoring"]
-    environment:
-      # A default, not `${VAR:?}`: Compose interpolates the whole file even when
-      # the profile is off, so a required variable here would break every run.
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_NEWS_NEWS_FEED_ENABLED: "false"
-    volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
-      - grafana_data:/var/lib/grafana
-    expose:
-      - "3000"
-    depends_on:
-      - prometheus
-    restart: unless-stopped
+networks:
+  # Fixed name so the monitoring stack (a separate compose project) can join
+  # it as an external network regardless of the directory name.
+  default:
+    name: smartroute-net
 
 volumes:
   npm_data:
   npm_letsencrypt:
-  prometheus_data:
-  grafana_data:
+  db_data:

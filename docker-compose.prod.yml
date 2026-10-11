@@ -1,13 +1,5 @@
 # Production Compose
 
-# Differences from docker-compose.yml (dev):
-#   - No `build:` sections.
-#   - Deployment MUST use an immutable tag: IMAGE_TAG=<short git SHA>.
-#   - Backend runtime secrets come from deploy/.env.prod
-#   - ALLOWED_ORIGINS / CLERK_AUTHORIZED_PARTIES come from deploy/.env.prod.
-#   - Only nginx-proxy-manager publishes host ports (80/443)
-
-
 # Usage on EC2 (via deploy/deploy.sh, not manually):
 #   DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<sha> docker compose -f docker-compose.prod.yml up -d
 
@@ -44,11 +36,17 @@ services:
       ENABLE_TRACKING_BROADCAST: "true"
       APP_ENV: production
       ENABLE_BACKGROUND_JOBS_IN_API: "false"
+      # Overrides the Secrets Manager DATABASE_URL: the db service below is
+      # the database now, so the secret's Supabase URL is no longer used.
+      DATABASE_URL: postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute
       # NOTE: ALLOWED_ORIGINS and CLERK_AUTHORIZED_PARTIES are intentionally Not defaaulted here must come from aws secrets manager
     # Internal only. NPM routes api -> api:8000.
     expose:
       - "8000"
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
       interval: 30s
@@ -67,12 +65,38 @@ services:
       ENABLE_TRACKING_BROADCAST: "false"
       APP_ENV: production
       ENABLE_BACKGROUND_JOBS_IN_API: "false"
+      DATABASE_URL: postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     # Single replica by design.Don't scale this service: jobs must run exactly once. The worker is a singleton that processes background jobs from the queue.
     deploy:
       replicas: 1
     healthcheck:
       disable: true
+
+  # Self-hosted PostGIS (the schema uses geoalchemy2 Geometry columns, so
+  # plain postgres is not enough). No published port: only app services on
+  # smartroute-net reach it. Set POSTGRES_PASSWORD in the deploy environment
+  # for real deployments; the fallback matches the dev compose default.
+  db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: smartroute
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartroute}
+      POSTGRES_DB: smartroute
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartroute -d smartroute"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # NPM: app -> frontend:80, api -> api:8000 (websockets ON).
   # Configure Proxy Hosts once in NPM UI (port 81).
@@ -91,53 +115,18 @@ services:
       api:
         condition: service_healthy
 
-  # ---------- monitoring: opt-in, never published ----------
-  # Start with:  docker compose -f docker-compose.prod.yml --profile monitoring up -d
-  #
-  # Neither service maps a host port. Prometheus speaks no authentication at all
-  # and Grafana is not wired into the app's Clerk login, so both stay reachable
-  # only inside this network -- look at them through an SSH tunnel. The admin
-  # panel deliberately does not embed Grafana: it reads Prometheus through the
-  # authenticated GET /analytics/monitoring, which accepts a fixed query whitelist
-  # rather than caller-supplied PromQL.
-  prometheus:
-    image: prom/prometheus:v3.1.0
-    profiles: ["monitoring"]
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - --storage.tsdb.retention.time=15d
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    expose:
-      - "9090"
-    restart: unless-stopped
+  # ---------- monitoring ----------
+  # Prometheus + Grafana live in docker-compose.monitoring.yml as their own
+  # containers, attached to this stack's network (smartroute-net). On EC2,
+  # reach them through an SSH tunnel: their ports bind to 127.0.0.1 only.
 
-  grafana:
-    image: grafana/grafana:11.4.0
-    profiles: ["monitoring"]
-    environment:
-      # Must stay a default, not `${VAR:?}`: Compose interpolates the entire file
-      # whether or not the profile is active, so a required variable here would
-      # fail every production deploy. Grafana forces a password change on the
-      # first admin login, and nothing maps a host port for it in the meantime.
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_ANALYTICS_REPORTING_ENABLED: "false"
-      GF_NEWS_NEWS_FEED_ENABLED: "false"
-    volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
-      - grafana_data:/var/lib/grafana
-    expose:
-      - "3000"
-    depends_on:
-      - prometheus
-    restart: unless-stopped
+networks:
+  # Fixed name so the monitoring stack (a separate compose project) can join
+  # it as an external network regardless of the directory name.
+  default:
+    name: smartroute-net
 
 volumes:
   npm_data:
   npm_letsencrypt:
-  prometheus_data:
-  grafana_data:
+  db_data:

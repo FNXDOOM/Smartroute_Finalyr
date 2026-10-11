@@ -8,7 +8,8 @@
 # EC2 layout (created by SCP each deploy, NO git repo):
 #   $DEPLOY_DIR/docker-compose.prod.yml
 #   $DEPLOY_DIR/deploy/deploy.sh
-#   $DEPLOY_DIR/monitoring/           (Prometheus + Grafana config, profile-gated)
+#   $DEPLOY_DIR/docker-compose.monitoring.yml
+#   $DEPLOY_DIR/monitoring/           (Prometheus + Grafana config)
 #   $DEPLOY_DIR/deploy/.env.prod      (generated, mode 0600)
 #   $DEPLOY_DIR/deploy/.last-good-tag (generated)
 # Default $DEPLOY_DIR is the parent of this script (e.g. /opt/smartroute).
@@ -40,8 +41,8 @@
 #   - git is NOT required and MUST NOT be used. No source repo on EC2.
 #   - IAM instance profile with secretsmanager:GetSecretValue on the secret.
 #   - The deploy bundle: docker-compose.prod.yml + deploy/deploy.sh +
-#     monitoring/ (Prometheus and Grafana config, read only under the
-#     "monitoring" compose profile).
+#     docker-compose.monitoring.yml + monitoring/ (Prometheus and Grafana
+#     config for the separate monitoring stack).
 #     Shipped by CI via SCP on every deploy.
 #   - Env: DOCKERHUB_NAMESPACE, IMAGE_TAG (arg or env).
 #     Optional: BACKEND_SECRET_ID (default smartroute/production/backend),
@@ -354,8 +355,12 @@ rm -f "${TMP_SECRET}"
 echo "Wrote ${ENV_FILE} (mode 0600)."
 
 # --- 4. Migrations with the NEW image, before switching traffic. ---
+# Runs on smartroute-net so it reaches the self-hosted db container; the
+# DATABASE_URL override points past the Supabase URL still in the secret.
 echo "Running alembic upgrade head with ${API_IMAGE}..."
-if ! docker run --rm --env-file "${ENV_FILE}" "${API_IMAGE}" alembic upgrade head; then
+if ! docker run --rm --network smartroute-net --env-file "${ENV_FILE}" \
+    -e DATABASE_URL="postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute" \
+    "${API_IMAGE}" alembic upgrade head; then
   echo "ERROR: migrations failed. Aborting without restarting containers." >&2
   exit 1
 fi
