@@ -85,7 +85,7 @@ VITE_API_BASE_URL=http://localhost:8000
 
 **Important Security Notes:**
 - `VITE_*` variables are exposed in the browser bundle
-- Never put database passwords, Clerk secret keys, or Supabase service-role keys here
+- Never put database passwords or Clerk secret keys here
 - Stadia API key must stay in `backend/.env` only — frontend calls through the backend proxy
 - Keep the backend URL separate from the Stadia key to maintain security
 

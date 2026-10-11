@@ -71,18 +71,18 @@ Open `http://localhost:5173` in your browser.
 **System Requirements:**
 - Python 3.10+
 - Node.js 18+
-- PostgreSQL (or use Supabase)
+- PostgreSQL with PostGIS (bundled as the compose `db` service)
 - Docker & Docker Compose (optional, for containerized deployment)
 
 **Services:**
 - [Clerk](https://clerk.com) — Authentication (sign up for free account)
-- [Supabase](https://supabase.com) — PostgreSQL hosting (optional; local PostgreSQL works too)
 - [Stadia Maps](https://stadiamaps.com) — Maps, geocoding, routing (free tier available)
 
-**Local Database Alternative:**
-For local development without Supabase, install PostgreSQL and create a local database:
+**Local Database (without Docker):**
+Install PostgreSQL with PostGIS and create a local database:
 ```bash
 createdb smartrouteai
+psql -d smartrouteai -c "CREATE EXTENSION IF NOT EXISTS postgis"
 ```
 
 Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartrouteai`
@@ -94,7 +94,7 @@ Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartroutea
 | Layer | Technology |
 |---|---|
 | Frontend | React 19 + Vite, MapLibre GL (Stadia-only via authenticated backend proxy), Clerk (auth) |
-| Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (Supabase) |
+| Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (self-hosted PostGIS via Docker) |
 | Auth | Clerk (JWT RS256 via JWKS) + dual-role isolation (Passenger / Driver) |
 | Role Sync | Clerk `publicMetadata` patched via Backend API on every role change (requires `CLERK_SECRET_KEY` in `backend/.env`; the backend only logs a line and skips the sync if it is missing) |
 | Algorithms | HDBSCAN pickup clustering, destination-compatible OR-Tools pickup-and-delivery routing; Stadia road matrix chunked past 25×25 → OSM Dijkstra → haversine, Hungarian assignment, H3 spatial indexing (res 9 ≈ 0.1 km²) |
@@ -170,13 +170,14 @@ docker compose up --build
 docker compose exec api alembic upgrade head
 ```
 
-The dev compose file runs four services: `frontend` (nginx + Vite build),
-`api` (FastAPI), `worker` (`python worker.py`), and `nginx-proxy-manager`
-(reverse proxy/TLS termination). There is no local `db` service — the database
-is Supabase PostgreSQL via `DATABASE_URL`. See
+The dev compose file runs five services: `db` (PostGIS 16), `frontend`
+(nginx + Vite build), `api` (FastAPI), `worker` (`python worker.py`), and
+`nginx-proxy-manager` (reverse proxy/TLS termination). The database is the
+self-hosted `db` service: `api`/`worker` get `DATABASE_URL` from compose,
+overriding whatever is in `backend/.env`. See
 [Running behind Nginx Proxy Manager](#running-behind-nginx-proxy-manager) for
-how to configure the proxy host. Provide the development database and Clerk
-settings through `backend/.env`; do not bake them into the image.
+how to configure the proxy host. Provide the Clerk settings and any other
+secrets through `backend/.env`; do not bake them into the image.
 
 ### Deployment (CI/CD)
 
@@ -487,7 +488,7 @@ Full setup, test cards, webhook config, and security model: [`docs/payments.md`]
   ```
 
 - `CLERK_SECRET_KEY` in `backend/.env` enables real-time `publicMetadata` sync to Clerk. Without it, role updates are stored in the DB and synced on the user's next sign-in.
-- Keep database credentials, Clerk secrets, and Supabase service-role keys out of the frontend and all `VITE_*` variables.
+- Keep database credentials and Clerk secrets out of the frontend and all `VITE_*` variables.
 - Set explicit production `ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` values and serve the frontend/backend over HTTPS/WSS.
 - Run database migrations before deployment and rotate any credentials that have been exposed during development.
 
@@ -673,7 +674,7 @@ failure modes are silent — see below.
 - Without the socket guard, `road_snapper.build_road_graph` reaches Overpass once
   per 0.05° cell on a networked runner. It never shows locally because `osmnx` is
   only in `requirements.txt`, so the import fails and the call returns `None`.
-- `backend/.env` points `DATABASE_URL` at the hosted Supabase database, and
+- `DATABASE_URL` may point at a hosted database, and
   `create_db_tables()` issues real DDL (`ALTER TABLE … ADD COLUMN`, `CREATE INDEX`).
   A bare `pytest` would migrate production.
 
@@ -750,7 +751,6 @@ architecture/            # Detailed technical documentation
 ├── algorithms.md
 ├── background-jobs.md
 ├── websockets.md
-└── supabase.md
 ```
 
 ### Getting Help

@@ -41,8 +41,8 @@
 └────────────────────────────┬─────────────────────────────────┘
                              │
               ┌──────────────▼──────────────┐
-              │ Supabase PostgreSQL + PostGIS │
-              │ (SQLite only if configured)   │
+              │ PostgreSQL + PostGIS        │
+              │ (SQLite only if configured) │
               │   12 tables                 │
               └─────────────────────────────┘
 ```

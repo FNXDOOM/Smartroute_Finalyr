@@ -38,7 +38,7 @@ Application Load Balancer (ALB) on port 443 (HTTPS)
 │  └─ Secrets: DATABASE_URL, CLERK_*              │
 └─────────────────────────────────────────────────┘
    ↓
-Supabase PostgreSQL (external managed database)
+PostgreSQL + PostGIS (self-hosted db container or managed RDS)
 ```
 
 ### Service Separation
@@ -66,7 +66,7 @@ Supabase PostgreSQL (external managed database)
 
 2. **Docker Hub Account** with a private repository (e.g., `youruser/smartrouteai`)
 
-3. **Database**: Supabase or managed RDS PostgreSQL (must be externally accessible)
+3. **Database**: self-hosted PostGIS (compose `db` service) or managed RDS PostgreSQL
 
 4. **Clerk Account**: For authentication (JWT issuer, JWKS URL)
 

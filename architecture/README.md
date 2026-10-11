@@ -14,7 +14,6 @@ This folder contains detailed technical documentation for every layer of the Sma
 | [algorithms.md](./algorithms.md) | How each AI/optimization algorithm works and where it fits in the pipeline |
 | [background-jobs.md](./background-jobs.md) | The 4 background workers — what they do, when they run, what they write |
 | [websockets.md](./websockets.md) | Real-time WebSocket channels — connection, authentication, message formats |
-| [supabase.md](./supabase.md) | Supabase setup, PostgreSQL migration, Auth, RLS, environment variables, and deployment |
 
 ---
 
@@ -35,7 +34,7 @@ Passenger App / Driver App / Admin Dashboard
     │  XGBoost Demand Predictor                    │  forecasts future ride demand by zone
     └──────────────────────────────────────────────┘
               ↓
-    Supabase PostgreSQL + PostGIS  (SQLite only for local development)
+    PostgreSQL + PostGIS  (SQLite only when explicitly configured)
 ```
 
 ### Request → Dispatch Flow
@@ -97,7 +96,7 @@ Passenger App / Driver App / Admin Dashboard
 | API framework | FastAPI 0.104 | Fast, async-native, built-in WebSocket support, auto-generated docs |
 | ORM | SQLAlchemy 2.0 | Type-safe, powerful query builder, works with any SQL dialect |
 | Schema validation | Pydantic v2 | Fast, automatic OpenAPI docs, strong typing |
-| Database (prod) | Supabase PostgreSQL + PostGIS | Managed PostgreSQL, geospatial queries, built-in auth |
+| Database | PostgreSQL + PostGIS (self-hosted `db` container) | Geospatial queries; SQLite only when explicitly configured |
 | Database (dev) | SQLite only when explicitly configured | No external dependencies for local development |
 | Auth | Clerk session JWTs (RS256) | Industry standard, JWT verification without hitting Clerk on every request |
 | Spatial indexing | H3 (Uber) res=9 | Hierarchical hexagonal grid for efficient partitioning |
@@ -297,7 +296,7 @@ backend/
 
 1. **Enable verbose logging**: Set `LOG_LEVEL=DEBUG` in `.env`
 2. **Inspect WebSocket traffic**: Use browser DevTools → Network → WS tabs
-3. **Query database directly**: `psql -U postgres -d smartrouteai` or use Supabase dashboard
+3. **Query database directly**: `docker compose exec db psql -U smartroute -d smartroute`
 4. **Check async task queue**: Review `background_jobs.py` and worker logs
 5. **Profile slow endpoints**: Add `@router.middleware()` with timing logic
 6. **Test algorithms in isolation**: Use Jupyter notebooks in `ml/` folder with sample data

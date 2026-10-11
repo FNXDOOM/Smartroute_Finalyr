@@ -1,6 +1,6 @@
 # Database Schema
 
-13 tables. Supabase PostgreSQL + PostGIS in production, SQLite only when explicitly configured for local development.
+13 tables. PostgreSQL + PostGIS, SQLite only when explicitly configured for local development.
 
 Live vs presentation isolation: `ride_requests`, `cluster_runs`, `route_plans`, `virtual_stops`, and `vehicles` carry `ride_mode` (`live` | `presentation_demo`, indexed) + `demo_run_id` (nullable, indexed) — see Alembic `0002_demo_scope` and `backend/utils/ride_scope.py`. Live queries default to `mode=live`.
 
