@@ -1,167 +1,56 @@
 # SmartRoute AI
 
-An Uber-like AI-powered shared ride dispatch system built for Bengaluru. Uses HDBSCAN clustering, OR-Tools VRP optimization, and Hungarian assignment to pre-compute optimized multi-passenger routes before dispatch.
+Ride dispatch for Bengaluru. HDBSCAN clusters pickups, a destination-corridor pass pools
+compatible riders, and OR-Tools solves one combined pickup-and-delivery route per vehicle.
+Routes are pre-computed before dispatch — a driver accepts an already-solved run.
 
----
+Deep documentation lives in [`architecture/`](architecture), not here. This file is only
+"what is it, how do I run it, what will bite me".
 
-## Table of Contents
+## Stack
 
-- [Quick Start](#quick-start)
-- [Prerequisites](#prerequisites)
-- [Tech Stack](#tech-stack)
-- [Running the Project](#running-the-project)
-- [Authentication & Role System](#authentication--role-system)
-- [Architecture Overview](#architecture-overview)
-- [Carpooling Lifecycle](#carpooling-lifecycle)
-- [API Reference](#api-reference)
-- [Deployment (CI/CD)](#deployment-cicd)
-- [Security and Production Notes](#security-and-production-notes)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
-
----
-
-## Quick Start
-
-Get the system running locally in 5 minutes:
-
-```bash
-# Clone and setup
-git clone <repo>
-cd finalyr_project
-
-# Backend setup
-cd backend
-pip install -r ../requirements.txt
-cp .env.example .env
-# Edit .env with DATABASE_URL, CLERK_JWKS_URL, CLERK_ISSUER, CLERK_SECRET_KEY,
-# LOCAL_JWT_SECRET, STADIA_API_KEY, and the RAZORPAY_* payment keys
-# (see backend/.env.example and docs/payments.md)
-
-# Run migrations
-alembic -c ../alembic.ini upgrade head
-
-# Seed database (optional demo data)
-python seed.py
-
-# Start API
-uvicorn main:app --reload --port 8000
-
-# In another terminal, start worker
-python worker.py
-```
-
-```bash
-# Frontend setup (in new terminal from root)
-cd frontend
-npm install
-cp .env.example .env
-# Edit .env with VITE_CLERK_PUBLISHABLE_KEY and VITE_API_BASE_URL
-
-# Start dev server
-npm run dev
-```
-
-Open `http://localhost:5173` in your browser.
-
----
-
-## Prerequisites
-
-**System Requirements:**
-- Python 3.10+
-- Node.js 18+
-- PostgreSQL with PostGIS (bundled as the compose `db` service)
-- Docker & Docker Compose (optional, for containerized deployment)
-
-**Services:**
-- [Clerk](https://clerk.com) — Authentication (sign up for free account)
-- [Stadia Maps](https://stadiamaps.com) — Maps, geocoding, routing (free tier available)
-
-**Local Database (without Docker):**
-Install PostgreSQL with PostGIS and create a local database:
-```bash
-createdb smartrouteai
-psql -d smartrouteai -c "CREATE EXTENSION IF NOT EXISTS postgis"
-```
-
-Then use `DATABASE_URL=postgresql://postgres:password@localhost:5432/smartrouteai`
-
----
-
-## Tech Stack
-
-| Layer | Technology |
+| | |
 |---|---|
-| Frontend | React 19 + Vite, MapLibre GL (Stadia-only via authenticated backend proxy), Clerk (auth) |
-| Backend | FastAPI (Python), SQLAlchemy, PostgreSQL (self-hosted PostGIS via Docker) |
-| Auth | Clerk (JWT RS256 via JWKS) + dual-role isolation (Passenger / Driver) |
-| Role Sync | Clerk `publicMetadata` patched via Backend API on every role change (requires `CLERK_SECRET_KEY` in `backend/.env`; the backend only logs a line and skips the sync if it is missing) |
-| Algorithms | HDBSCAN pickup clustering, destination-compatible OR-Tools pickup-and-delivery routing; Stadia road matrix chunked past 25×25 → OSM Dijkstra → haversine, Hungarian assignment, H3 spatial indexing (res 9 ≈ 0.1 km²) |
-| ML | XGBoost demand model (`ml/models/demand_model.pkl`, heuristic fallback if absent) |
-| Maps | Stadia Maps via authenticated MapLibre proxy (`/maps/stadia/*`, `/geocode/*`, `/routing/*`), OSMnx road graph; all geo endpoints India-guarded (`is_india_location`) |
-| Isolation | `ride_mode` (`live` \| `presentation_demo`) + `demo_run_id` on rides/stops/runs/plans/vehicles (Alembic `0002_demo_scope`); `PresentationDemoView` keeps demos off live fleet |
-| Payments | Razorpay Checkout (Standard) — server-created Orders, HMAC-SHA256 signature verification, verified webhooks; see [`docs/payments.md`](docs/payments.md) |
-| Real-time | WebSockets (FastAPI) for live vehicle tracking + per-user notifications (bearer subprotocol only; `?token=` rejected with 4401) |
-| Dispatch availability | Driver heartbeat (`driver_last_seen_at`) with a 90-second freshness window; offline drivers are excluded from automatic assignment |
+| Backend | FastAPI, SQLAlchemy, PostgreSQL 16 + PostGIS, Alembic |
+| Frontend | React 19 + Vite, MapLibre GL, shadcn/ui |
+| Auth | Clerk (JWT RS256 via JWKS); roles resolved from the database only |
+| Routing/ML | HDBSCAN, OR-Tools CP-SAT pickup-and-delivery, Hungarian assignment, H3 res 9, XGBoost demand model |
+| Geo | Stadia Maps behind an authenticated backend proxy, OSMnx road graphs, all writes India-guarded |
+| Real-time | WebSockets for vehicle tracking and per-user notifications |
+| Payments | Razorpay — server-side fares, HMAC signature verification, idempotent webhooks |
+| Isolation | `ride_mode` (`live` / `presentation_demo`) + `demo_run_id` on every scoped table |
 
----
+Needs Python 3.10+, Node 18+, and a PostGIS-capable PostgreSQL — the schema uses
+`geoalchemy2` geometry columns, so plain PostgreSQL will not work.
 
-## Running the Project
-
-### Backend
+## Run it
 
 ```bash
 cd backend
 pip install -r ../requirements.txt
+cp .env.example .env        # DATABASE_URL, Clerk settings, STADIA_API_KEY, LOCAL_JWT_SECRET, RAZORPAY_*
+alembic -c ../alembic.ini upgrade head
 uvicorn main:app --reload --port 8000
 ```
 
-Requires `backend/.env` — copy `backend/.env.example` and fill in the values.
-`DATABASE_URL` is required; the backend no longer uses a built-in database
-credential fallback.
-
-Run database migrations before starting the API:
+Second terminal, from `backend/`:
 
 ```bash
-alembic -c ../alembic.ini upgrade head
+python worker.py            # scheduled clustering / dispatch / demand / rebalance
 ```
 
-Alembic migration resources:
-
-- [Official Alembic documentation](https://alembic.sqlalchemy.org/en/latest/)
-- [Alembic tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html)
-- [Alembic autogenerate guide](https://alembic.sqlalchemy.org/en/latest/autogenerate.html)
-
-When the SQLAlchemy models change, create a migration and review it before
-applying it:
+The API and the jobs are **separate processes**. Keep `ENABLE_BACKGROUND_JOBS_IN_API=false`
+so exactly one of them schedules work.
 
 ```bash
-alembic -c ../alembic.ini revision --autogenerate -m "describe the schema change"
-alembic -c ../alembic.ini upgrade head
+cd frontend && npm install && cp .env.example .env   # VITE_CLERK_PUBLISHABLE_KEY, VITE_API_BASE_URL
+npm run dev                 # http://localhost:5173
 ```
 
-The API and scheduled jobs are separate processes. Start the API with
-`uvicorn main:app --host 0.0.0.0 --port 8000` from `backend/`, and start one
-worker with `python worker.py` from `backend/`. Set `APP_ENV` to `development`,
-`staging`, or `production`; never reuse a production `backend/.env` locally.
+Never put `STADIA_API_KEY` in a `VITE_*` variable — Vite publishes those into the browser
+bundle. The map already proxies through the API.
 
-Health probes are available at `/health/live` and `/health/ready`. `/metrics`
-(Prometheus format) also exists but is reachable only from inside the docker
-network — no host port and no NPM route maps to it.
-
-The monitoring stack is opt-in and never published:
-
-```bash
-docker compose --profile monitoring up -d   # prometheus + grafana, internal only
-```
-
-Without that profile the resolved compose file is unchanged, so a host that has
-not opted in pays no memory for it. Prometheus holds no auth and Grafana is not
-wired into Clerk, so neither gets a host port; reach them with
-`ssh -L 3000:grafana:3000 <host>`. The admin panel does not embed Grafana — it
-calls `GET /analytics/monitoring`, which queries Prometheus server-side from a
-fixed query whitelist.
+Optional demo data: `python seed.py` (or `--reset` to wipe and re-seed).
 
 ### Docker
 
@@ -170,593 +59,159 @@ docker compose up --build
 docker compose exec api alembic upgrade head
 ```
 
-The dev compose file runs five services: `db` (PostGIS 16), `frontend`
-(nginx + Vite build), `api` (FastAPI), `worker` (`python worker.py`), and
-`nginx-proxy-manager` (reverse proxy/TLS termination). The database is the
-self-hosted `db` service: `api`/`worker` get `DATABASE_URL` from compose,
-overriding whatever is in `backend/.env`. See
-[Running behind Nginx Proxy Manager](#running-behind-nginx-proxy-manager) for
-how to configure the proxy host. Provide the Clerk settings and any other
-secrets through `backend/.env`; do not bake them into the image.
+Dev compose runs `db` (PostGIS 16, published on 127.0.0.1 only), `frontend`, `api`, `worker`
+and `nginx-proxy-manager`. The `db` service supplies `DATABASE_URL`, overriding `backend/.env`.
 
-### Deployment (CI/CD)
+### Migrations
 
-Production deploys run from `main` only:
-
-```text
-push to main → GitHub Actions (lint/test/build → docker build/push :<sha>)
-  → Docker Hub (smartroute-api + smartroute-frontend)
-  → EC2 (pull exact SHA → secrets from AWS Secrets Manager
-  → alembic upgrade head → compose up → healthchecks)
-```
-
-Key files: `docker-compose.prod.yml` (pinned `image:`, no `build:`),
-`deploy/deploy.sh` (migrate → up → `frontend /health`, `api /health/live`,
-`api /health/ready` → rollback to previous SHA on failure),
-`.github/workflows/ci-cd.yml` (PRs run lint/tests/build; `main` also pushes
-and deploys; `concurrency: production`). Full setup — GitHub
-Secrets/Variables, EC2 IAM + Security Groups, the Secrets Manager JSON layout,
-first-deploy steps, and the forward-only migration / container-rollback policy —
-is in [`deploy/README.md`](deploy/README.md).
-
-For Amazon ECS/Fargate as an alternative to EC2, use the task-definition
-templates in [`deploy/ecs`](deploy/ecs). They define separate API and worker
-services, Secrets Manager injection, CloudWatch logging, and ECS health checks.
-See the [ECS deployment guide](deploy/ecs/README.md) for Docker Hub publishing,
-Secrets Manager, IAM, migrations, and ALB setup.
-
-Useful AWS references:
-
-- [ECS standalone tasks](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/standalone-tasks.html)
-- [ECS private registry authentication](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/private-auth.html)
-- [ECS task health checks](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/healthcheck.html)
-
-### Frontend
+Forward-only. `alembic downgrade` is never run against a shared database — down-migrations
+are untested and can destroy data ([`deploy/README.md`](deploy/README.md) states the policy).
+After changing a model, generate the revision and **read it** before applying:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+alembic -c ../alembic.ini revision --autogenerate -m "describe the change"
+alembic -c ../alembic.ini upgrade head
 ```
 
-Requires `frontend/.env` with:
-```
-VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
-VITE_API_BASE_URL=http://127.0.0.1:8000
-```
+`run_startup_migrations()` also applies additive Postgres backfills at boot, so a skipped
+`upgrade head` fails loudly rather than half-working.
 
-Keep the Stadia key server-side in `backend/.env` as `STADIA_API_KEY`. The
-frontend calls FastAPI for geocoding, road snapping, routing, matrix, traffic,
-and map matching; never place the Stadia secret in a `VITE_*` variable because
-Vite publishes those values in the browser bundle.
+## Auth and roles
 
-The frontend map uses the authenticated FastAPI Stadia proxy, so no Stadia key
-is required in `frontend/.env`. The map is Stadia-only and has no tile
-fallback.
+Two isolated portals. The passenger `<SignIn />` offers Google OAuth; the driver form uses
+Clerk's headless `useSignIn()` and renders no social buttons at all — credentials only.
 
----
+**The database is the only source of truth for a role.** A Clerk JWT is identity only:
+`role` / `driver_status` claims, including `publicMetadata` (which users can usually write
+about themselves), never grant anything. `require_roles()` authenticates, then reads the
+`users` row; `ensure_active_driver()` blocks any `role=driver` whose status is not `active`,
+across both the write endpoints and the read-only surfaces. The backend *pushes* metadata to
+Clerk so its dashboard and the client's optimistic UI agree — that sync is cosmetic. Without
+`CLERK_SECRET_KEY` the push is skipped with one log line and the app keeps working.
 
-## Authentication & Role System
+Driver lifecycle: apply → `pending_verification` → gate screen → admin
+`POST /auth/driver/{id}/verify` → `active` (dashboard) / `suspended` (blocked everywhere,
+role retained for reinstatement) / `rejected` (returned to `passenger`, must re-apply).
 
-SmartRoute AI uses **Clerk** for authentication with two completely isolated login portals.
+Bootstrap the first admin in SQL, because `PATCH /auth/users/{id}/role` is itself admin-only:
 
-### Passenger Portal
-
-Accessible via the ** Passenger Portal** tab on the login screen.
-- Full Clerk `<SignIn />` / `<SignUp />` component with **Google OAuth + Email/Password**
-- First-time sign-up auto-provisions a DB user with `role=passenger`
-- Role is stored in the database and synced to Clerk `publicMetadata`
-
-### Driver Portal
-
-Accessible via the ** Driver Portal** tab on the login screen.
-- Custom `DriverLoginForm` using Clerk's headless `useSignIn()` / `useSignUp()` SDK
-- **No social login buttons** — strictly credentials-only (email + password)
-- Sign-up uses Clerk email-code verification (6-digit input with resend) when the instance requires it
-- Driver registration also captures vehicle license plate
-- New drivers are assigned `role=driver, driver_status=pending_verification`
-- Clerk `publicMetadata` reads `{ role: "pending", license_plate, driver_status: "pending_verification" }` until an admin approves, then flips to the confirmed driver state
-- Signing in at the Driver portal with a still-`passenger` account routes to the in-app `DriverApplyView` to finish the application (the login screen unmounts on sign-in, so this step lives inside the app)
-- Drivers see a verification gate screen until an admin approves them
-
-### Driver Lifecycle
-
-```
-Driver registers via Driver Portal (email-code verified if required)
-  └─ POST /auth/driver/apply { license_plate } → role="driver", driver_status="pending_verification"
-  └─ Clerk publicMetadata → { role: "pending", license_plate, ... }
-  └─ DriverVerificationGate shown instead of dashboard
-
-Admin opens Overview → Pending Driver Verifications widget
-  └─ POST /auth/driver/{id}/verify { status: "active" }  (also "suspended" / "rejected")
-  └─ active    → role="driver", driver_status="active"   → full DriverView dashboard
-  └─ suspended → keeps role="driver" but driver_status="suspended", blocked at every driver endpoint
-  └─ rejected  → returned to role="passenger"; they must re-apply to be considered again
-  └─ DB updated + Clerk publicMetadata synced to the resulting role/status
+```sql
+UPDATE users SET role='admin' WHERE email='you@example.com';
 ```
 
-> **Roles live in the database.** A Clerk JWT is treated as identity only — its
-> `role` / `driver_status` claims (including `publicMetadata`, which a user can
-> usually write about themselves) never grant or change a role server-side. The
-> metadata sync exists so the Clerk dashboard and the client's optimistic UI
-> agree, not to authorize anything.
+Signing in with an existing email but a new Clerk identity links to the *passenger* row;
+same-email `driver`/`admin` rows are never auto-linked and get a `409`.
 
-### Environment Variables for Auth
+## Dispatch and carpooling
 
-| Variable | Where | Purpose |
-|---|---|---|
-| `VITE_CLERK_PUBLISHABLE_KEY` | `frontend/.env` | Initializes the Clerk frontend SDK |
-| `CLERK_JWKS_URL` | `backend/.env` | URL to Clerk's JWKS endpoint for JWT verification |
-| `CLERK_ISSUER` | `backend/.env` | Expected `iss` claim in Clerk JWTs |
-| `CLERK_AUDIENCE` | `backend/.env` | (Optional) Expected `aud` claim |
-| `CLERK_AUTHORIZED_PARTIES` | `backend/.env` | Must be the public `https://` domain in production (matches `ALLOWED_ORIGINS`) |
-| `CLERK_ALLOW_NATIVE_CLIENTS` | `backend/.env` | Gate native-client tokens (`true` in dev example) |
-| `CLERK_SECRET_KEY` | `backend/.env` | Backend API key to sync `publicMetadata` to Clerk in real time (present in `backend/.env.example` — set a real value; the backend only logs a line and skips the sync if it is missing) |
+```
+pending → HDBSCAN + corridor search → VirtualStop/ClusterRun → OR-Tools PDP
+        → RoutePlan(solved) → Hungarian vehicle assignment → driver accepts → per-stop workflow
+```
 
-> **Note:** If `CLERK_SECRET_KEY` is omitted, role changes are saved to the database but Clerk `publicMetadata` is never updated (the sync is skipped silently). The app itself reads roles from the database, so it keeps working — only the Clerk dashboard view goes stale. After adding the key you must restart the backend (`uvicorn --reload` does not watch `.env`), then re-apply/approve once to backfill metadata.
+Carpooling pools 2–3 riders. A corridor-matched group gets **one** `cluster_id` with one
+pickup stop per rider, within a 150 m walk limit. Acceptance closes the run to new riders.
+Each rider then walks a per-rider ladder that stays in lockstep with the coarse `status`, so
+clients reading only `status` are unaffected:
 
-### Role Reference
+```
+pending → searching → clustered → assigned → driver_accepted → driver_arriving
+→ pickup_ready → passenger_confirmed_pickup_stop → boarded → in_transit → dropped_off → completed
+```
 
-| Role | `driver_status` | Access |
-|---|---|---|
-| `passenger` | `active` | Passenger ride booking, tracking, history |
-| `driver` | `pending_verification` | Verification gate only — no dashboard access |
-| `driver` | `active` | Full driver dashboard, fleet map, ride management |
-| `driver` | `suspended` | Verification gate — access blocked |
-| `driver` | `rejected` | Role is returned to `passenger` on rejection, so this state is not reachable — re-apply to be considered again |
-| `admin` | `active` | All passenger + driver + admin panels |
+Only explicit completion ends a run; a co-passenger cancellation moves the plan to
+`needs_reoptimization` and the driver keeps serving the rest. Presence beats every 30 s and
+stay dispatchable for 90 s — an unaccepted route held by a driver who went offline is
+released on the next cycle.
 
-> **First admin:** `PATCH /auth/users/{id}/role` is admin-only, so bootstrap the
-> first admin directly in the database:
-> `UPDATE users SET role='admin' WHERE email='you@example.com';`
-> Setting `role` in Clerk `publicMetadata` does **not** work — the backend
-> ignores authorization claims in tokens.
->
-> **Re-registration:** signing in with the same email but a new Clerk identity links to the existing *passenger* row instead of crashing. Same-email `driver`/`admin` rows are never auto-linked — that login gets a `409` pointing at the original sign-in method.
+## Endpoints
 
-### Seed the database (first run)
+Don't maintain a second list here: `architecture/api-reference.md` is the spec and
+`http://localhost:8000/docs` serves live Swagger. Two things worth knowing up front:
+
+- Every geo route (`/maps/stadia/*`, `/geocode/*`, `/routing/*`) is authenticated and
+  India-guarded; the map style is `/maps/stadia/style.json`.
+- Tracking is scoped server-side: admin sees the fleet, a driver their own vehicle, a
+  passenger the vehicle on their ride.
+
+## Monitoring
+
+`/health/live`, `/health/ready` (real `SELECT 1`) and `/metrics` in Prometheus format.
+`/metrics` is unauthenticated because a scraper holds no JWT, and that is safe only because
+nothing publishes it — no host port and no proxy route.
+
+Prometheus and Grafana are opt-in and never published:
 
 ```bash
-cd backend
-python seed.py          # insert demo data
-python seed.py --reset  # wipe and re-seed
+docker compose --profile monitoring up -d
 ```
 
----
+Without the profile the resolved compose file is unchanged, so a host that has not opted in
+pays no memory for it. Neither service maps a host port; reach Grafana with
+`ssh -L 3000:grafana:3000 <host>`. The admin panel does **not** embed Grafana — it calls
+`GET /analytics/monitoring`, which queries Prometheus from a fixed server-side whitelist, so
+caller-supplied PromQL never reaches it.
 
-## Architecture Overview
+## Tests
 
-### Authentication Flow
-
-```
-Login Screen
-├──  Passenger Portal (tab)
-│   └── Clerk <SignIn /> — Google OAuth + Email/Password
-│       └── JWT decoded → role defaults to "passenger"
-│       └── DB user auto-provisioned
-│
-└── Driver Portal (tab)
-    └── DriverLoginForm (useSignIn / useSignUp — credentials only)
-        └── POST /auth/driver/apply
-        └── role="driver", driver_status="pending_verification"
-        └── DriverVerificationGate shown
-
-Admin → Drivers Panel
-└── POST /auth/driver/{id}/verify { status: "active" }
-    └── DB updated + Clerk publicMetadata synced
-    └── Driver sees full dashboard on next load
-```
-
-### Ride Dispatch Pipeline
-
-```
-Passenger books ride (India-guarded)
-        ↓
-POST /rides/request  ──→  RideRequest (status=pending, mode=live)
-        ↓  [automatic worker every 60s, or POST /jobs/run/auto-dispatch|clustering]
-HDBSCAN + corridor matching ──→ VirtualStop + ClusterRun (status=clustered)
-        ↓  [automatic full dispatch, or POST /route/optimize manually]
-OR-Tools VRP (Stadia ≤25×25 → OSM Dijkstra → haversine, 10 s)  ──→  RoutePlan + RouteWaypoints (status=solved)
-        ↓  [Hungarian algorithm inside auto-dispatch / POST /vehicle/assign]
-Vehicle assignment   ──→  Vehicle.assigned_route_id set; only an online active driver is eligible
-        ↓  [driver accepts the route]
-Driver acceptance    ──→  route metadata `driver_accepted=true`; vehicle becomes active
-        ↓
-Status progression   ──→  normal rides: driver-controlled; carpool rides: stop-by-stop Carpool Run workflow
-        ↓  [WebSocket broadcast every 2s]
-Passenger tracking   ──→  Live map updates in browser
-```
-
-Live and `presentation_demo` rows are isolated by `ride_mode` + `demo_run_id` (Alembic `0002_demo_scope`); demo flow uses `PresentationDemoView` + `DEMO-PRESENTATION-01`.
-
-### Carpooling Lifecycle
-
-Carpooling supports two or three riders. Matching uses H3 pickup partitioning
-followed by a global corridor search across nearby cells. Each rider keeps a
-separate pickup stop, and the route solver combines those stops with the
-required drop-offs into one pickup-and-delivery route. Pickup walking distance
-is limited to 150 metres.
-
-```text
-2–3 compatible shared rides
-        ↓
-Separate pickup stops + ordered pickup/drop-off waypoints
-        ↓
-Assign to an online driver-owned vehicle
-        ↓
-Driver accepts in Carpool Run (the run then stops accepting new riders)
-        ↓
-Ask each rider to walk → driver marks arrival → rider confirms → driver confirms pickup
-        ↓
-Driver starts the trip → confirms each drop-off
-        ↓
-Driver completes the run → every rider closes and the vehicle is released
-```
-
-Each rider also carries a per-rider `carpool_status` stage, because the driver
-confirms one rider at a time and two riders on the same run are legitimately at
-different points. It stays in lockstep with the coarse `status`, so clients that
-only read `status` are unaffected:
-
-```text
-pending → searching → clustered → assigned → driver_accepted
-       → driver_arriving → pickup_ready → passenger_confirmed_pickup_stop
-       → boarded → in_transit → dropped_off → completed      (cancelled is terminal)
-```
-
-A passenger cannot join once the driver has accepted the run. If a driver goes offline
-before accepting, the route is released on the next dispatch cycle and the
-rides return to the matching pool. Driver presence is recorded every 30 seconds
-and remains dispatchable for 90 seconds after the last heartbeat.
-
-Only an explicit completion closes a run: a co-passenger cancellation moves the
-plan to `needs_reoptimization`, and the driver keeps serving — and finally
-closing — the riders already on board.
-
----
-
-## API Reference
-
-Full interactive docs available at `http://localhost:8000/docs` when backend is running.
-
-### Authentication & Role Endpoints
-- `GET /auth/me` — return current user profile
-- `POST /auth/driver/presence` — record that an active driver has the app open
-- `PATCH /auth/me` — update profile (name, phone)
-- `POST /auth/driver/apply` — apply to become a driver (any authenticated user)
-- `GET /auth/drivers/pending` — list pending driver applications (admin only)
-- `POST /auth/driver/{user_id}/verify` — approve / reject / suspend a driver (admin only)
-- `PATCH /auth/users/{user_id}/role?role=...` — override any user's role (admin only)
-
-### Ride Endpoints
-- `POST /rides/request` — book a ride (India-guarded, `mode=live`)
-- `POST /rides/batch` — batch live booking
-- `POST /rides/demo-batch` / `POST /rides/demo-shared-batch` / `DELETE /rides/demo-runs/{demo_run_id}` — isolated presentation demos
-- `GET /rides/my-rides` — passenger trip history (live scope)
-- `GET /rides/{ride_id}/vehicle` — assigned vehicle or null
-- `POST /cluster/run` — run HDBSCAN clustering (admin/driver; `mode`/`demo_run_id` supported via jobs endpoints)
-- `POST /route/optimize` — run VRP route optimization (admin/driver; drivers scoped to own `driver_user_id` vehicles)
-- `GET /route/history` — return active routes visible to the current driver/admin
-- `POST /route/{route_id}/accept` — accept an assigned route before progression begins
-- `POST /route/{route_id}/carpool/announce-pickup/{ride_id}` — ask one rider to walk to their assigned stop
-- `POST /route/{route_id}/carpool/mark-arrived/{ride_id}` — record that the driver reached that rider's pickup stop
-- `POST /route/{route_id}/carpool/confirm-pickup/{ride_id}` — confirm that a ready rider boarded
-- `POST /route/{route_id}/carpool/depart` — start the trip for every boarded rider
-- `POST /route/{route_id}/carpool/confirm-dropoff/{ride_id}` — confirm one rider's drop-off
-- `POST /route/{route_id}/carpool/complete` — close the run and release the vehicle, once every rider is dropped off
-
-### Maps / Geo (Stadia-backed, India-only, auth required)
-- `GET /maps/stadia/style.json` + `GET /maps/stadia/resource/{path}` — authenticated tile proxy (no key in browser)
-- `GET /geocode/suggest|search|reverse` — autocomplete / forward / reverse geocode
-- `GET /routing/route` / `GET /routing/nearest-road` / `POST /routing/map-match` / `POST /routing/matrix` (matrix: admin/driver, 1–25 points per side)
-
-### Jobs
-- `POST /jobs/run/auto-dispatch` — full cluster → VRP → assign pipeline (`?mode=live|presentation_demo`)
-- `POST /jobs/run/clustering` — same `mode`/`demo_run_id` query support
-
-### Payments (Razorpay)
-- `POST /payments/create-order` — authenticated user; server-side fare + Razorpay Order; returns public checkout payload (Key ID, order ID, amount) only
-- `POST /payments/verify` — verifies the checkout signature server-side and marks the payment `paid` (idempotent)
-- `POST /payments/webhook` — signature-verified Razorpay webhook (`payment.captured` / `payment.failed` / `refund.processed`)
-- `GET /payments/mine` / `GET /payments/{id}` — current user's payments (owner/admin scoped)
-
-Full setup, test cards, webhook config, and security model: [`docs/payments.md`](docs/payments.md).
-
-### Real-Time
-- `WS /tracking/ws` with the `bearer` subprotocol — live vehicle tracking stream (`?token=` query rejected with 4401; scoped: admin=fleet, driver=own vehicle, passenger=own ride vehicle)
-- `WS /notifications/ws` with the `bearer` subprotocol — per-user notification stream
-
-### Analytics & ML
-- `GET /analytics/overview` — fleet-wide statistics
-- `GET /predict/heatmap` — demand prediction over a bounding box
-
----
-
-## Security and Production Notes
-
-- All protected REST and WebSocket endpoints require a verified Clerk session token. WebSocket `?token=` query params are rejected — use `['bearer', jwt]` (covered by `tests/test_health_and_ws_auth.py`).
-- **India service area**: all ride/geocode/routing writes are guarded by `is_india_location` (6.5–35.7 / 68.1–97.4); out-of-area requests return `422`.
-- **Driver Portal isolation**: The Driver Portal login form uses Clerk's headless `useSignIn()` — Google OAuth buttons are never rendered. Social logins are architecturally excluded, not just hidden.
-- **Role enforcement**: the database is the only source of truth for a role. Every request authenticates the caller from a verified JWT (signature, issuer and authorized-party checks in `utils/auth_utils.py`), then resolves the role from the `users` row; `require_roles()` / `ensure_active_driver()` authorize the action. Token claims never set a role.
-- **`driver_status` guard**: a `role=driver` account with `driver_status != "active"` is refused everywhere the driver role grants access — route acceptance and optimization, the carpool lifecycle endpoints, ride status writes, and the read-only surfaces (fleet, tracking feed/events, cluster history, analytics, job controls). It is enforced in one place, `require_roles()` / `ensure_active_driver()` in `utils/auth_utils.py`, rather than per endpoint. Owner-scoped actions (a passenger cancelling their own ride) are unaffected.
-- **Payments**: the Razorpay Key Secret and Webhook Secret are backend-only (`backend/.env` / Secrets Manager). Fares are computed server-side; every payment is marked `paid` only after server-side signature verification; webhooks are signature-verified and idempotent. See [`docs/payments.md`](docs/payments.md).
-- Tracking data is scoped server-side: passengers see only their assigned ride vehicle, drivers see only their assigned vehicle, and admins see the fleet.
-- Admins assign a driver to a vehicle with `PATCH /vehicles/{vehicle_id}`:
-
-  ```json
-  { "driver_user_id": 123 }
-  ```
-
-- `CLERK_SECRET_KEY` in `backend/.env` enables real-time `publicMetadata` sync to Clerk. Without it, role updates are stored in the DB and synced on the user's next sign-in.
-- Keep database credentials and Clerk secrets out of the frontend and all `VITE_*` variables.
-- Set explicit production `ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` values and serve the frontend/backend over HTTPS/WSS.
-- Run database migrations before deployment and rotate any credentials that have been exposed during development.
-
-### Running behind Nginx Proxy Manager
-
-`docker-compose.yml` includes an `nginx-proxy-manager` service (pinned to `2.12.3`
-in `docker-compose.prod.yml`) on the same default network as `api`, so no extra
-network setup is needed.
-
-1. `docker compose up -d` (starts frontend, api, worker, and NPM together).
-2. Open the NPM admin UI at `http://<server-ip>:81`. First login is `admin@example.com` / `changeme` -- **change both immediately**.
-3. Add a Proxy Host: domain = your public domain, forward hostname/IP = `api`, forward port = `8000`, scheme = `http`.
-4. Turn on **Websockets Support** on that proxy host -- `/tracking/ws` and `/notifications/ws` will fail silently without it.
-5. On the SSL tab, request a Let's Encrypt certificate and force SSL.
-6. In NPM's Advanced tab for this proxy host, consider raising `proxy_read_timeout`/`proxy_send_timeout`; the default nginx timeout can drop long-lived WebSocket connections.
-7. Point your domain's DNS A record at the server before requesting the certificate, and make sure ports 80/443 are open on the host firewall (needed for Let's Encrypt's HTTP-01 challenge).
-8. Set `ALLOWED_ORIGINS` and `CLERK_AUTHORIZED_PARTIES` in `backend/.env` to your real `https://` domain, not `localhost`.
-
-Uvicorn is already started with `--proxy-headers` and `--forwarded-allow-ips` limited
-to loopback + private ranges (see `backend/Dockerfile` / `docker-compose.yml`) so it trusts `X-Forwarded-For`/`X-Forwarded-Proto` from NPM -- this is required for the HSTS header logic in `backend/main.py` to detect HTTPS correctly and for real client IPs to show up in logs.
-
----
-
-## Troubleshooting
-
-### Backend Issues
-
-**Backend won't start with "Cannot import name 'X' from module"**
-- Ensure you've installed all dependencies: `pip install -r requirements.txt`
-- Try clearing pip cache: `pip cache purge` then reinstall
-
-**Database connection error: `database "smartrouteai" does not exist`**
-- Create the database: `createdb smartrouteai`
-- Or update `DATABASE_URL` in `.env` to point to an existing database
-- Ensure PostgreSQL is running: `psql -U postgres` should work
-
-**Alembic migration fails with "Can't locate revision identified by..."**
-- Delete any incomplete migration files in `alembic/versions/`
-- Re-create from current models: `alembic revision --autogenerate -m "restart migrations"`
-
-**WebSocket connection fails in tracking/notifications**
-- Ensure `uvicorn main:app` is running (not a production server without WebSocket support)
-- Check `ALLOWED_ORIGINS` in `.env` matches your frontend URL
-- Verify Clerk token is valid and not expired
-
-**Worker.py runs but doesn't trigger clustering/rebalance jobs**
-- Set `ENABLE_BACKGROUND_JOBS_IN_API=false` in `.env` (only one process should handle jobs)
-- Check logs: `python worker.py` should print job execution details
-- Ensure database connectivity with `python -c "import backend.database; print('OK')"`
-
-**A route is assigned to an offline driver**
-- Automatic dispatch only considers active drivers with a heartbeat from the
-  last 90 seconds.
-- An unaccepted route owned by an offline driver is released on the next
-  dispatch cycle and returned to the matching pool.
-
-**A completed carpool route remains on the driver map**
-- Completing the final passenger closes the parent route and releases the
-  vehicle. Refresh route history after restarting the backend if an older
-  route is still visible.
-
-### Frontend Issues
-
-**Vite dev server shows "Cannot find module 'maplibre-gl-worker.mjs'"**
-- This is a Vite dependency resolution issue; fix with:
-  ```bash
-  rm -rf node_modules package-lock.json
-  npm install
-  npm run dev -- --force
-  ```
-
-**Map doesn't load or shows blank canvas**
-- Verify `VITE_API_BASE_URL` in `.env` is correct
-- Verify `STADIA_API_KEY` is set in backend `.env`
-- Check browser console for errors; map requires STADIA_API_KEY to function
-- Ensure backend's `/maps/style` endpoint returns valid Stadia style JSON
-
-**"Cannot read property 'auth' of undefined" in browser console**
-- Clerk app is not initialized; check that `VITE_CLERK_PUBLISHABLE_KEY` is set correctly in `.env`
-- Verify Clerk Domain matches your Clerk app settings
-
-**TypeScript/ESLint warnings about React 19**
-- React 19 changes the `jsx` syntax; this is expected and not an error
-- Run `npm run lint` to see actual lint issues vs. warnings
-
-### Database & Migrations
-
-**"Relation 'user' does not exist" after running backend**
-- Migrations haven't been applied; run:
-  ```bash
-  alembic -c alembic.ini upgrade head
-  ```
-
-**Want to reset database to clean state**
-- Downgrade migrations to zero:
-  ```bash
-  alembic downgrade base
-  alembic upgrade head
-  python seed.py  # repopulate with demo data
-  ```
-
-### Docker & Deployment
-
-**Docker build fails with "Package X not found"**
-- Ensure `requirements.txt` is in the root directory and is up-to-date
-- The backend Dockerfile assumes a specific structure; verify all paths are correct
-
-**Production deploy fails or new version is unhealthy**
-- See [`deploy/README.md`](deploy/README.md): `deploy.sh` rolls containers back
-  to the previous SHA automatically but leaves DB migrations forward (by design)
-- Check EC2: `docker compose -f docker-compose.prod.yml ps` and
-  `docker compose -f docker-compose.prod.yml logs --tail=50 api`
-- Verify the Secrets Manager JSON has all required keys and the EC2 IAM role
-  allows `secretsmanager:GetSecretValue`
-
-**ECS task keeps crashing**
-- Check CloudWatch logs: `aws logs tail /ecs/smartroute-api`
-- Verify Secrets Manager secrets are named exactly as task definition expects
-- Ensure IAM task execution role has permission to read Secrets Manager
-
----
-
-## Contributing
-
-### Development Workflow
-
-1. **Create a feature branch**: `git checkout -b feature/my-feature`
-2. **Make changes** — follow existing code style and patterns
-3. **Test your changes**:
-   - Backend: `DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/` (if adding new endpoints)
-   - Frontend: `npm run lint` and manual testing in dev server
-4. **Commit with clear messages**: `git commit -m "Add feature: description"`
-5. **Push and create a PR**
-
-### Code Style
-
-**Backend (Python)**:
-- Use type hints in function signatures
-- Format with `black` (configured in project)
-- Organize imports: standard library → third-party → local
-- Docstrings for public functions/classes
-
-**Frontend (JavaScript/React)**:
-- Use functional components with hooks
-- Keep components small and focused
-- Prop-drill or use React Context for state management
-- Use destructuring for imports and props
-
-### Adding New Features
-
-1. **Database schema changes?** Create an Alembic migration:
-   ```bash
-   alembic revision --autogenerate -m "add_new_column"
-   ```
-   Review the migration file before applying it
-
-2. **New backend endpoint?** Add to `backend/routers/` and include:
-   - Request/response schemas in `backend/schemas/`
-   - Type-safe SQLAlchemy queries
-   - Proper error handling and HTTP status codes
-   - WebSocket broadcast for real-time updates if applicable
-
-3. **New UI view?** Add to `frontend/src/views/` with:
-   - Component structure in `frontend/src/components/`
-   - Styling that matches existing UI
-   - Error boundaries for graceful failure
-
-### Testing
-
-**Backend**:
 ```bash
-# from project root (tests/ live at root, backend on sys.path)
-DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/ -v          # full suite
-DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/test_health_and_ws_auth.py -v  # single file
-python scripts/test_models_schemas.py  # schema/model sanity check
+DATABASE_URL=sqlite:///./.testdb/ci_test.db pytest tests/ -v
 ```
 
-The suite is hermetic: `tests/conftest.py` refuses outbound sockets and refuses a
-non-local `DATABASE_URL`, so CI and a laptop behave identically. Both have an
-explicit opt-out (`TEST_ALLOW_NETWORK=1`, `TEST_DB_ALLOW_REMOTE=1`) because both
-failure modes are silent — see below.
+139 tests, ~26 s. The suite is hermetic, and both guards have an explicit opt-out because
+both failure modes are silent:
 
-- Without the socket guard, `road_snapper.build_road_graph` reaches Overpass once
-  per 0.05° cell on a networked runner. It never shows locally because `osmnx` is
-  only in `requirements.txt`, so the import fails and the call returns `None`.
-- `DATABASE_URL` may point at a hosted database, and
-  `create_db_tables()` issues real DDL (`ALTER TABLE … ADD COLUMN`, `CREATE INDEX`).
-  A bare `pytest` would migrate production.
+- **Outbound sockets are refused.** `road_snapper.build_road_graph` asks Overpass for a road
+  graph per 0.05° cell. This is invisible locally because `osmnx` is only in
+  `requirements.txt`, so the import fails and returns `None`; on a networked runner it
+  really fetches, which took this suite past ten minutes. Override: `TEST_ALLOW_NETWORK=1`.
+- **A hosted `DATABASE_URL` is refused.** `create_db_tables()` issues real DDL
+  (`ALTER TABLE … ADD COLUMN`, `CREATE INDEX`), so a bare `pytest` would migrate whatever
+  `backend/.env` points at. Override: `TEST_DB_ALLOW_REMOTE=1`.
 
-`SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS` lowers the pooled-route solver budget from
-its 15 s production default; CI sets it to 1 because `GUIDED_LOCAL_SEARCH` has no
-early exit and pays the whole budget per call (~80 s across the suite).
+`SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS` lowers the pooled-route solver budget from its 15 s
+production default; CI sets 1 because `GUIDED_LOCAL_SEARCH` has no early exit and pays the
+whole budget per call (~80 s across the suite). Scratch databases belong in `.testdb/`
+(gitignored) and the fixture keeps the three newest.
 
-Scratch databases belong in `.testdb/` (gitignored, created for you): the
-fixture keeps the three most recent and deletes older ones, so repeated runs
-with different names cannot litter the repo root.
+There is no frontend test runner — verification is `npm run lint` plus `npm run build`.
 
-On Windows PowerShell:
-
-```powershell
-$env:DATABASE_URL = 'sqlite:///./.testdb/ci_test.db'
-$env:SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS = '1'
-py -3.10 -m pytest -q
-```
-
-The current backend suite contains 139 tests, ~26 s with the CI solver budget and
-~1:45 at the production default. Frontend verification uses
-`npm run lint` and `npm run build`.
-
-**Frontend**:
-```bash
-cd frontend
-npm run lint  # check for style issues
-npm run build  # verify production build works
-```
-
-### Project Structure Quick Reference
+## Layout
 
 ```
 backend/
-├── main.py              # FastAPI app initialization (+ lifespan broadcast loop)
-├── worker.py            # Dedicated asyncio worker (scheduled jobs)
-├── models/              # SQLAlchemy ORM models (12 tables)
-├── routers/             # API endpoint groups (auth, rides, cluster, route, vehicle, tracking, notifications, analytics, predict, jobs, routing, geocode, maps)
-├── schemas/             # Pydantic request/response validators
-├── services/            # Business logic (clustering, routing/vrp_solver, assignment, prediction, stadia_client, clerk_service, razorpay_service, background_jobs, etc.)
-├── utils/               # Helper functions (auth_utils, geo [haversine + India guard], ride_scope [live/demo])
-├── config.py            # Settings and environment variables
-├── database.py          # SQLAlchemy engine and session (+ PortableGeometry)
-├── Dockerfile           # Backend image (shared by api + worker)
-└── seed.py              # Demo data insertion (see also scripts/seed_db.py)
-
-frontend/
-├── Dockerfile           # Vite build -> nginx (VITE_* baked as build-args in CI)
-├── nginx.conf           # SPA fallback + /health probe
-├── src/
-│   ├── App.jsx          # Main router
-│   ├── SwiftApp.jsx     # App shell with sidebar
-│   ├── views/           # Full-page views (PassengerView, DriverView, AdminView, PresentationDemoView)
-│   ├── components/      # Reusable UI components (AppMapLazy, AppMap, DriverLoginForm, DriverVerificationGate)
-│   ├── hooks/           # Custom React hooks (useWebSocket, etc.)
-│   ├── services/        # API clients (api.js — Clerk JWT interceptor, bearer WS factories)
-│   └── config/          # Frontend constants (demoPresets, etc.)
-
-ml/models/demand_model.pkl  # Trained XGBoost demand model (see scripts/train_demand_model_synthetic.py)
-
-docker-compose.yml        # Dev: builds images locally (frontend/api/worker + NPM)
-docker-compose.prod.yml   # Prod: pulls immutable Docker Hub :<sha> images (no build)
-deploy/
-├── deploy.sh            # EC2 deploy: pull SHA → Secrets Manager → migrate → up → healthcheck → rollback
-└── README.md            # GitHub/EC2/Secrets Manager setup + first-deploy + rollback
-.github/workflows/ci-cd.yml  # PR lint/test/build; main pushes images + deploys to EC2
-
-docs/                    # Feature guides (payments.md — Razorpay setup & operations)
-
-architecture/            # Detailed technical documentation
-├── system-design.md
-├── api-reference.md
-├── db-schema.md
-├── algorithms.md
-├── background-jobs.md
-├── websockets.md
+  main.py         FastAPI app, middleware, /health + /metrics
+  worker.py       scheduled jobs; no HTTP listener
+  models/ routers/ schemas/ services/ utils/    13 tables
+  config.py database.py seed.py Dockerfile
+frontend/src/     SwiftApp.jsx views/ components/ services/api.js hooks/ config/
+alembic/          forward-only migrations
+monitoring/       Prometheus + Grafana config (profile-gated)
+deploy/           deploy.sh + the EC2 / Secrets Manager runbook
+architecture/     system-design, api-reference, db-schema, algorithms,
+                  background-jobs, websockets
+docs/payments.md  Razorpay setup, webhooks, test cards
 ```
 
-### Getting Help
+`docker-compose.yml` builds locally; `docker-compose.prod.yml` pulls immutable `:<git-sha>`
+images. Production is: push to `main` → CI lint/test/build → push images → SCP the bundle
+(`docker-compose.prod.yml`, `deploy/deploy.sh`, `monitoring/`) to a git-free EC2 →
+`deploy.sh` pulls, fetches secrets from AWS Secrets Manager, migrates, starts, health-checks,
+and rolls containers back to the previous SHA on failure. Full setup and first-deploy steps:
+[`deploy/README.md`](deploy/README.md). An ECS/Fargate alternative is in [`deploy/ecs/`](deploy/ecs).
 
-- Check [architecture/README.md](architecture/README.md) for design docs
-- Review [architecture/api-reference.md](architecture/api-reference.md) for endpoint specs
-- Read inline comments in service modules (clustering, routing, etc.)
-- Run backend API at `/docs` for interactive Swagger UI
-- Check test files for usage examples
+## Gotchas
+
+- **`uvicorn --reload` does not watch `.env`.** Restart after editing it.
+- **WebSockets fail silently behind NPM** unless "Websockets Support" is on for that proxy
+  host; raise `proxy_read_timeout` there too or long-lived connections drop.
+- **WS auth accepts `?token=<jwt>` as a last resort.** Header and the `bearer, <jwt>`
+  subprotocol are preferred; the query fallback exists because Flutter's
+  `web_socket_channel` cannot negotiate subprotocols. Query tokens are read from the parsed
+  dict and never logged.
+- **A blank map is almost always a missing server-side `STADIA_API_KEY`** — the map is
+  Stadia-only with no tile fallback.
+- **Nothing dispatches** if both the API and the worker schedule jobs, or neither does.
+- **Vehicle writes are `PATCH /vehicle/{id}`** — singular, like the other router prefixes.
+- Rotate any credential that has ever been pasted into a terminal or chat log; `backend/.env`
+  is gitignored, but that does not un-leak it.
