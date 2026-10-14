@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 
 from database import create_db_tables, drop_db_tables, get_db
@@ -90,7 +90,7 @@ def _seed_ride_requests(
             dest_lng=dest_lng,
             status=status,
             h3_index=get_h3_index(pickup_lat, pickup_lng, resolution=9),
-            request_time=datetime.utcnow() - timedelta(hours=start_hours_ago + index),
+            request_time=datetime.now(timezone.utc) - timedelta(hours=start_hours_ago + index),
         )
         db.add(request)
         db.flush()
@@ -131,7 +131,7 @@ def _seed_completed_history(
             dest_lng=dest_lng,
             status=status,
             h3_index=get_h3_index(pickup_lat, pickup_lng, resolution=9),
-            request_time=datetime.utcnow() - timedelta(days=3, hours=index),
+            request_time=datetime.now(timezone.utc) - timedelta(days=3, hours=index),
         )
         db.add(request)
         db.flush()
@@ -248,7 +248,7 @@ def _create_manual_demo_clusters(
         next_cluster_id += 1
 
     cluster_run = ClusterRun(
-        run_uuid=f"seed-manual-{admin.id}-{datetime.utcnow().timestamp():.0f}",
+        run_uuid=f"seed-manual-{admin.id}-{datetime.now(timezone.utc).timestamp():.0f}",
         resolution=9,
         min_cluster_size=3,
         status="clustered",
