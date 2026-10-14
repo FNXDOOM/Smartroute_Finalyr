@@ -225,7 +225,7 @@ jobs:
           # This is ALL EC2 is allowed to need — it holds no git repo.
           test -f docker-compose.prod.yml || { echo "ERROR: docker-compose.prod.yml missing in repo root." >&2; exit 2; }
           test -f deploy/deploy.sh || { echo "ERROR: deploy/deploy.sh missing." >&2; exit 2; }
-          test -f monitoring/prometheus.yml || { echo "ERROR: monitoring/prometheus.yml missing; docker-compose.prod.yml mounts it." >&2; exit 2; }
+          test -f monitoring/prometheus.yml || { echo "ERROR: monitoring/prometheus.yml missing; docker-compose.monitoring.yml mounts it." >&2; exit 2; }
 
           # --- SSH setup with host-key checking ON ---
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
