@@ -78,8 +78,18 @@ services:
 
   # Self-hosted PostGIS (the schema uses geoalchemy2 Geometry columns, so
   # plain postgres is not enough). No published port: only app services on
-  # smartroute-net reach it. Set POSTGRES_PASSWORD in the deploy environment
-  # for real deployments; the fallback matches the dev compose default.
+  # smartroute-net reach it.
+  #
+  # POSTGRES_PASSWORD is an INIT-ONLY variable: it is read just once, when the
+  # db_data volume is first created. Two consequences, both easy to get wrong:
+  #   - Compose interpolates ${POSTGRES_PASSWORD} from the SHELL running compose,
+  #     not from deploy/.env.prod (env_file values reach containers, never
+  #     interpolation). deploy.sh does not export it, so production currently
+  #     initializes with the fallback below.
+  #   - Setting it later does NOT re-password an existing datadir; it only
+  #     changes what clients send, which fails auth. Rotate with
+  #     `compose exec -T db psql -U smartroute -c "ALTER USER smartroute WITH
+  #     PASSWORD '<new>'"` FIRST, then export it for subsequent deploys.
   db:
     image: postgis/postgis:16-3.4
     environment:
