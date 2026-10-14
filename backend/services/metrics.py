@@ -7,6 +7,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, Counter, Histogram,
 from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from sqlalchemy import case, func
 
+from models.job_run import JobRun
+
 # Covers a stalled 60s schedule while staying narrow enough for the index.
 JOB_WINDOW_HOURS = 24
 
@@ -88,8 +90,6 @@ class JobRunCollector:
         yield recent
 
     def _query(self):
-        from models.job_run import JobRun
-
         cutoff = datetime.now(timezone.utc) - timedelta(hours=JOB_WINDOW_HOURS)
         db = self._session_factory()
         try:

@@ -1,7 +1,7 @@
 """Admin-panel reads of the monitoring stack: degrade to "not running" off-profile, and only the fixed QUERIES whitelist is ever sent."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import httpx
 from sqlalchemy import case, func
@@ -13,6 +13,7 @@ PROMETHEUS_TIMEOUT_SECONDS = 2.0
 JOB_WINDOW_HOURS = 24
 RECENT_FAILURES_SHOWN = 5
 
+# Fixed whitelist: caller-supplied PromQL is a CPU-DoS vector.
 QUERIES: Dict[str, str] = {
     "request_rate": 'sum(rate(http_requests_total[5m]))',
     "server_error_rate": 'sum(rate(http_requests_total{status=~"5.."}[5m]))',
@@ -64,8 +65,17 @@ def query_prometheus(base_url: str) -> Dict[str, Any]:
     return {"reachable": True, "detail": None, "series": series}
 
 
+def _age_seconds(moment: Optional[datetime], now: datetime) -> Optional[float]:
+    """Seconds since moment; SQLite hands back naive datetimes, so read them as UTC."""
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return round(max(0.0, (now - moment).total_seconds()), 1)
+
+
 def job_health(db) -> Dict[str, Any]:
-    """Job outcomes from Postgres, which is the only view of the portless worker."""
+    """Job outcomes derived from job_runs, the only view of the portless worker."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=JOB_WINDOW_HOURS)
     rows = (
         db.query(
@@ -82,22 +92,16 @@ def job_health(db) -> Dict[str, Any]:
     )
 
     now = datetime.now(timezone.utc)
-    jobs = []
-    for name, total, succeeded, failed, newest in rows:
-        age = None
-        if newest is not None:
-            if newest.tzinfo is None:
-                newest = newest.replace(tzinfo=timezone.utc)
-            age = round(max(0.0, (now - newest).total_seconds()), 1)
-        jobs.append(
-            {
-                "job_name": name,
-                "runs": int(total or 0),
-                "succeeded": int(succeeded or 0),
-                "failed": int(failed or 0),
-                "seconds_since_last_run": age,
-            }
-        )
+    jobs = [
+        {
+            "job_name": name,
+            "runs": int(total or 0),
+            "succeeded": int(succeeded or 0),
+            "failed": int(failed or 0),
+            "seconds_since_last_run": _age_seconds(newest, now),
+        }
+        for name, total, succeeded, failed, newest in rows
+    ]
 
     recent_failures = (
         db.query(JobRun)

@@ -227,7 +227,7 @@ def get_monitoring(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Traffic and latency from Prometheus plus job outcomes from Postgres."""
+    """Traffic and latency from Prometheus plus job outcomes from job_runs."""
     _require_admin_or_driver(current_user)
 
     return MonitoringResponse(
