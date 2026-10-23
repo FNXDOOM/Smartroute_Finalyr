@@ -290,7 +290,7 @@ def create_demo_shared_batch(
     current_user: User = Depends(get_current_user),
 ):
     """Create up to three presentation riders joining one shared-auto route."""
-    _reclaim_stale_demo_runs(db, batch_in.demo_run_id)
+    _reclaim_stale_demo_runs(db, batch_in.demo_run_id, current_user.id)
     created = []
     for item in batch_in.riders:
         if not all(
@@ -383,18 +383,15 @@ def _purge_demo_run(db: Session, demo_run_id: str, demo_rides: List[RideRequest]
         db.query(RideRequest).filter(RideRequest.virtual_stop_id.in_(stop_ids)).update(
             {RideRequest.virtual_stop_id: None}, synchronize_session=False
         )
-        db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).delete(
-            synchronize_session=False
-        )
+    db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).delete(
+        synchronize_session=False
+    )
+    if stop_ids:
         db.query(VirtualStop).filter(
             VirtualStop.mode == PRESENTATION_DEMO_MODE,
             VirtualStop.demo_run_id == demo_run_id,
             VirtualStop.id.in_(stop_ids),
         ).delete(
-            synchronize_session=False
-        )
-    else:
-        db.query(RideRequest).filter(RideRequest.id.in_(ride_ids)).delete(
             synchronize_session=False
         )
 
@@ -409,13 +406,14 @@ def _purge_demo_run(db: Session, demo_run_id: str, demo_rides: List[RideRequest]
 DEMO_RUN_TTL_HOURS = 24
 
 
-def _reclaim_stale_demo_runs(db: Session, keep_demo_run_id: str) -> int:
-    """Reclaim TTL-old presentation runs: a presenter who closes the app strands its riders in pending forever, and only the handed run is ever reset."""
+def _reclaim_stale_demo_runs(db: Session, keep_demo_run_id: str, user_id: int) -> int:
+    """Reclaim this caller's TTL-old presentation runs: a presenter who closes the app strands its riders in pending forever, and only the handed run is ever reset."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=DEMO_RUN_TTL_HOURS)
     stale_run_ids = [
         row[0]
         for row in db.query(RideRequest.demo_run_id).filter(
             RideRequest.mode == PRESENTATION_DEMO_MODE,
+            RideRequest.user_id == user_id,
             RideRequest.demo_run_id.isnot(None),
             RideRequest.demo_run_id != keep_demo_run_id,
             RideRequest.request_time < cutoff,

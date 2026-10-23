@@ -7,7 +7,7 @@ import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from main import app
+from main import app, local_origin_regex
 from utils.auth_utils import get_websocket_token
 
 
@@ -36,6 +36,13 @@ def test_websocket_query_token_accepted_for_native_clients():
         query_params={"token": "eyJ.test.token"},
     )
     assert get_websocket_token(websocket) == "eyJ.test.token"
+
+
+def test_production_cors_does_not_trust_localhost_origins():
+    """deploy.sh rejects localhost in ALLOWED_ORIGINS, but a blanket dev regex let any localhost origin call a production API with credentials."""
+    assert local_origin_regex("production") is None
+    assert local_origin_regex("development") is not None
+    assert local_origin_regex("staging") is not None
 
 
 def test_liveness_probe_is_public():

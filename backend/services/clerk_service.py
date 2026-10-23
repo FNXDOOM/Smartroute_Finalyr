@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 import httpx
 
 from config import CLERK_SECRET_KEY
@@ -36,14 +36,12 @@ def sync_clerk_user_metadata(
             if response.status_code in (200, 204):
                 logger.info("Successfully updated Clerk publicMetadata for %s: %s", clerk_user_id, public_metadata)
                 return True
-            else:
-                logger.warning(
-                    "Failed to update Clerk publicMetadata for %s. Status %d: %s",
-                    clerk_user_id,
-                    response.status_code,
-                    response.text,
-                )
-                return False
+            logger.warning(
+                "Failed to update Clerk publicMetadata for %s. Status %d",
+                clerk_user_id,
+                response.status_code,
+            )
+            return False
     except Exception as exc:
         logger.warning("Error communicating with Clerk API for user %s: %s", clerk_user_id, exc)
         return False

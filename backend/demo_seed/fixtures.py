@@ -1,13 +1,12 @@
 """Seed demo Bengaluru data. Usage: python seed.py [--reset]."""
 
 import random
-import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from config import APP_ENV, SEED_ADMIN_PASSWORD
+from config import APP_ENV, SEED_ADMIN_PASSWORD, SEED_DEMO_PASSWORD
 from database import SessionLocal, create_db_tables, engine
 from utils.auth_utils import hash_password
 from models.user import User
@@ -96,6 +95,12 @@ def seed_users(db: Session) -> list[User]:
     users = []
     admin_password = SEED_ADMIN_PASSWORD
     app_env = APP_ENV
+    if app_env in ("production", "staging") and not SEED_DEMO_PASSWORD:
+        # Demo riders/drivers share one password; a default would publish a working driver login.
+        raise RuntimeError(
+            "Refusing to seed demo accounts with the default password in "
+            f"{app_env}. Set SEED_DEMO_PASSWORD."
+        )
     for name, email, phone, role in demo:
         existing = db.query(User).filter(User.email == email).first()
         if existing:
@@ -114,7 +119,7 @@ def seed_users(db: Session) -> list[User]:
                 print("  ! using default dev admin password (set SEED_ADMIN_PASSWORD to override)")
                 password = "password123"
         else:
-            password = "password123"
+            password = SEED_DEMO_PASSWORD or "password123"
         u = User(
             name=name, email=email, phone=phone, role=role,
             password_hash=hash_password(password),

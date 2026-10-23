@@ -12,10 +12,9 @@ from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from database import Base  # noqa: E402  (Base only; tables created selectively below)
 from models.user import User  # noqa: E402
-from routers.auth import login_local_user, register_local_user  # noqa: E402
-from schemas.user import UserLogin, UserRegister  # noqa: E402
+from routers.auth import login_local_user, register_local_user, update_current_user  # noqa: E402
+from schemas.user import UserLogin, UserRegister, UserUpdate  # noqa: E402
 from services.notifications import manager as notif_manager  # noqa: E402
 from utils.auth_utils import (  # noqa: E402
     create_local_token,
@@ -115,6 +114,44 @@ def test_register_rejects_duplicate_email():
             )
         assert exc_info.value.status_code == 400
     finally:
+        db.close()
+
+
+def test_profile_email_change_is_normalized_and_checked_case_insensitively():
+    """The duplicate check was case-sensitive while login is case-insensitive, so a mixed-case change could squat or split an identity."""
+    db = _db()
+    try:
+        register_local_user(
+            UserRegister(name="Owner", email="patch.owner@example.com", password="password123"),
+            db,
+        )
+        other = register_local_user(
+            UserRegister(name="Other", email="patch.other@example.com", password="password123"),
+            db,
+        ).user
+        other_row = db.query(User).filter(User.id == other.id).first()
+
+        with pytest.raises(HTTPException) as exc_info:
+            update_current_user(UserUpdate(email="PATCH.OWNER@EXAMPLE.COM"), db, other_row)
+        assert exc_info.value.status_code == 400
+        db.refresh(other_row)
+        assert other_row.email == "patch.other@example.com"
+
+        updated = update_current_user(
+            UserUpdate(email="New.Address@Example.COM"), db, other_row
+        )
+        assert updated.email == "new.address@example.com"
+    finally:
+        db.query(User).filter(
+            User.email.in_(
+                [
+                    "patch.owner@example.com",
+                    "patch.other@example.com",
+                    "new.address@example.com",
+                ]
+            )
+        ).delete(synchronize_session=False)
+        db.commit()
         db.close()
 
 

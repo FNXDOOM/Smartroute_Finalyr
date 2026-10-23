@@ -22,6 +22,7 @@ from utils.auth_utils import (
     get_current_admin_user,
     get_current_user,
     hash_password,
+    normalize_email,
     verify_password,
 )
 from utils.ride_states import VEHICLE_OFFLINE
@@ -32,7 +33,7 @@ router = APIRouter()
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register_local_user(register_in: UserRegister, db: Session = Depends(get_db)):
     """Mobile signup; always passenger."""
-    email = register_in.email.strip().lower()
+    email = normalize_email(register_in.email)
     if not email:
         raise HTTPException(status_code=400, detail="Email must not be empty.")
     existing = db.query(User).filter(func.lower(User.email) == email).first()
@@ -44,7 +45,7 @@ def register_local_user(register_in: UserRegister, db: Session = Depends(get_db)
         raise HTTPException(status_code=400, detail="Name must not be empty.")
     user = User(
         name=name,
-        email=register_in.email.strip(),
+        email=email,
         phone=(register_in.phone or "").strip(),
         password_hash=hash_password(register_in.password),
         role="passenger",
@@ -63,7 +64,7 @@ def register_local_user(register_in: UserRegister, db: Session = Depends(get_db)
 @router.post("/login", response_model=TokenResponse)
 def login_local_user(login_in: UserLogin, db: Session = Depends(get_db)):
     """Mobile login."""
-    email = login_in.email.strip().lower()
+    email = normalize_email(login_in.email)
     user = db.query(User).filter(func.lower(User.email) == email).first()
     if not user or not verify_password(login_in.password, user.password_hash or ""):
         raise HTTPException(
@@ -106,11 +107,19 @@ def update_current_user(
     current_user: User = Depends(get_current_user),
 ):
     """Update profile fields."""
-    if user_update.email is not None and user_update.email != current_user.email:
-        existing_user = db.query(User).filter(User.email == user_update.email).first()
-        if existing_user:
-            raise HTTPException(status_code=400, detail="Email already registered")
-        current_user.email = user_update.email
+    if user_update.email is not None:
+        email = normalize_email(user_update.email)
+        if not email:
+            raise HTTPException(status_code=400, detail="Email must not be empty.")
+        if email != normalize_email(current_user.email):
+            existing_user = (
+                db.query(User)
+                .filter(func.lower(User.email) == email, User.id != current_user.id)
+                .first()
+            )
+            if existing_user:
+                raise HTTPException(status_code=400, detail="Email already registered")
+            current_user.email = email
 
     if user_update.name is not None:
         current_user.name = user_update.name

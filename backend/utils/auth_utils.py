@@ -122,9 +122,8 @@ def decode_clerk_token(token: str) -> dict:
     try:
         client = get_jwks_client()
         signing_key = client.get_signing_key_from_jwt(token)
-        options = {"verify_aud": bool(CLERK_AUDIENCE)}
         # Issuer may or may not end with slash.
-        kwargs = {"options": {**options, "verify_iss": False}}
+        kwargs = {"options": {"verify_aud": bool(CLERK_AUDIENCE), "verify_iss": False}}
         if CLERK_AUDIENCE:
             kwargs["audience"] = CLERK_AUDIENCE
         # Allow 60s clock skew.
@@ -154,6 +153,11 @@ def decode_clerk_token(token: str) -> dict:
         ) from exc
 
 
+def normalize_email(email: Optional[str]) -> str:
+    """Normalize an email for storage and case-insensitive identity checks."""
+    return (email or "").strip().lower()
+
+
 def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
     """Provision a user from a Clerk JWT: the token gives identity, the database gives role.
 
@@ -167,56 +171,42 @@ def get_or_create_user_from_payload(payload: dict, db: Session) -> User:
         )
 
     user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
-    changed = False
-    if user is None:
-        email = payload.get("email") or payload.get("email_address")
-        name = payload.get("name") or payload.get("first_name")
-        if email:
-            # Same email, new Clerk identity: link passenger rows only.
-            existing = (
-                db.query(User)
-                .filter(func.lower(User.email) == email.strip().lower())
-                .first()
-            )
-            if existing is not None:
-                if existing.role != "passenger":
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=(
-                            "This email is already registered with a different "
-                            "sign-in method. Please sign in with your original "
-                            "method or contact support."
-                        ),
-                    )
-                existing.clerk_user_id = clerk_user_id
-                existing.email = email.strip()
-                if name:
-                    existing.name = name
-                user = existing
-                changed = True
+    if user is not None:
+        return user
+
+    email = normalize_email(payload.get("email") or payload.get("email_address"))
+    name = payload.get("name") or payload.get("first_name")
+    if email and db.query(User).filter(func.lower(User.email) == email).first() is not None:
+        # Never attach a Clerk identity to an existing account by email: local emails are
+        # unverified, so anyone could pre-claim a victim's address and inherit their row.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "An account with this email already exists. Sign in with your "
+                "original method or contact support."
+            ),
+        )
+
+    user = User(
+        name=name or "Clerk User",
+        email=email or f"{clerk_user_id}@clerk.local",
+        password_hash=secrets.token_urlsafe(32),
+        clerk_user_id=clerk_user_id,
+        role="passenger",
+        driver_status="active",
+    )
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        # Creation race: use winner.
+        db.rollback()
+        user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
         if user is None:
-            user = User(
-                name=name or "Clerk User",
-                email=email or f"{clerk_user_id}@clerk.local",
-                password_hash=secrets.token_urlsafe(32),
-                clerk_user_id=clerk_user_id,
-                role="passenger",
-                driver_status="active",
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Account already exists. Please sign in with your original method.",
             )
-            db.add(user)
-            changed = True
-    if changed:
-        try:
-            db.commit()
-        except IntegrityError:
-            # Creation race: use winner.
-            db.rollback()
-            user = db.query(User).filter(User.clerk_user_id == clerk_user_id).first()
-            if user is None:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Account already exists. Please sign in with your original method.",
-                )
     db.refresh(user)
     return user
 

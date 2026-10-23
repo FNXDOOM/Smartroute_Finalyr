@@ -49,6 +49,13 @@ async def lifespan(app: FastAPI):
         await stop_background_jobs()
 
 
+def local_origin_regex(app_env: str) -> str | None:
+    """Permit any localhost port only outside production; deploy.sh already forbids localhost origins there."""
+    if app_env == "production":
+        return None
+    return r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
+
+
 app = FastAPI(title="SmartRouteAI", version="1.0.0", lifespan=lifespan)
 
 # Added first, so Starlette's prepend leaves it innermost; it still runs before any endpoint work.
@@ -58,7 +65,7 @@ app.add_middleware(RateLimitBodyGuardMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origin_regex=local_origin_regex(APP_ENV),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
@@ -69,12 +76,7 @@ app.add_middleware(
 async def _maybe_add_dev_csp(request: Request, call_next):
     """Relaxed CSP for local dev only."""
     response = await call_next(request)
-    try:
-        origins = ALLOWED_ORIGINS
-    except NameError:
-        origins = []
-
-    is_local_dev = any("localhost" in o or "127.0.0.1" in o for o in origins)
+    is_local_dev = APP_ENV == "development"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

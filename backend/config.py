@@ -42,6 +42,7 @@ PROCESS_ROLE = os.getenv("PROCESS_ROLE", "api").lower()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 # Only read by the demo seeder; kept here so it is parsed in one place.
 SEED_ADMIN_PASSWORD = os.getenv("SEED_ADMIN_PASSWORD", "").strip()
+SEED_DEMO_PASSWORD = os.getenv("SEED_DEMO_PASSWORD", "").strip()
 ENABLE_TRACKING_BROADCAST = os.getenv("ENABLE_TRACKING_BROADCAST", "true").lower() == "true"
 # Opt-in: run dispatch jobs in API for local dev.
 ENABLE_BACKGROUND_JOBS_IN_API = os.getenv("ENABLE_BACKGROUND_JOBS_IN_API", "false").lower() == "true"

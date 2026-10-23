@@ -7,9 +7,12 @@ from sqlalchemy.orm import sessionmaker
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from database import Base
 from models.user import User
-from utils.auth_utils import get_or_create_user_from_payload, require_roles
+from utils.auth_utils import (
+    get_or_create_user_from_payload,
+    hash_password,
+    require_roles,
+)
 
 # In-memory SQLite for fast offline tests
 test_engine = create_engine("sqlite:///:memory:")
@@ -66,6 +69,72 @@ def test_jwt_role_claim_cannot_escalate_an_existing_user():
         assert again.role == "passenger"
         assert again.driver_status == "active"
     finally:
+        db.close()
+
+
+def test_clerk_signin_cannot_claim_an_unlinked_local_email():
+    """Local emails are unverified, so auto-linking a first Clerk sign-in to a matching row lets an attacker pre-claim a victim's address."""
+    db = TestingSessionLocal()
+    try:
+        local = User(
+            name="Local",
+            email="unlinked.local@example.com",
+            password_hash=hash_password("password123"),
+            role="passenger",
+        )
+        db.add(local)
+        db.commit()
+        db.refresh(local)
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_or_create_user_from_payload(
+                {
+                    "sub": "clerk_claim_1",
+                    "email": "UNLINKED.LOCAL@example.com",
+                    "name": "Claimer",
+                },
+                db,
+            )
+        assert exc_info.value.status_code == 409
+        db.refresh(local)
+        assert local.clerk_user_id is None
+        assert db.query(User).filter(User.clerk_user_id == "clerk_claim_1").first() is None
+    finally:
+        db.query(User).filter(User.email == "unlinked.local@example.com").delete(
+            synchronize_session=False
+        )
+        db.commit()
+        db.close()
+
+
+def test_a_second_clerk_identity_cannot_take_over_a_linked_account():
+    db = TestingSessionLocal()
+    try:
+        owner = get_or_create_user_from_payload(
+            {"sub": "clerk_owner_1", "email": "linked.owner@example.com"},
+            db,
+        )
+        assert owner.clerk_user_id == "clerk_owner_1"
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_or_create_user_from_payload(
+                {"sub": "clerk_attacker_2", "email": "linked.owner@example.com"},
+                db,
+            )
+        assert exc_info.value.status_code == 409
+        db.refresh(owner)
+        assert owner.clerk_user_id == "clerk_owner_1"
+
+        again = get_or_create_user_from_payload(
+            {"sub": "clerk_owner_1", "email": "linked.owner@example.com"},
+            db,
+        )
+        assert again.id == owner.id
+    finally:
+        db.query(User).filter(User.email == "linked.owner@example.com").delete(
+            synchronize_session=False
+        )
+        db.commit()
         db.close()
 
 
