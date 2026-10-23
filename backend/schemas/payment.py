@@ -1,6 +1,6 @@
 """Pydantic schemas for payment endpoints."""
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 

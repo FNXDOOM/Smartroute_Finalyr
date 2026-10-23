@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 class DemandPredictionResult(BaseModel):
     h3_index: str

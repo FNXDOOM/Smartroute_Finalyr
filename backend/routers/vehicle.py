@@ -7,7 +7,6 @@ from database import get_db
 from models.user import User
 from models.vehicle import Vehicle
 from schemas.vehicle import (
-    RouteAssignmentCandidate,
     VehicleAssignmentItem,
     VehicleAssignmentRequest,
     VehicleAssignmentResponse,

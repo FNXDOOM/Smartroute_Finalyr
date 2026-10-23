@@ -7,7 +7,6 @@ from typing import Dict, List, Tuple
 from database import create_db_tables, drop_db_tables, get_db
 from models import *  # noqa: F401,F403 - register ORM models
 from models.cluster_run import ClusterRun
-from models.notification import Notification
 from models.ride_request import RideRequest
 from models.route_plan import RoutePlan
 from models.tracking_event import TrackingEvent

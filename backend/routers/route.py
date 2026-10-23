@@ -17,7 +17,6 @@ from schemas.route import (
     RoutePlanResponse,
     RouteSolution,
     RouteWaypoint,
-    RouteWaypointRecordResponse,
     VRPRequest,
 )
 from services.routing.shared_route_builder import (
