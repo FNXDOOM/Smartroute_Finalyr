@@ -216,13 +216,13 @@ class RateLimitBodyGuardMiddleware(BaseHTTPMiddleware):
             content_length = request.headers.get("content-length")
             if content_length is not None and content_length.isdigit() and int(content_length) > MAX_BODY_BYTES:
                 return _json_error(
-                    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    status.HTTP_413_CONTENT_TOO_LARGE,
                     "Request body too large",
                 )
             elif content_length is None and "chunked" in request.headers.get("transfer-encoding", "").lower():
                 # This API is JSON-only; no legitimate chunked senders exist.
                 return _json_error(
-                    status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    status.HTTP_413_CONTENT_TOO_LARGE,
                     "Chunked request bodies are not accepted",
                 )
 

@@ -9,8 +9,7 @@ from typing import Tuple
 
 import httpx
 import pytest
-from fastapi import Depends, FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
@@ -40,7 +39,9 @@ def probe_app(monkeypatch):
     app.add_middleware(RateLimitBodyGuardMiddleware)
 
     @app.post("/echo")
-    async def echo(payload: dict = None):
+    async def echo(request: Request):
+        # Raw body: this probe tests the middleware, not FastAPI's body parsing.
+        await request.body()
         return {"ok": True}
 
     @app.post("/predict/echo")
