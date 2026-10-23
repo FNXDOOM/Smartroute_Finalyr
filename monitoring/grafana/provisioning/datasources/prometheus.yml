@@ -1,7 +1,5 @@
 apiVersion: 1
 
-# Provisioned, not hand-clicked: a fresh Grafana otherwise shows an empty
-# datasource list and every dashboard breaks.
 datasources:
   - name: Prometheus
     uid: smartroute-prometheus

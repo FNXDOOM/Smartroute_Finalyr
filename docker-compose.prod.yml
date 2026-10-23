@@ -1,12 +1,9 @@
-# Production Compose
-
-# Usage on EC2 (via deploy/deploy.sh, not manually):
-#   DOCKERHUB_NAMESPACE=<ns> IMAGE_TAG=<sha> docker compose -f docker-compose.prod.yml up -d
+# Production stack. Images are built by CI and deployed via deploy/deploy.sh.
 
 services:
   frontend:
     image: ${DOCKERHUB_NAMESPACE:?DOCKERHUB_NAMESPACE is required}/smartroute-frontend:${IMAGE_TAG:?IMAGE_TAG is required (immutable git SHA, never latest)}
-    # Internal NPM routes app -> frontend:80.
+    # NPM routes app traffic here.
     expose:
       - "80"
     depends_on:
@@ -14,9 +11,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      # NOTE: 127.0.0.1, not localhost. In nginx:alpine, localhost resolves
-      # to ::1 (IPv6) but nginx.conf listens IPv4-only (listen 80), so a
-      # localhost probe gets "Connection refused" while 127.0.0.1 returns 200.
+      # 127.0.0.1 avoids nginx's IPv6 localhost resolution.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
       interval: 30s
       timeout: 5s
@@ -25,9 +20,9 @@ services:
 
   api:
     image: ${DOCKERHUB_NAMESPACE:?DOCKERHUB_NAMESPACE is required}/smartroute-api:${IMAGE_TAG:?IMAGE_TAG is required (immutable git SHA, never latest)}
-    # Trust NPM in same network only.
+    # Trust the NPM proxy only.
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"]
-    # Runtime secrets from Secrets Manager
+    # Secrets rendered by deploy.sh.
     env_file:
       - path: ./deploy/.env.prod
         required: true
@@ -36,11 +31,10 @@ services:
       ENABLE_TRACKING_BROADCAST: "true"
       APP_ENV: production
       ENABLE_BACKGROUND_JOBS_IN_API: "false"
-      # Overrides the Secrets Manager DATABASE_URL: the db service below is
-      # the database now, so the secret's Supabase URL is no longer used.
+      # Use the compose database, not the secret's URL.
       DATABASE_URL: postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute
-      # NOTE: ALLOWED_ORIGINS and CLERK_AUTHORIZED_PARTIES are intentionally Not defaaulted here must come from aws secrets manager
-    # Internal only. NPM routes api -> api:8000.
+      # ALLOWED_ORIGINS and CLERK_AUTHORIZED_PARTIES come from deploy/.env.prod.
+    # NPM routes API traffic here.
     expose:
       - "8000"
     restart: unless-stopped
@@ -70,26 +64,14 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Single replica by design.Don't scale this service: jobs must run exactly once. The worker is a singleton that processes background jobs from the queue.
+    # Single replica: scheduled jobs must run exactly once.
     deploy:
       replicas: 1
     healthcheck:
       disable: true
 
-  # Self-hosted PostGIS (the schema uses geoalchemy2 Geometry columns, so
-  # plain postgres is not enough). No published port: only app services on
-  # smartroute-net reach it.
-  #
-  # POSTGRES_PASSWORD is an INIT-ONLY variable: it is read just once, when the
-  # db_data volume is first created. Two consequences, both easy to get wrong:
-  #   - Compose interpolates ${POSTGRES_PASSWORD} from the SHELL running compose,
-  #     not from deploy/.env.prod (env_file values reach containers, never
-  #     interpolation). deploy.sh does not export it, so production currently
-  #     initializes with the fallback below.
-  #   - Setting it later does NOT re-password an existing datadir; it only
-  #     changes what clients send, which fails auth. Rotate with
-  #     `compose exec -T db psql -U smartroute -c "ALTER USER smartroute WITH
-  #     PASSWORD '<new>'"` FIRST, then export it for subsequent deploys.
+  # PostGIS database, internal to smartroute-net.
+  # POSTGRES_PASSWORD is init-only; rotate with ALTER USER before changing it.
   db:
     image: postgis/postgis:16-3.4
     environment:
@@ -108,16 +90,15 @@ services:
       retries: 5
       start_period: 10s
 
-  # NPM: app -> frontend:80, api -> api:8000 (websockets ON).
-  # Configure Proxy Hosts once in NPM UI (port 81).
-  # not Rebuilt and not removed on each deploy
+  # Public entrypoint; configure proxy hosts in the NPM UI.
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:2.12.3
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
-      - "81:81"
+      # Admin UI is loopback-only.
+      - "127.0.0.1:81:81"
     volumes:
       - npm_data:/data
       - npm_letsencrypt:/etc/letsencrypt
@@ -126,13 +107,40 @@ services:
         condition: service_healthy
 
   # ---------- monitoring ----------
-  # Prometheus + Grafana live in docker-compose.monitoring.yml as their own
-  # containers, attached to this stack's network (smartroute-net). On EC2,
-  # reach them through an SSH tunnel: their ports bind to 127.0.0.1 only.
+  # Prometheus and Grafana; loopback-only ports.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      # Set for a non-default Grafana login.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
 
 networks:
-  # Fixed name so the monitoring stack (a separate compose project) can join
-  # it as an external network regardless of the directory name.
+  # Shared app network.
   default:
     name: smartroute-net
 
@@ -140,3 +148,5 @@ volumes:
   npm_data:
   npm_letsencrypt:
   db_data:
+  prometheus_data:
+  grafana_data:

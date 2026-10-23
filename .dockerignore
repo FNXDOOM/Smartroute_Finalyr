@@ -1,17 +1,25 @@
-.env
-.env.*
-!.env.example
+# Docker matches a bare pattern only at the context root, so `**/` is required
+# to keep nested env files, key material and caches out of the API image.
+**/.env
+**/.env.*
+!**/.env.example
 
-*.db
-*.sqlite
-*.sqlite3
+**/*.pem
+**/*.key
+**/*.p12
+
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+.testdb/
+.commandcode/
 
 .git
 .gitignore
 .vscode
-__pycache__
-*.py[cod]
-.pytest_cache
 .coverage
 
 frontend/node_modules

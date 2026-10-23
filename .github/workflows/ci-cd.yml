@@ -1,18 +1,6 @@
-# SmartRouteAI CI/CD — GitHub → Docker Hub → EC2 (EC2 is GIT-FREE).
-#
-# PRs: lint + tests + frontend build (no push, no deploy).
-# Push to main: lint + tests + build + docker build/push (:<short-sha> + :latest)
-#   + EC2 deploy of the immutable :<short-sha> tag (never :latest).
-#
-# EC2 NEVER runs git and holds NO source repo. Each deploy SCPs ONLY:
-#   docker-compose.prod.yml + deploy/deploy.sh + monitoring/  →  $EC2_DEPLOY_DIR/
-# then runs deploy.sh <SHA>, which pulls images, fetches secrets from
-# AWS Secrets Manager via the IAM instance role, migrates, and starts compose.
-#
-# Backend runtime secrets are NEVER in GitHub. EC2 fetches them from
-# AWS Secrets Manager via its IAM instance role (see deploy/deploy.sh).
-# Only public frontend build args (VITE_API_BASE_URL, VITE_CLERK_PUBLISHABLE_KEY)
-# are in GitHub Variables/Secrets — they end up in the browser bundle by design.
+# CI/CD: test, build immutable images, and deploy the image SHA to EC2.
+# PRs run tests/build; pushes to main also publish and deploy.
+# EC2 is git-free; runtime secrets come from AWS Secrets Manager.
 
 name: CI/CD
 
@@ -21,8 +9,7 @@ on:
   push:
     branches: [main]
 
-# Prevent two production deploys overlapping and corrupting each other.
-# PR checks also serialize behind this group (safe, slightly slower).
+# Serialize production deploys and PR checks.
 concurrency:
   group: production
   cancel-in-progress: false
@@ -36,9 +23,7 @@ jobs:
   backend-tests:
     name: backend tests
     runs-on: ubuntu-latest
-    # Fail with a clear error instead of burning the 6h default when the suite
-    # stalls. --durations names the slow tests in the log so the next stall is
-    # diagnosable from the run page rather than from a screenshot.
+    # Fail fast on stalls; --durations lists the slow tests.
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -60,19 +45,16 @@ jobs:
 
       - name: Run pytest
         env:
-          # Dummy non-secret values for CI only. Real secrets live in
-          # AWS Secrets Manager and are never in GitHub.
+          # CI-only dummy values; real secrets live in AWS Secrets Manager.
           DATABASE_URL: sqlite:///./.testdb/ci_test.db
           LOCAL_JWT_SECRET: ci-only-dummy-not-a-secret
           APP_ENV: test
           AUTH_PROVIDER: clerk
           CLERK_JWKS_URL: https://ci.invalid/.well-known/jwks.json
           CLERK_ISSUER: https://ci.invalid
-          # GUIDED_LOCAL_SEARCH always spends its whole budget, so the 15s
-          # production default would be paid by every pooled-route test.
+          # Lower the solver budget; GUIDED_LOCAL_SEARCH has no early exit.
           SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS: 1
-        # tests/conftest.py refuses outbound sockets, so the runner behaves
-        # exactly like an offline laptop: no Overpass road-graph fetches.
+        # The suite blocks outbound sockets, so no Overpass fetches.
         run: pytest tests/ -v --durations=15
 
   # ---------- PR + main: frontend lint + prod build check ----------
@@ -163,10 +145,8 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke-test backend image (fail fast if runtime deps missing)
-        # Imports the app inside the JUST-PUSHED immutable image. A missing
-        # production dependency (e.g. httpx in requirements.txt) fails here,
-        # BEFORE the image reaches EC2. config.py raises at import without
-        # LOCAL_JWT_SECRET, so dummy CI-only values are passed explicitly.
+        # Import the pushed image to catch missing runtime dependencies early.
+        # config.py requires LOCAL_JWT_SECRET at import; use CI-only dummy values.
         run: |
           docker run --rm \
             -e DATABASE_URL=sqlite:///./.testdb/ci_test.db \
@@ -208,9 +188,7 @@ jobs:
           : "${EC2_USER:?secrets.EC2_USER missing}"
           : "${EC2_SSH_KEY:?secrets.EC2_SSH_KEY missing}"
 
-          # Absolute path only. The old default "~/Smartroute" is banned on
-          # purpose: "~" does NOT expand inside quoted SCP/SSH targets, so a
-          # vars value of ~/... silently creates a literal directory named "~".
+          # Must be absolute; ~ does not expand in quoted SCP/SSH targets.
           DEPLOY_DIR="${EC2_DEPLOY_DIR:-/opt/smartroute}"
           case "${DEPLOY_DIR}" in
             "~"*) echo "ERROR: EC2_DEPLOY_DIR must be absolute (e.g. /opt/smartroute), got '${DEPLOY_DIR}'." >&2; exit 2;;
@@ -222,12 +200,14 @@ jobs:
             exit 2
           fi
 
-          # This is ALL EC2 is allowed to need — it holds no git repo.
+          # EC2 needs only this bundle; it has no git repo.
           test -f docker-compose.prod.yml || { echo "ERROR: docker-compose.prod.yml missing in repo root." >&2; exit 2; }
           test -f deploy/deploy.sh || { echo "ERROR: deploy/deploy.sh missing." >&2; exit 2; }
-          test -f monitoring/prometheus.yml || { echo "ERROR: monitoring/prometheus.yml missing; docker-compose.monitoring.yml mounts it." >&2; exit 2; }
+          for f in monitoring/prometheus.yml monitoring/grafana/provisioning/datasources/prometheus.yml monitoring/grafana/dashboards/smartroute-api.json; do
+            test -f "$f" || { echo "ERROR: $f missing; docker-compose.prod.yml mounts it." >&2; exit 2; }
+          done
 
-          # --- SSH setup with host-key checking ON ---
+          # SSH with strict host-key checking.
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "${EC2_SSH_KEY}" > ~/.ssh/ec2_deploy_key
           chmod 600 ~/.ssh/ec2_deploy_key
@@ -242,16 +222,13 @@ jobs:
 
           echo "Uploading deployment bundle (no repo)..."
           ${SCP} docker-compose.prod.yml "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/docker-compose.prod.yml"
-          ${SCP} docker-compose.monitoring.yml "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/docker-compose.monitoring.yml"
           ${SCP} deploy/deploy.sh "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/deploy/deploy.sh"
-          # Prometheus and Grafana mount these. Shipped even when the monitoring
-          # profile is off so the two environments never diverge on config.
+          # Prometheus and Grafana mount these files in docker-compose.prod.yml.
           ${SSH} "${EC2_USER}@${EC2_HOST}" "mkdir -p '${DEPLOY_DIR}/monitoring'"
           ${SCP} -r monitoring/. "${EC2_USER}@${EC2_HOST}:${DEPLOY_DIR}/monitoring/"
 
           echo "Running deploy.sh for IMAGE_TAG=${IMAGE_TAG}..."
-          # Values passed here are non-secret (namespace, SHA, secret ID, region).
-          # Backend secrets are fetched ON EC2 from Secrets Manager, never via SSH.
+          # Pass only non-secret values; secrets are fetched on EC2.
           # shellcheck disable=SC2029
           ${SSH} "${EC2_USER}@${EC2_HOST}" "chmod +x '${DEPLOY_DIR}/deploy/deploy.sh' && DOCKERHUB_NAMESPACE='${DOCKERHUB_NAMESPACE}' IMAGE_TAG='${IMAGE_TAG}' BACKEND_SECRET_ID='${BACKEND_SECRET_ID}' AWS_REGION='${AWS_REGION}' '${DEPLOY_DIR}/deploy/deploy.sh' '${IMAGE_TAG}'"
 

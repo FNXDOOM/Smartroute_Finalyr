@@ -1,17 +1,17 @@
+# Local development stack. NPM is the only public entrypoint.
+
 services:
-  # DB: self-hosted PostGIS (the schema uses geoalchemy2 Geometry columns, so
-  # plain postgres is not enough). Overrides the Supabase URL in backend/.env.
+  # PostGIS database; exposed on loopback for local tools.
   db:
     image: postgis/postgis:16-3.4
-    # POSTGRES_PASSWORD stays a default, not `${VAR:?}`: Compose interpolates
-    # the whole file even when db is not the service being started.
+    # Local development default.
     environment:
       POSTGRES_USER: smartroute
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartroute}
       POSTGRES_DB: smartroute
     volumes:
       - db_data:/var/lib/postgresql/data
-    # 127.0.0.1 only: psql/GUI tools on this machine, nothing from outside.
+    # Loopback only.
     ports:
       - "127.0.0.1:5432:5432"
     restart: unless-stopped
@@ -22,7 +22,6 @@ services:
       retries: 5
       start_period: 10s
 
-  # Prod: no public ports on app services. NPM is the only entrypoint.
   frontend:
     build:
       context: ./frontend
@@ -30,15 +29,14 @@ services:
       args:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
         VITE_CLERK_PUBLISHABLE_KEY: ${VITE_CLERK_PUBLISHABLE_KEY:-}
-    # Internal only. NPM routes app -> frontend:80.
+    # NPM routes app traffic here.
     expose:
       - "80"
     depends_on:
       - api
     restart: unless-stopped
     healthcheck:
-      # 127.0.0.1, not localhost (localhost resolves to IPv6 ::1 in the
-      # nginx:alpine container, but nginx listens IPv4-only).
+      # 127.0.0.1 avoids nginx's IPv6 localhost resolution.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health || exit 1"]
       interval: 30s
       timeout: 5s
@@ -49,19 +47,18 @@ services:
     build:
       context: .
       dockerfile: ./backend/Dockerfile
-    # Trust NPM in same network only.
+    # Trust the NPM proxy only.
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"]
     env_file: ./backend/.env
     environment:
       PROCESS_ROLE: api
       ENABLE_TRACKING_BROADCAST: "true"
-      # Overrides the Supabase URL in backend/.env: the db service is the
-      # database now.
+      # Use the compose database instead of backend/.env.
       DATABASE_URL: postgresql://smartroute:${POSTGRES_PASSWORD:-smartroute}@db:5432/smartroute
-      # CORS for dockerized frontend.
+      # CORS for the local frontend.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-http://localhost:3000,http://localhost:5173}
-    # Internal only. NPM routes api -> api:8000.
+    # NPM routes API traffic here.
     expose:
       - "8000"
     restart: unless-stopped
@@ -89,32 +86,62 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # No HTTP in worker.
+    # The worker exposes no HTTP port.
     healthcheck:
       disable: true
 
-  # NPM: app -> frontend:80, api -> api:8000 (websockets ON).
-  # Prod: rebuild frontend with public VITE_API_BASE_URL.
+  # Public entrypoint; configure proxy hosts in the NPM UI.
   nginx-proxy-manager:
-    image: jc21/nginx-proxy-manager:latest
+    # Match the production tag.
+    image: jc21/nginx-proxy-manager:2.12.3
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
-      - "81:81"
+      # Admin UI is loopback-only.
+      - "127.0.0.1:81:81"
     volumes:
       - npm_data:/data
       - npm_letsencrypt:/etc/letsencrypt
     depends_on:
       - api
 
-  # ---------- monitoring ----------
-  # Prometheus + Grafana live in docker-compose.monitoring.yml as their own
-  # containers, attached to this stack's network (smartroute-net).
+  # ---------- monitoring (optional) ----------
+  # docker compose --profile monitoring up -d
+  prometheus:
+    profiles: ["monitoring"]
+    image: prom/prometheus:v3.1.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
 
 networks:
-  # Fixed name so the monitoring stack (a separate compose project) can join
-  # it as an external network regardless of the directory name.
+  # Shared app network.
   default:
     name: smartroute-net
 
@@ -122,3 +149,5 @@ volumes:
   npm_data:
   npm_letsencrypt:
   db_data:
+  prometheus_data:
+  grafana_data:

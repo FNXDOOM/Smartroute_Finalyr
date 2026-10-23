@@ -1458,9 +1458,10 @@ function MonitoringPanel({ setView, toast }) {
           <div className="min-w-0 text-[13px] leading-relaxed">
             <p className="font-semibold">Prometheus is not running</p>
             <p className="mt-0.5 text-muted-foreground">
-              The metrics stack is opt-in: start it with{" "}
-              <code className="rounded bg-white px-1 py-0.5 text-[12px] dark:bg-black">docker compose --profile monitoring up -d</code>.
-              Everything below still reports, because job outcomes are read from the database and need no extra services.
+              Start it locally with{" "}
+              <code className="rounded bg-white px-1 py-0.5 text-[12px] dark:bg-black">docker compose --profile monitoring up -d</code>;
+              production starts it with the app. Everything below still reports,
+              because job outcomes are read from the database and need no extra services.
             </p>
             {data?.prometheus?.detail && (
               <p className="mt-1 truncate text-[12px] text-muted-foreground/80">{data.prometheus.detail}</p>

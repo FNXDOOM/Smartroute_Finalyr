@@ -1,8 +1,5 @@
 apiVersion: 1
 
-# Loads the JSON dashboards mounted at /etc/grafana/dashboards. Kept separate
-# from that directory on purpose: Grafana reads every file in a provider path
-# as a dashboard.
 providers:
   - name: smartroute
     folder: SmartRoute

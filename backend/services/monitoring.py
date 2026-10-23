@@ -1,4 +1,4 @@
-"""Admin-panel reads of the monitoring stack: degrade to "not running" off-profile, and only the fixed QUERIES whitelist is ever sent."""
+"""Admin-panel reads of the monitoring stack: degrade to "not running" when it is unavailable, and only the fixed QUERIES whitelist is ever sent."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional

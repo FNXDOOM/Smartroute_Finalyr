@@ -8,7 +8,6 @@
 # EC2 layout (created by SCP each deploy, NO git repo):
 #   $DEPLOY_DIR/docker-compose.prod.yml
 #   $DEPLOY_DIR/deploy/deploy.sh
-#   $DEPLOY_DIR/docker-compose.monitoring.yml
 #   $DEPLOY_DIR/monitoring/           (Prometheus + Grafana config)
 #   $DEPLOY_DIR/deploy/.env.prod      (generated, mode 0600)
 #   $DEPLOY_DIR/deploy/.last-good-tag (generated)
@@ -22,7 +21,7 @@
 #      EC2 instance IAM role (no AWS keys on EC2, no secrets in git/CI/images).
 #   3. Writes deploy/.env.prod with mode 0600 (no secret values in logs).
 #   4. Runs `alembic upgrade head` in a one-off container from the NEW image.
-#   5. Starts api + worker + frontend with docker-compose.prod.yml.
+#   5. Starts the full production stack with docker-compose.prod.yml.
 #   6. Health-checks frontend /health, api /health/live, api /health/ready.
 #   7. On failure: restores previous IMAGE_TAG and brings it back up.
 #
@@ -41,9 +40,8 @@
 #   - git is NOT required and MUST NOT be used. No source repo on EC2.
 #   - IAM instance profile with secretsmanager:GetSecretValue on the secret.
 #   - The deploy bundle: docker-compose.prod.yml + deploy/deploy.sh +
-#     docker-compose.monitoring.yml + monitoring/ (Prometheus and Grafana
-#     config for the separate monitoring stack).
-#     Shipped by CI via SCP on every deploy.
+#     monitoring/ (Prometheus and Grafana config, mounted by both compose
+#     files). Shipped by CI via SCP on every deploy.
 #   - Env: DOCKERHUB_NAMESPACE, IMAGE_TAG (arg or env).
 #     Optional: BACKEND_SECRET_ID (default smartroute/production/backend),
 #               AWS_REGION (auto-detected via IMDSv2 if unset),

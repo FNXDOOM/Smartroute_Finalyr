@@ -115,7 +115,7 @@ def test_daily_is_closed_to_passengers():
 
 
 def test_monitoring_reports_jobs_even_without_prometheus():
-    """The monitoring stack is opt-in, so the panel must never depend on it."""
+    """Monitoring may be unavailable, so the panel must never depend on it."""
     session = SessionLocal()
     marker = "analytics_probe_job"
     try:

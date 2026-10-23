@@ -3,13 +3,13 @@
 Dev workflow is unchanged: `docker compose up --build` still uses
 `docker-compose.yml` + `backend/.env` + `frontend/.env`.
 
-Production uses **separate** files and never builds on EC2.
+Production uses a single `docker-compose.prod.yml` and never builds on EC2.
 EC2 holds NO git repo. Each deploy ships this bundle via SCP:
 
 - `docker-compose.prod.yml` → `$EC2_DEPLOY_DIR/docker-compose.prod.yml`
 - `deploy/deploy.sh`         → `$EC2_DEPLOY_DIR/deploy/deploy.sh`
 - `monitoring/`              → `$EC2_DEPLOY_DIR/monitoring/` (Prometheus +
-  Grafana config; only read when the `monitoring` compose profile is enabled)
+  Grafana config, mounted by both compose files)
 - `.github/workflows/ci-cd.yml` — lint/test/build, push, SCP bundle, SSH deploy
 
 `monitoring/` is shipped so dev and production mount the same files. Generating
@@ -54,12 +54,14 @@ the `deploy-prod` job references `environment: production`.
    No long-lived AWS keys on EC2.
 3. Create the deploy dir (CI creates it too, but set ownership once):
    `sudo mkdir -p /opt/smartroute/deploy && sudo chown -R ubuntu:ubuntu /opt/smartroute`.
-4. Security Groups: open `80/443` (NPM), restrict `22` (SSH) and `81` (NPM admin)
-   to admin IPs. Do **not** open `8000` or DB ports publicly.
+4. Security Groups: open `80/443` (NPM) and restrict `22` (SSH). Do **not** open
+   `81`, `8000`, or DB ports publicly: the NPM admin UI is bound to `127.0.0.1`
+   and reached through an SSH tunnel.
 5. First run: `docker login` is **not** needed for public repos; for private
    Docker Hub repos run once: `docker login -u <NAMESPACE>` (PAT), or configure
    credential helper. Images are public-or-private at your discretion.
-6. Configure Nginx Proxy Manager once via `:81`:
+6. Configure Nginx Proxy Manager once through an SSH tunnel
+   (`ssh -L 81:127.0.0.1:81 <host>`, then open `http://localhost:81`):
    app host → `frontend:80`, api host → `api:8000`, WebSockets ON,
    Let's Encrypt + force SSL, raise proxy timeouts for WS.
    Rotate default `admin@example.com / changeme` immediately.
