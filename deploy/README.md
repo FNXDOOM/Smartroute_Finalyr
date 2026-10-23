@@ -91,9 +91,9 @@ Required (deploy aborts if missing/empty):
 
 Razorpay keys are backend-only: the deploy validation fails if they are
 missing, and they must never be added to frontend build args (`VITE_*`). Use
-`rzp_test_*` credentials for staging and `rzp_live_*` for production — see
-[`docs/payments.md`](../docs/payments.md) for setup, webhooks, and test-mode
-payment flow.
+`rzp_test_*` credentials for staging and `rzp_live_*` for production. Payment
+and webhook endpoints are documented in
+[`architecture/api-reference.md`](../architecture/api-reference.md).
 
 Optional (defaults in `deploy.sh` if absent):
 `APP_ENV` (forced to `production`), `AUTH_PROVIDER`, `CLERK_AUDIENCE`,

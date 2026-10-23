@@ -344,7 +344,7 @@ Advisory suggestions for repositioning idle vehicles to high-demand zones.
 ## Table: `payments`
 
 Razorpay payment records — the server-side source of truth for payment state
-(Alembic `0003_payments`). See [`../docs/payments.md`](../docs/payments.md).
+(Alembic `0003_payments`).
 
 | Column | Type | Constraints | Notes |
 |---|---|---|---|

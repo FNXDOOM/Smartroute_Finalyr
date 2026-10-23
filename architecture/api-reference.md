@@ -1086,8 +1086,7 @@ Proxied tiles/sprites/glyphs (`Cache-Control: public, max-age=86400`; JSON bodie
 
 ## Payments `/payments` (Razorpay)
 
-Full setup guide, test cards, webhook config, and the security model:
-[`../docs/payments.md`](../docs/payments.md).
+Server-side fares, signature checks, and webhook handling are described below.
 
 ### `POST /payments/create-order`
 Create a Razorpay Order for a ride fare. The amount is computed **server-side**
@@ -1158,7 +1157,7 @@ Razorpay webhook receiver. `X-Razorpay-Signature` is verified against the
 acknowledged; duplicate deliveries are no-ops; `paid` is never downgraded.
 
 **Auth required:** None by design — the signature is the authentication.
-Configure in Dashboard → Settings → Webhooks (see `docs/payments.md`).
+Configure in Dashboard → Settings → Webhooks.
 
 **Responses:**
 - `200` — `{ "received": true }`

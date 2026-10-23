@@ -138,7 +138,6 @@ browser bundle.
 
 - Swagger: `http://localhost:8000/docs`
 - Full reference: [`architecture/api-reference.md`](architecture/api-reference.md)
-- Payments setup: [`docs/payments.md`](docs/payments.md)
 - Health: `/health/live`, `/health/ready`; `/metrics` is internal-only
 
 The database is the only source of truth for `role` and `driver_status`; JWT
