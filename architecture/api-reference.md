@@ -28,7 +28,9 @@ Get the application profile for the currently authenticated Clerk user.
 ---
 
 ### `PATCH /auth/me`
-Update your own name, email, or phone number.
+Update your own name, email, or phone number. Email is stored lower-case and must not
+already belong to another account (checked case-insensitively); there is no email
+verification flow, so a Clerk sign-in never auto-links by email.
 
 **Auth required:** Yes (any role)
 
@@ -857,10 +859,10 @@ scanners cannot mint a series per URL), process CPU/memory, and job-health serie
 derived from `job_runs`.
 
 **Auth required:** No — a scraper can hold no Clerk JWT, and the auth layer has no
-API-key path. Safe only because nothing publishes it: no compose service maps a
-host port for the API and NPM has no route here, so it is reachable from inside
-the docker network alone. Exempt from rate limiting, since a throttled payload
-would read as an outage.
+API-key path. Nothing publishes it: no compose service maps a host port for the API,
+and the public NPM proxy denies `/metrics`, so it is reachable from inside the docker
+network alone (Prometheus scrapes it there). Exempt from rate limiting, since a
+throttled payload would read as an outage.
 
 **Responses:** `200` `text/plain`
 
