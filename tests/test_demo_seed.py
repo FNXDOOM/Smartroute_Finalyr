@@ -151,3 +151,46 @@ def test_stale_demo_reclaim_is_scoped_to_the_caller():
         db.query(User).filter(User.email.in_(emails)).delete(synchronize_session=False)
         db.commit()
         db.close()
+
+
+def test_demo_job_runs_are_scoped_to_the_runs_owner(monkeypatch):
+    """Any passenger could dispatch/cluster another presenter's demo run; resetting one already required ownership."""
+    from fastapi import HTTPException
+
+    from routers import jobs as jobs_router
+
+    db = SessionLocal()
+    suffix = uuid4().hex[:8]
+    run_id = f"job-guard-{suffix}"
+    emails = [f"job.owner.{suffix}@example.com", f"job.stranger.{suffix}@example.com"]
+    try:
+        owner = _user(db, emails[0])
+        stranger = _user(db, emails[1])
+        db.add(RideRequest(
+            user_id=owner.id, pickup_lat=12.9716, pickup_lng=77.5946,
+            dest_lat=12.9352, dest_lng=77.6245, status=RIDE_PENDING,
+            mode=PRESENTATION_DEMO_MODE, demo_run_id=run_id,
+        ))
+        db.commit()
+
+        with pytest.raises(HTTPException) as refused:
+            jobs_router.run_cluster_now(mode=PRESENTATION_DEMO_MODE, demo_run_id=run_id,
+                                        current_user=stranger, db=db)
+        assert refused.value.status_code == 403
+
+        with pytest.raises(HTTPException) as refused:
+            jobs_router.run_cluster_now(mode=PRESENTATION_DEMO_MODE, demo_run_id=None,
+                                        current_user=stranger, db=db)
+        assert refused.value.status_code == 422
+
+        # The owner passes the guard; the job itself is stubbed so the test stays about access.
+        monkeypatch.setattr(jobs_router, "run_cluster_job", lambda *a, **k: {"ok": True})
+        result = jobs_router.run_cluster_now(mode=PRESENTATION_DEMO_MODE, demo_run_id=run_id,
+                                             current_user=owner, db=db)
+        assert result == {"ok": True}
+    finally:
+        db.rollback()
+        db.query(RideRequest).filter(RideRequest.demo_run_id == run_id).delete(synchronize_session=False)
+        db.query(User).filter(User.email.in_(emails)).delete(synchronize_session=False)
+        db.commit()
+        db.close()

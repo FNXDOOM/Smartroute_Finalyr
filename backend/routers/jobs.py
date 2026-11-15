@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.demand_snapshot import DemandSnapshot
 from models.job_run import JobRun
+from models.ride_request import RideRequest
 from models.user import User
 from models.vehicle_rebalance_suggestion import VehicleRebalanceSuggestion
 from schemas.jobs import (
@@ -37,12 +38,27 @@ def _require_admin_or_driver(current_user: User) -> None:
     ensure_active_driver(current_user)
 
 
-def _require_job_access(current_user: User, mode: str) -> None:
-    """Restrict live controls; allow demo playback."""
+def _require_job_access(current_user: User, mode: str, db: Session, demo_run_id: Optional[str]) -> None:
+    """Restrict live controls; demo playback is scoped to the caller's own run, as resetting one is."""
     if current_user.role in {"admin", "driver"}:
         ensure_active_driver(current_user)
         return
     if mode == PRESENTATION_DEMO_MODE:
+        if not demo_run_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="demo_run_id is required for presentation demo runs",
+            )
+        owns_run = db.query(RideRequest.id).filter(
+            RideRequest.mode == PRESENTATION_DEMO_MODE,
+            RideRequest.demo_run_id == demo_run_id,
+            RideRequest.user_id == current_user.id,
+        ).first()
+        if not owns_run:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only run jobs on your own presentation demo runs",
+            )
         return
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
@@ -119,7 +135,7 @@ def run_auto_dispatch_now(
     """Run automatic ride dispatch immediately."""
     try:
         mode = validate_ride_mode(mode)
-        _require_job_access(current_user, mode)
+        _require_job_access(current_user, mode, db, demo_run_id)
         return run_auto_dispatch_pipeline(
             db,
             triggered_by_user_id=current_user.id,
@@ -141,7 +157,7 @@ def run_cluster_now(
     """Run ride clustering immediately."""
     try:
         mode = validate_ride_mode(mode)
-        _require_job_access(current_user, mode)
+        _require_job_access(current_user, mode, db, demo_run_id)
         return run_cluster_job(
             db,
             triggered_by_user_id=current_user.id,
