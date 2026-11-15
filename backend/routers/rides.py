@@ -60,6 +60,7 @@ from utils.ride_states import (
     ROUTE_SOLVED,
     VEHICLE_ACTIVE,
     VEHICLE_IDLE,
+    is_terminal_ride,
 )
 from services.clustering.h3_partitioner import get_h3_index
 from utils.ride_scope import (
@@ -773,6 +774,15 @@ def update_ride_request_status(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid status. Must be one of: {', '.join(sorted(RIDE_STATUSES))}",
+        )
+    if status_update.status == old_status:
+        return ride
+    # The ladder only advances: a terminal ride is never rewritten (utils/ride_states.py).
+    old_rank = RIDE_STATUSES.index(old_status) if old_status in RIDE_STATUSES else -1
+    if is_terminal_ride(old_status) or RIDE_STATUSES.index(status_update.status) < old_rank:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot change ride status from {old_status} to {status_update.status}",
         )
     if (
         current_user.role == "driver"
