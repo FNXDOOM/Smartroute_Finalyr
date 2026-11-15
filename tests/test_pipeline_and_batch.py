@@ -197,3 +197,37 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
 
     finally:
         db.close()
+
+
+def test_batch_rejects_rides_outside_the_service_area():
+    """/request enforces the India geofence; /batch must not be the way around it."""
+    import pytest
+    from fastapi import HTTPException
+
+    from routers.rides import create_batch_ride_requests
+    from schemas.ride_request import RideRequestBatchCreate, RideRequestCreate
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == "pipeline_tester@example.com").first()
+        if user is None:
+            user = User(
+                clerk_user_id="test_pipeline_user",
+                email="pipeline_tester@example.com",
+                name="Pipeline Tester",
+                password_hash="test_hash",
+                role="admin",
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        batch = RideRequestBatchCreate(requests=[
+            RideRequestCreate(pickup_lat=51.5074, pickup_lng=-0.1278,
+                              dest_lat=12.9716, dest_lng=77.5946),
+        ])
+        with pytest.raises(HTTPException) as refused:
+            create_batch_ride_requests(batch, db=db, current_user=user)
+        assert refused.value.status_code == 422
+        assert db.query(RideRequest).filter(RideRequest.pickup_lat == 51.5074).first() is None
+    finally:
+        db.close()

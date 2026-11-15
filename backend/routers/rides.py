@@ -143,6 +143,17 @@ def create_batch_ride_requests(
     """Create multiple ride requests in a single transaction"""
     created_requests = []
     for item in batch_in.requests:
+        if not all(
+            is_india_location(lat, lng)
+            for lat, lng in (
+                (item.pickup_lat, item.pickup_lng),
+                (item.dest_lat, item.dest_lng),
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Pickup and destination must be within the supported India service area",
+            )
         h3_idx = get_h3_index(item.pickup_lat, item.pickup_lng, resolution=9)
         req = RideRequest(
             user_id=current_user.id,
