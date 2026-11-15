@@ -736,3 +736,95 @@ def test_client_create_order_http_error(monkeypatch):
 def test_client_surface_never_exposes_secret():
     client = RazorpayClient(key_id="k", key_secret="super-secret-value")
     assert "super-secret-value" not in repr(client)
+
+
+# --- One active payment per ride (create-order race) ---
+
+def test_one_active_payment_per_ride_is_enforced_by_the_schema():
+    """Two concurrent create-orders used to open two Razorpay orders for one ride; the partial unique index is the DB-level backstop."""
+    from sqlalchemy.exc import IntegrityError
+
+    engine = create_engine("sqlite:///:memory:")
+    Payment.__table__.create(engine)
+    session = sessionmaker(bind=engine)()
+    try:
+        session.add(Payment(user_id=1, ride_request_id=7, amount=1500, currency="INR", status="created"))
+        session.commit()
+        session.add(Payment(user_id=1, ride_request_id=7, amount=1500, currency="INR", status="pending"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+        # A failed attempt frees the slot; other rides and wallet rows never conflict.
+        session.add(Payment(user_id=1, ride_request_id=7, amount=1500, currency="INR", status="failed"))
+        session.commit()
+        session.add(Payment(user_id=1, ride_request_id=8, amount=1500, currency="INR", status="created"))
+        session.commit()
+        session.add(Payment(user_id=1, ride_request_id=None, amount=1500, currency="INR", status="created"))
+        session.commit()
+        session.add(Payment(user_id=1, ride_request_id=None, amount=1500, currency="INR", status="created"))
+        session.commit()
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def test_create_order_resumes_the_winner_of_a_concurrent_insert(db, user, ride, fake_client, set_secrets, monkeypatch):
+    """When the unique index rejects our insert, resume the payment that won the race instead of failing."""
+    from sqlalchemy.exc import IntegrityError
+
+    monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
+
+    class _RaceLost:
+        """Delegates to the real session, but the first commit loses to a concurrent insert."""
+
+        def __init__(self, real):
+            self._real = real
+            self._fired = False
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+        def commit(self):
+            if not self._fired:
+                self._fired = True
+                self._real.rollback()
+                winner = Payment(
+                    user_id=user.id, ride_request_id=ride.id, purpose="ride_fare",
+                    amount=1500, currency="INR", status="pending",
+                    razorpay_order_id="order_winner", verified=0,
+                )
+                self._real.add(winner)
+                self._real.commit()
+                raise IntegrityError("INSERT INTO payments", {}, Exception("uq_payments_one_active_per_ride"))
+            return self._real.commit()
+
+    resp = payments_router.create_payment_order(
+        PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), _RaceLost(db), user
+    )
+    assert resp.razorpay_order_id == "order_winner"
+    assert db.query(Payment).filter(Payment.ride_request_id == ride.id).count() == 1
+
+
+def test_create_order_returns_the_first_attached_order_when_two_race(db, user, ride, set_secrets, monkeypatch):
+    """Both requests can mint a Razorpay order for the same payment; only the first attach wins and the loser must return it."""
+    monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
+
+    def create_order(**kwargs):
+        # The other request attaches its order while ours is in flight.
+        payment_id = int(kwargs["receipt"].split("-")[1])
+        other = db.query(Payment).filter(Payment.id == payment_id).first()
+        other.razorpay_order_id = "order_other_request"
+        other.status = "pending"
+        db.commit()
+        return {"id": "order_ours", "amount": kwargs["amount"], "currency": kwargs["currency"]}
+
+    client = SimpleNamespace(create_order=create_order)
+    monkeypatch.setattr(payments_router, "_client", client)
+    monkeypatch.setattr(payments_router, "_require_razorpay_configured", lambda: client)
+
+    resp = payments_router.create_payment_order(
+        PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), db, user
+    )
+    assert resp.razorpay_order_id == "order_other_request"
+    stored = db.query(Payment).filter(Payment.id == resp.payment_id).first()
+    assert stored.razorpay_order_id == "order_other_request"

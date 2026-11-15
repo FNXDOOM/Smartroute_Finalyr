@@ -1,13 +1,23 @@
 """Payment records for Razorpay checkout — source of truth for payment state."""
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, func
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, JSON, String, func, text
 
 from database import Base
 
 
 class Payment(Base):
     __tablename__ = "payments"
+    # At most one live payment per ride: the create-order race must not open two Razorpay orders.
+    __table_args__ = (
+        Index(
+            "uq_payments_one_active_per_ride",
+            "ride_request_id",
+            unique=True,
+            postgresql_where=text("ride_request_id IS NOT NULL AND status IN ('created', 'pending', 'paid')"),
+            sqlite_where=text("ride_request_id IS NOT NULL AND status IN ('created', 'pending', 'paid')"),
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     # Owning user; set from the authenticated principal, never from the client.

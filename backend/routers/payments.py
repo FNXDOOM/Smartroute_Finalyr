@@ -5,6 +5,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from config import RAZORPAY_KEY_ID
@@ -222,8 +223,32 @@ def create_payment_order(
             verified=0,
         )
         db.add(payment)
-        db.commit()
-        db.refresh(payment)
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            # A concurrent create-order won the race for this ride; resume its payment.
+            db.rollback()
+            payment = (
+                db.query(Payment)
+                .filter(
+                    Payment.ride_request_id == ride_id,
+                    Payment.status.in_(("created", "pending", "paid")),
+                )
+                .order_by(Payment.id.desc())
+                .first()
+            )
+            if payment is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This ride already has a payment in progress",
+                ) from exc
+            if payment.status == "paid":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This ride has already been paid",
+                ) from exc
+        else:
+            db.refresh(payment)
 
     if payment.razorpay_order_id:
         # Reopen checkout on the SAME order: Razorpay allows one successful payment per order, so this can never double-charge.
@@ -267,10 +292,20 @@ def create_payment_order(
             detail="Payment provider is unavailable, please try again",
         ) from exc
 
-    payment.razorpay_order_id = order.get("id")
-    payment.status = "pending"
+    order_id = order.get("id")
+    attached = (
+        db.query(Payment)
+        .filter(Payment.id == payment.id, Payment.razorpay_order_id.is_(None))
+        .update(
+            {"razorpay_order_id": order_id, "status": "pending"},
+            synchronize_session=False,
+        )
+    )
     db.commit()
     db.refresh(payment)
+    if not attached:
+        # A concurrent request attached its order first; ours is never returned and expires unused.
+        order_id = payment.razorpay_order_id
 
     logger.info(
         "Razorpay order created: payment_id=%d order_id=%s amount=%d",
@@ -283,7 +318,7 @@ def create_payment_order(
         payment_id=payment.id,
         internal_order_id=payment.id,
         razorpay_key_id=RAZORPAY_KEY_ID,
-        razorpay_order_id=order.get("id"),
+        razorpay_order_id=order_id,
         amount=payment.amount,
         currency=payment.currency,
         customer_name=current_user.name,
