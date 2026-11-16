@@ -2,6 +2,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from database import SessionLocal
@@ -94,8 +96,14 @@ def test_starting_a_demo_reclaims_abandoned_demo_runs():
         db.close()
 
 
-def test_auto_dispatch_pipeline_groups_and_assigns_rides():
-    """Pipeline test: cluster, route, assign 3 rides."""
+@pytest.mark.parametrize("routing_available", [True, False])
+def test_auto_dispatch_pipeline_groups_and_assigns_rides(mock_road_matrix, monkeypatch, routing_available):
+    """Synthetic roads assign rides; unavailable roads must leave them unassigned."""
+    if not routing_available:
+        from services.routing import vrp_solver
+
+        monkeypatch.setattr(vrp_solver, "build_stadia_distance_matrix", lambda points: None)
+        monkeypatch.setattr(vrp_solver, "build_road_graph", lambda *args, **kwargs: None)
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == "pipeline_tester@example.com").first()
@@ -185,6 +193,15 @@ def test_auto_dispatch_pipeline_groups_and_assigns_rides():
         result = run_auto_dispatch_pipeline(db, triggered_by_user_id=user.id, is_scheduled=False)
 
         assert result["clusters_formed"] >= 1, f"Expected >=1 cluster, got {result}"
+        if not routing_available:
+            assert result["routes_optimized"] == 0
+            assert result["assigned_rides"] == 0
+            db.refresh(vehicle)
+            assert vehicle.assigned_route_id is None
+            for ride in created_rides:
+                db.refresh(ride)
+                assert ride.status == "clustered"
+            return
         assert result["routes_optimized"] >= 1, f"Expected >=1 route, got {result}"
         assert result["assigned_rides"] >= 2, f"Expected >=2 rides assigned, got {result}"
 

@@ -579,7 +579,7 @@ def get_ride_route(
         db.query(RouteWaypointRecord)
         .join(RoutePlan)
         .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id)
-        .filter(RoutePlan.status == ROUTE_SOLVED)
+        .filter(RoutePlan.status.in_(LIVE_ROUTE_STATUSES))
         .all()
     )
     pickup_waypoint = next(
@@ -591,7 +591,7 @@ def get_ride_route(
 
     route_plan = db.query(RoutePlan).filter(
         RoutePlan.id == pickup_waypoint.route_plan_id,
-        RoutePlan.status == ROUTE_SOLVED,
+        RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
     ).first()
     if not route_plan:
         return None
@@ -781,6 +781,11 @@ def update_ride_request_status(
         )
 
     old_status = ride.status
+    if status_update.status == RIDE_CANCELLED and old_status == RIDE_IN_PROGRESS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel a ride that is already {ride.status}",
+        )
     if status_update.status not in RIDE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -794,6 +799,15 @@ def update_ride_request_status(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Cannot change ride status from {old_status} to {status_update.status}",
+        )
+    if ride.is_shared and status_update.status in {
+        RIDE_ARRIVING, RIDE_READY_FOR_PICKUP, RIDE_IN_PROGRESS, RIDE_COMPLETED,
+    }:
+        # Coarse status writes cannot establish readiness, boarding or drop-off.
+        # Both admins and drivers must use the guarded per-rider lifecycle.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use the carpool lifecycle endpoints to advance this shared ride",
         )
     if (
         current_user.role == "driver"

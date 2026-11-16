@@ -86,6 +86,26 @@ def test_a_missing_table_is_skipped_entirely():
     assert not any("vehicles" in statement for statement in statements)
 
 
+def test_postgres_backfill_reflects_on_its_ddl_connection(monkeypatch):
+    """A second connection blocks on locks held by our uncommitted DDL."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    import database
+
+    engine = MagicMock()
+    engine.dialect.name = "postgresql"
+    connection = engine.begin.return_value.__enter__.return_value
+    monkeypatch.setattr(database.Base.metadata, "create_all", lambda **kwargs: None)
+
+    def inspect_same_connection(bind):
+        assert bind is connection, "Reflection must share the DDL transaction"
+        return SimpleNamespace(get_columns=lambda table: [{"name": "ride_mode"}])
+
+    monkeypatch.setattr(database, "inspect", inspect_same_connection)
+    database.create_db_tables(bind_engine=engine)
+    assert connection.execute.called
+
+
 # --- the DDL above is real, so conftest refuses to run create_db_tables() on a hosted database ---
 
 def test_a_hosted_database_would_be_left_alone(monkeypatch):

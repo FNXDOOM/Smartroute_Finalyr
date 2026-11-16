@@ -17,6 +17,18 @@ from database import create_db_tables  # noqa: E402
 
 LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
+
+@pytest.fixture
+def mock_road_matrix(monkeypatch):
+    """Explicit synthetic routing for solver tests, never live-road evidence."""
+    from services.routing import vrp_solver
+
+    monkeypatch.setattr(
+        vrp_solver, "build_stadia_distance_matrix",
+        lambda points: vrp_solver.build_distance_matrix(points),
+    )
+
+
 SCRATCH_DB_DIR = ".testdb"
 KEEP_SCRATCH_DBS = 3
 TEST_DATABASE_URL = f"sqlite:///./{SCRATCH_DB_DIR}/ci_test.db"

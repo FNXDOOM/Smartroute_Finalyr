@@ -166,7 +166,7 @@ def test_merge_route_details_renumbers_legs_across_windows():
 # --- pickup and delivery solver ---------------------------------------------
 
 
-def test_pool_solver_boards_before_dropping_and_leaves_the_route_open():
+def test_pool_solver_boards_before_dropping_and_leaves_the_route_open(mock_road_matrix):
     pytest.importorskip("ortools.constraint_solver")
     from services.routing.vrp_solver import solve_shared_ride_pdp
 
@@ -188,7 +188,7 @@ def test_pool_solver_boards_before_dropping_and_leaves_the_route_open():
     assert route[-1] in (2, 3), "the route ends at a drop-off, not back at the depot"
 
 
-def test_pool_solver_reuses_a_seat_after_a_drop_off_where_cvrp_cannot():
+def test_pool_solver_reuses_a_seat_after_a_drop_off_where_cvrp_cannot(mock_road_matrix):
     pytest.importorskip("ortools.constraint_solver")
     from services.routing.vrp_solver import solve_shared_ride_pdp, solve_vrp
 
@@ -246,7 +246,7 @@ class _StubVehicle:
         self.capacity = capacity
 
 
-def test_builder_uses_the_pool_model_for_a_feasible_pool():
+def test_builder_uses_the_pool_model_for_a_feasible_pool(mock_road_matrix):
     pytest.importorskip("ortools.constraint_solver")
     stop = _StubStop(7, [_StubRequest(101), _StubRequest(102)])
 
@@ -274,7 +274,7 @@ def test_builder_uses_the_pool_model_for_a_feasible_pool():
     assert built.waypoints[1]["stop_id"] is None
 
 
-def test_builder_combines_separate_corridor_pickup_stops():
+def test_builder_combines_separate_corridor_pickup_stops(mock_road_matrix):
     pytest.importorskip("ortools.constraint_solver")
     first_stop = _StubStop(71, [_StubRequest(201)])
     second_stop = _StubStop(72, [_StubRequest(202)])
@@ -319,7 +319,7 @@ def test_builder_does_not_assign_a_pickup_only_route_when_pdp_is_infeasible(monk
     assert routes == []
 
 
-def test_builder_returns_nothing_when_no_model_can_serve_the_pool():
+def test_builder_returns_nothing_when_no_model_can_serve_the_pool(mock_road_matrix):
     pytest.importorskip("ortools.constraint_solver")
     stop = _StubStop(7, [_StubRequest(101), _StubRequest(102), _StubRequest(103)])
 
@@ -335,7 +335,7 @@ def test_builder_returns_nothing_when_no_model_can_serve_the_pool():
     assert routes == []
 
 
-def test_private_ride_gets_a_dedicated_vehicle_and_never_pools():
+def test_private_ride_gets_a_dedicated_vehicle_and_never_pools(mock_road_matrix):
     pytest.importorskip("ortools.constraint_solver")
     # Two private rides plus one shared pool, with exactly two vehicles.
     private_a = _StubStop(11, [_StubRequest(201, is_shared=False)])
@@ -359,7 +359,7 @@ def test_private_ride_gets_a_dedicated_vehicle_and_never_pools():
     assert all(204 not in route.ride_ids for route in routes)
 
 
-def test_private_ride_is_never_merged_into_a_shared_route():
+def test_private_ride_is_never_merged_into_a_shared_route(mock_road_matrix):
     pytest.importorskip("ortools.constraint_solver")
     # Even with vehicles to spare, the shared pair solves as its own pool and the private ride stays alone.
     private = _StubStop(21, [_StubRequest(301, is_shared=False)])

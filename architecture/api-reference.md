@@ -1183,3 +1183,12 @@ No Razorpay secrets in any payload.
 | 404 | Not found |
 | 422 | Unprocessable entity — Pydantic validation failure |
 | 500 | Internal server error |
+# Shared-ride lifecycle safety
+
+Generic `PATCH /rides/{ride_id}/status` cannot advance a shared ride to
+`arriving`, `ready_for_pickup`, `in_progress` or `completed`; it returns HTTP 409.
+Drivers and admins must use the dedicated carpool lifecycle endpoints for
+announcement, arrival, passenger readiness, boarding, departure and drop-off.
+This prevents coarse status writes bypassing passenger confirmation.
+Private-ride manual status controls are unchanged. Idempotent same-status
+replays remain no-ops.

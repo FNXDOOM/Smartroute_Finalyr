@@ -115,6 +115,13 @@ def _resolve_ride_amount(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Ride request #{ride_request_id} not found",
             )
+        if ride.status == "cancelled":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot pay for a cancelled ride")
+        if ride.ride_option_id not in VALID_FARE_IDS:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This ride has no valid stored fare option")
+        if ride_option_id != ride.ride_option_id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Payment option does not match the booked ride")
+        ride_option_id = ride.ride_option_id
         ride_id = ride.id
         distance_km = _route_distance_km(ride)
 
@@ -149,7 +156,7 @@ def _fire_payment_notification(db: Session, payment: Payment, outcome: str) -> N
                 user_id=payment.user_id,
                 notification_type="payment_failed",
                 title="Payment failed",
-                message="Your payment could not be completed. No amount has been charged.",
+                message="Your payment attempt was unsuccessful. Check the existing order before retrying checkout.",
                 related_entity_type="payment",
                 related_entity_id=payment.id,
             )
@@ -205,11 +212,11 @@ def create_payment_order(
             .first()
         )
         if resumable is not None and (resumable.amount != amount or resumable.currency != "INR"):
-            # Fare changed since the old attempt — retire it and start fresh.
-            resumable.status = "failed"
-            resumable.failure_reason = "superseded_by_new_order"
-            db.commit()
-            resumable = None
+            # A new quote cannot prove that the earlier order was not charged.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Fare changed; reconcile the existing payment before starting another order",
+            )
         payment = resumable
 
     if payment is None:
@@ -382,9 +389,8 @@ def verify_payment(
         verify_in.razorpay_payment_id,
         verify_in.razorpay_signature,
     ):
-        payment.status = "failed"
-        payment.failure_reason = "signature_verification_failed"
-        db.commit()
+        # An untrusted callback says nothing about the provider's financial
+        # state. Preserve the active order for retry/webhook reconciliation.
         logger.warning(
             "Payment signature verification failed: payment_id=%d user_id=%d",
             payment.id,
@@ -405,7 +411,6 @@ def verify_payment(
         ) from exc
 
     if rzp_payment.get("order_id") != verify_in.razorpay_order_id:
-        payment.status = "failed"
         payment.failure_reason = "order_mismatch"
         db.commit()
         raise HTTPException(
@@ -413,7 +418,6 @@ def verify_payment(
             detail="Payment does not belong to this order",
         )
     if int(rzp_payment.get("amount", -1)) != payment.amount or rzp_payment.get("currency") != payment.currency:
-        payment.status = "failed"
         payment.failure_reason = "amount_mismatch"
         db.commit()
         raise HTTPException(
@@ -421,7 +425,6 @@ def verify_payment(
             detail="Payment amount does not match the order",
         )
     if rzp_payment.get("status") not in ("captured", "authorized"):
-        payment.status = "failed"
         payment.failure_reason = "payment_not_captured"
         db.commit()
         raise HTTPException(
@@ -519,7 +522,8 @@ async def razorpay_webhook(
             _fire_payment_notification(db, payment, "paid")
     elif event == "payment.failed":
         if payment.status != "paid":
-            payment.status = "failed"
+            # A failed payment attempt does not retire its order: the same
+            # order can have another attempt or a delayed success callback.
             payment.failure_reason = "razorpay_payment_failed"
             payment.razorpay_metadata = {"webhook": {"event": event}}
             db.commit()

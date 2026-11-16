@@ -291,6 +291,9 @@ def attach_to_existing_run(
         original_carpool_status = request.carpool_status
         request.cluster_id = stop.cluster_id
         request.virtual_stop_id = stop.id
+        # autoflush is disabled: assigning only the FK leaves the builder's
+        # stop.ride_requests collection unaware of this candidate.
+        stop.ride_requests.append(request)
         set_carpool_stage(request, CARPOOL_CLUSTERED)
         stop.passenger_count = int(stop.passenger_count or 0) + 1
 
@@ -307,6 +310,7 @@ def attach_to_existing_run(
             request.carpool_status = original_carpool_status
             request.cluster_id = None
             request.virtual_stop_id = None
+            request.virtual_stop = None
             if new_stop:
                 db.delete(new_stop)
             else:
@@ -320,13 +324,34 @@ def attach_to_existing_run(
             request.carpool_status = original_carpool_status
             request.cluster_id = None
             request.virtual_stop_id = None
+            request.virtual_stop = None
             if new_stop:
                 db.delete(new_stop)
             else:
                 stop.passenger_count = max(0, int(stop.passenger_count or 0) - 1)
             continue
 
-        route_plan.status = ROUTE_SUPERSEDED
+        # Claim the source plan atomically, not merely by re-reading it. Two
+        # solvers may both have read the last seat before either commits.
+        claimed = db.query(RoutePlan).filter(
+            RoutePlan.id == route_plan.id,
+            RoutePlan.status == ROUTE_SOLVED,
+            RoutePlan.route_metadata["driver_accepted"].as_boolean().is_not(True),
+        ).update({RoutePlan.status: ROUTE_SUPERSEDED}, synchronize_session=False)
+        if not claimed:
+            request.status = original_status
+            request.carpool_status = original_carpool_status
+            request.cluster_id = None
+            request.virtual_stop_id = None
+            request.virtual_stop = None
+            if new_stop:
+                db.delete(new_stop)
+            else:
+                # Discard our speculative increment without overwriting the
+                # winner's newly committed passenger count.
+                db.refresh(stop, attribute_names=["passenger_count"])
+            continue
+        db.refresh(route_plan)
         persisted = persist_shared_route(
             db,
             rebuilt[0],

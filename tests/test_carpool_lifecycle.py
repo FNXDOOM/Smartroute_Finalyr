@@ -408,6 +408,14 @@ def test_a_co_passenger_cancellation_does_not_lock_out_the_remaining_riders():
         db.refresh(persisted.route_plan)
         assert persisted.route_plan.status == "needs_reoptimization"
 
+        # The surviving passenger must retain their live map while the itinerary
+        # is awaiting reoptimization, just as the driver retains access.
+        route_view = get_ride_route(ride_id=ride_a.id, db=db, current_user=rider_a)
+        assert route_view is not None
+        assert route_view.route_id == route_id
+        assert route_view.route_status == "needs_reoptimization"
+        assert route_view.driver_accepted is True
+
         confirm_carpool_dropoff(route_id=route_id, ride_id=ride_a.id, db=db, current_user=driver)
         complete_carpool_route(route_id=route_id, db=db, current_user=driver)
 
@@ -427,6 +435,33 @@ def test_a_co_passenger_cancellation_does_not_lock_out_the_remaining_riders():
                 [ride_a.virtual_stop_id, ride_b.virtual_stop_id],
                 vehicle.id,
             )
+        db.close()
+
+
+def test_onboard_passenger_cannot_cancel_through_status_patch():
+    """PATCH must not bypass DELETE's protection for an onboard passenger."""
+    db = SessionLocal()
+    persisted = None
+    try:
+        driver, rider_a, rider_b, vehicle, ride_a, ride_b, persisted = _two_rider_route(db)
+        stop_ids = [ride_a.virtual_stop_id, ride_b.virtual_stop_id]
+        accept_route(route_id=persisted.route_id, db=db, current_user=driver)
+        _board_rider(db, persisted.route_id, driver, rider_a, ride_a)
+        depart_carpool_route(route_id=persisted.route_id, db=db, current_user=driver)
+        with pytest.raises(HTTPException) as refused:
+            update_ride_request_status(
+                ride_id=ride_a.id,
+                status_update=RideRequestStatusUpdate(status="cancelled"),
+                db=db,
+                current_user=rider_a,
+            )
+        assert refused.value.status_code == 400
+        db.refresh(ride_a)
+        assert ride_a.status == "in_progress"
+        assert ride_a.virtual_stop_id == stop_ids[0]
+    finally:
+        if persisted is not None:
+            _cleanup(db, persisted, [ride_a.id, ride_b.id], stop_ids, vehicle.id)
         db.close()
 
 
@@ -486,15 +521,13 @@ def test_only_the_assigned_driver_can_patch_a_riders_status():
         assert vehicle.assigned_route_id == route_id
         assert _notification_count(db, rider_a.id, "carpool_route_completed") == accepted_before
 
-        # The driver who actually holds the run is not affected.
-        update_ride_request_status(
-            ride_id=ride_a.id,
-            status_update=RideRequestStatusUpdate(status="completed"),
-            db=db,
-            current_user=owner,
+        # The assigned driver can still drop off a boarded rider through the
+        # guarded lifecycle; generic status PATCH is not a boarding bypass.
+        confirm_carpool_dropoff(
+            route_id=route_id, ride_id=ride_a.id, db=db, current_user=owner,
         )
         db.refresh(ride_a)
-        assert ride_a.carpool_status == "completed"
+        assert ride_a.carpool_status == "dropped_off"
     finally:
         if persisted is not None:
             _cleanup(

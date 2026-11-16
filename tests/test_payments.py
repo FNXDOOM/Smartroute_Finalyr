@@ -163,6 +163,7 @@ def ride(db, user):
         pickup_lat=12.9716, pickup_lng=77.5946,
         dest_lat=12.9352, dest_lng=77.6245,
         status="pending",
+        ride_option_id="swift-x",
     )
     db.add(r)
     db.commit()
@@ -447,20 +448,130 @@ def test_create_order_resumes_unpaid_order_no_double_charge(db, user, ride, fake
     assert db.query(Payment).filter(Payment.user_id == user.id).count() == 1
 
 
-def test_create_order_supersedes_stale_order_when_fare_changed(db, user, ride, fake_client, set_secrets, monkeypatch):
-    """If the fare changed since the stuck attempt, start a fresh order."""
+def test_create_order_does_not_replace_unreconciled_order_when_fare_changed(db, user, ride, fake_client, set_secrets, monkeypatch):
+    """A changed quote is not evidence that an existing order cannot charge."""
     monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
     stuck = _make_payment(db, user, ride, order_id="order_stale", status="pending", amount=999)
 
-    resp = payments_router.create_payment_order(
+    with pytest.raises(HTTPException) as refused:
+        payments_router.create_payment_order(
+            PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), db, user
+        )
+    assert refused.value.status_code == 409
+    db.refresh(stuck)
+    assert stuck.status == "pending"
+    assert stuck.razorpay_order_id == "order_stale"
+    assert db.query(Payment).count() == 1
+
+
+def test_checkout_rejects_tier_downgrade(db, user, ride, fake_client, set_secrets, monkeypatch):
+    ride.ride_option_id = "swift-lux"
+    db.commit()
+    monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
+    with pytest.raises(HTTPException) as refused:
+        payments_router.create_payment_order(
+            PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-moto"), db, user
+        )
+    assert refused.value.status_code == 409
+    assert db.query(Payment).count() == 0
+
+
+def test_checkout_requires_persisted_tier_for_linked_ride(db, user, ride, fake_client, set_secrets):
+    ride.ride_option_id = None
+    db.commit()
+    with pytest.raises(HTTPException) as refused:
+        payments_router.create_payment_order(
+            PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-moto"), db, user
+        )
+    assert refused.value.status_code == 409
+    assert db.query(Payment).count() == 0
+
+
+def test_checkout_rejects_cancelled_ride(db, user, ride, fake_client, set_secrets):
+    ride.status = "cancelled"
+    db.commit()
+    with pytest.raises(HTTPException) as refused:
+        payments_router.create_payment_order(
+            PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), db, user
+        )
+    assert refused.value.status_code == 409
+    assert db.query(Payment).count() == 0
+
+
+def test_bad_signature_keeps_original_checkout_resumable(db, user, ride, fake_client, set_secrets, monkeypatch):
+    monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
+    original = _make_payment(db, user, ride, order_id="order_maybe_charged")
+    with pytest.raises(HTTPException) as refused:
+        payments_router.verify_payment(
+            PaymentVerifyRequest(
+                razorpay_order_id="order_maybe_charged", razorpay_payment_id="pay_callback",
+                razorpay_signature="00" * 32,
+            ), db, user,
+        )
+    assert refused.value.status_code == 400
+    checkout = payments_router.create_payment_order(
         PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), db, user
     )
+    assert checkout.payment_id == original.id
+    assert checkout.razorpay_order_id == "order_maybe_charged"
+    assert db.query(Payment).count() == 1
 
-    assert resp.payment_id != stuck.id
-    assert resp.razorpay_order_id == f"order_payment-{resp.payment_id}"
-    db.refresh(stuck)
-    assert stuck.status == "failed"
-    assert stuck.failure_reason == "superseded_by_new_order"
+
+def test_bad_signature_can_be_followed_by_valid_verification(db, user, ride, fake_client, set_secrets):
+    payment = _make_payment(db, user, ride)
+    payload = dict(razorpay_order_id="order_payment-1", razorpay_payment_id="pay_retry")
+    with pytest.raises(HTTPException):
+        payments_router.verify_payment(
+            PaymentVerifyRequest(**payload, razorpay_signature="00" * 32), db, user
+        )
+    result = payments_router.verify_payment(
+        PaymentVerifyRequest(**payload, razorpay_signature=_valid_signature("order_payment-1", "pay_retry")),
+        db, user,
+    )
+    db.refresh(payment)
+    assert result.verified and payment.status == "paid"
+
+
+def test_failed_attempt_webhook_does_not_open_another_order(db, user, ride, fake_client, set_secrets, set_webhook_secret, monkeypatch):
+    monkeypatch.setattr(payments_router, "_route_distance_km", lambda ride: 1.0)
+    payment = _make_payment(db, user, ride)
+    payload = _captured_payload(event="payment.failed")
+    _, signature = _signed_body(payload)
+    _run_webhook(db, signature, payload)
+    checkout = payments_router.create_payment_order(
+        PaymentCreate(ride_request_id=ride.id, ride_option_id="swift-x"), db, user
+    )
+    assert checkout.payment_id == payment.id
+    assert checkout.razorpay_order_id == "order_payment-1"
+    assert db.query(Payment).count() == 1
+    # A subsequent successful attempt on the same order still reconciles.
+    payload = _captured_payload()
+    _, signature = _signed_body(payload)
+    _run_webhook(db, signature, payload)
+    db.refresh(payment)
+    assert payment.status == "paid"
+
+
+@pytest.mark.parametrize("provider_result", [
+    {"order_id": "order_other"},
+    {"amount": 999},
+    {"status": "failed"},
+])
+def test_rejected_verification_does_not_retire_provider_order(db, user, ride, fake_client, set_secrets, provider_result):
+    payment = _make_payment(db, user, ride)
+    original_fetch = fake_client.fetch_payment
+    fake_client.fetch_payment = lambda payment_id: {**original_fetch(payment_id), **provider_result}
+    with pytest.raises(HTTPException) as refused:
+        payments_router.verify_payment(
+            PaymentVerifyRequest(
+                razorpay_order_id="order_payment-1", razorpay_payment_id="pay_rejected",
+                razorpay_signature=_valid_signature("order_payment-1", "pay_rejected"),
+            ), db, user,
+        )
+    assert refused.value.status_code == 400
+    db.refresh(payment)
+    assert payment.status == "pending"
+    assert payment.verified == 0
 
 
 def test_create_order_does_not_resume_other_users_payment(db, user, other_user, ride, fake_client, set_secrets, monkeypatch):
@@ -511,7 +622,7 @@ def test_verify_rejects_invalid_signature(db, user, ride, fake_client, set_secre
         )
     assert exc.value.status_code == 400
     p = db.query(Payment).filter(Payment.razorpay_order_id == "order_payment-1").first()
-    assert p.status == "failed"  # never marked paid
+    assert p.status == "pending"  # untrusted callback cannot retire a possibly charged order
 
 
 def test_verify_network_error_is_retryable_not_terminal(db, user, ride, fake_client, set_secrets, monkeypatch):
@@ -561,7 +672,7 @@ def test_verify_rejects_wrong_order_id(db, user, ride, fake_client, set_secrets)
         )
     assert exc.value.status_code == 400
     p = db.query(Payment).filter(Payment.razorpay_order_id == "order_real").first()
-    assert p.status == "failed"
+    assert p.status == "pending"
 
 
 def test_verify_rejects_unauthorized_user(db, user, other_user, ride, fake_client, set_secrets):
@@ -633,7 +744,7 @@ def test_verify_rejects_amount_mismatch(db, user, ride, fake_client, set_secrets
         )
     assert exc.value.status_code == 400
     db.refresh(payment)
-    assert payment.status == "failed"
+    assert payment.status == "pending"
     assert payment.failure_reason == "amount_mismatch"
 
 
@@ -682,7 +793,7 @@ def test_webhook_payment_failed(db, user, ride, set_webhook_secret):
     body, sig = _signed_body(_captured_payload(event="payment.failed"))
     _run_webhook(db, sig, json.loads(body))
     db.refresh(payment)
-    assert payment.status == "failed"
+    assert payment.status == "pending"
     assert payment.failure_reason == "razorpay_payment_failed"
 
 
@@ -828,3 +939,58 @@ def test_create_order_returns_the_first_attached_order_when_two_race(db, user, r
     assert resp.razorpay_order_id == "order_other_request"
     stored = db.query(Payment).filter(Payment.id == resp.payment_id).first()
     assert stored.razorpay_order_id == "order_other_request"
+
+
+@pytest.mark.parametrize("iteration", range(3))
+def test_parallel_checkouts_return_one_active_payment_and_order(tmp_path, set_secrets, monkeypatch, iteration):
+    """Real separate sessions/threads and the actual partial unique index."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from uuid import uuid4
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'checkout-race.db'}", connect_args={"timeout": 15})
+    _build_lite_schema().create_all(engine)
+    next(index for index in Payment.__table__.indexes if index.name == "uq_payments_one_active_per_ride").create(engine)
+    sessions = sessionmaker(bind=engine, autoflush=False)
+    with sessions() as setup:
+        owner = User(name="Concurrent checkout", email="checkout-race@example.test", password_hash="x", role="passenger")
+        setup.add(owner)
+        setup.flush()
+        booking = RideRequest(
+            user_id=owner.id, pickup_lat=13, pickup_lng=77.6,
+            dest_lat=13.1, dest_lng=77.7, status="pending", ride_option_id="swift-x",
+        )
+        setup.add(booking)
+        setup.commit()
+        owner_id, ride_id = owner.id, booking.id
+
+    barrier = Barrier(2, timeout=15)
+
+    def distance(ride):
+        barrier.wait()
+        return 1.0
+
+    client = SimpleNamespace(create_order=lambda **kwargs: {
+        "id": f"order_{uuid4().hex}", "amount": kwargs["amount"], "currency": "INR",
+    })
+    monkeypatch.setattr(payments_router, "_route_distance_km", distance)
+    monkeypatch.setattr(payments_router, "_require_razorpay_configured", lambda: client)
+
+    def checkout(_):
+        with sessions() as session:
+            return payments_router.create_payment_order(
+                PaymentCreate(ride_request_id=ride_id, ride_option_id="swift-x"),
+                session, session.get(User, owner_id),
+            )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            results = list(workers.map(checkout, range(2)))
+        assert results[0].payment_id == results[1].payment_id
+        assert results[0].razorpay_order_id == results[1].razorpay_order_id
+        with sessions() as session:
+            rows = session.query(Payment).all()
+            assert len(rows) == 1
+            assert rows[0].razorpay_order_id == results[0].razorpay_order_id
+    finally:
+        engine.dispose()

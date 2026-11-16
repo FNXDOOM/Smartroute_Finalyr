@@ -12,6 +12,7 @@ from models.route_plan import RoutePlan
 from models.route_waypoint import RouteWaypointRecord
 from models.vehicle import Vehicle
 from services import route_plan_meta
+from services.routing import vrp_solver
 from services.routing.vrp_solver import solve_shared_ride_pdp
 from services.stadia_client import extract_route_details, route_many
 from utils.carpool_status import CARPOOL_ASSIGNED, set_carpool_stage
@@ -250,6 +251,12 @@ def build_shared_routes(
                 "waypoint_type": "destination",
                 "passenger_ids": [request.id],
             })
+        # Private routes skip PDP, but must not skip road reachability checks.
+        matrix = vrp_solver.build_stadia_distance_matrix(waypoints)
+        if matrix is None:
+            matrix = vrp_solver.build_road_distance_matrix(waypoints)
+        if matrix is None:
+            continue
         route = _finalize_route(
             vehicle_index=vehicle_index,
             waypoints=waypoints,
@@ -257,6 +264,7 @@ def build_shared_routes(
             depot_lng=depot_lng,
             enrich=enrich,
             problem="pdp",
+            fallback_distance_m=sum(matrix[i][i + 1] for i in range(len(waypoints) - 1)),
         )
         if route is not None:
             built_routes.append(route)

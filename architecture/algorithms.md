@@ -170,17 +170,22 @@ maximum. A passenger may join only before the existing route is accepted/started
 once it is underway, the request waits for another compatible route.
 
 ### Distance matrix
-3-tier cascade in `build_stadia_distance_matrix` → `build_road_distance_matrix` → `build_distance_matrix`:
+Road-distance cascade in `build_stadia_distance_matrix` → `build_road_distance_matrix`:
 1. Stadia road matrix when `STADIA_API_KEY` is set (distances converted km → m). The
    endpoint caps a request at 25×25, so a larger node list is fetched in blocks
    (`_matrix_block`), and blocks are cached by coordinate (`_fetch_matrix_block`) —
    failures are deliberately *not* cached, so a transient error can be retried
-2. Local OSM road graph (Dijkstra from `build_road_graph` radius, `max(3000, span*1.35)` m) — per-pair fallback keeps haversine where a node is unreachable
-3. Haversine great-circle fallback (always available):
-```python
-matrix[i][j] = haversine_meters(stops[i]["lat"], stops[i]["lng"],
-                                stops[j]["lat"], stops[j]["lng"])
-```
+2. Local OSM directed road graph (Dijkstra from `build_road_graph` radius,
+   `max(3000, span*1.35)` m). If a pair is unreachable, graph work exceeds the
+   node cap, or either routing source is unavailable, no unverified matrix is
+   substituted. Solvers return `routing_unavailable` with no routes; assignment
+   leaves riders clustered for retry. Conservatively, an incomplete local
+   matrix rejects the pool rather than guessing missing arcs.
+
+`build_distance_matrix` remains a geometric utility and an explicit synthetic
+test fixture, **not a passenger-assignment fallback**. Private routes skip PDP
+but require a valid road matrix too. Negative/nonfinite provider distances are
+rejected. A working OSM road matrix may still serve when Stadia is unavailable.
 Route geometry enrichment (`route_many`) is best-effort only and recorded as `routing_provider: "stadia" | "local-road-matrix"` in `route_plans.route_metadata`.
 
 ### Search strategy

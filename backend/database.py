@@ -105,12 +105,14 @@ def create_db_tables(bind_engine=None):
 
     # Backfill columns; create_all skips existing tables.
     if target_engine.dialect.name == "postgresql":
-        inspector = inspect(target_engine)
-
-        def _column_exists(table: str, column: str) -> bool:
-            return column in {item["name"] for item in inspector.get_columns(table)}
-
         with target_engine.begin() as connection:
+            # Engine-bound reflection checks out a second connection, which
+            # can wait on the table locks held by this DDL transaction.
+            inspector = inspect(connection)
+
+            def _column_exists(table: str, column: str) -> bool:
+                return column in {item["name"] for item in inspector.get_columns(table)}
+
             # create_all just ran, so every table exists and only column checks matter.
             for statement in postgres_backfill_statements(
                 table_exists=lambda _table: True,

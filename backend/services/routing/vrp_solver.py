@@ -1,4 +1,5 @@
 import functools
+import math
 import os
 from typing import List, Dict, Any, Optional
 
@@ -23,7 +24,7 @@ def shared_ride_solver_time_limit() -> int:
 
 # Stadia's matrix endpoint accepts at most 25 sources x 25 targets per call.
 MATRIX_CHUNK_SIZE = 25
-# Past this many nodes, downloading an OSM graph costs more than solving, so use straight-line distance instead.
+# Bound local graph work; larger requests require the chunked road provider.
 OSM_MATRIX_NODE_CAP = 25
 
 
@@ -46,9 +47,9 @@ def build_distance_matrix(stops: List[Dict]) -> List[List[int]]:
     return matrix
 
 
-def build_road_distance_matrix(stops: List[Dict]) -> List[List[int]]:
-    """Build drivable matrix; fallback to haversine."""
-    matrix = build_distance_matrix(stops)
+def build_road_distance_matrix(stops: List[Dict]) -> Optional[List[List[int]]]:
+    """Return directed road distances, or None; never invent unreachable arcs."""
+    matrix = [[0] * len(stops) for _ in stops]
     if len(stops) < 2:
         return matrix
 
@@ -62,11 +63,11 @@ def build_road_distance_matrix(stops: List[Dict]) -> List[List[int]]:
         ) * 1.35),
     )
     if len(stops) > OSM_MATRIX_NODE_CAP:
-        return matrix
+        return None
 
     graph = build_road_graph(centre_lat, centre_lng, dist=radius)
     if graph is None:
-        return matrix
+        return None
 
     try:
         import osmnx as ox
@@ -75,11 +76,14 @@ def build_road_distance_matrix(stops: List[Dict]) -> List[List[int]]:
         for i, origin_node in enumerate(nodes):
             lengths = nx.single_source_dijkstra_path_length(graph, origin_node, weight="length")
             for j, destination_node in enumerate(nodes):
-                if i != j and destination_node in lengths:
-                    matrix[i][j] = int(round(lengths[destination_node]))
+                if destination_node not in lengths:
+                    return None
+                distance = float(lengths[destination_node])
+                if not math.isfinite(distance) or distance < 0:
+                    return None
+                matrix[i][j] = int(round(distance))
     except Exception:
-        # Keep haversine fallback for off-road pairs.
-        return matrix
+        return None
     return matrix
 
 
@@ -123,8 +127,11 @@ def _fetch_matrix_block(
                 raise _MatrixUnavailable("matrix response contained a null distance")
             # Request in km; OR-Tools needs meters
             try:
-                parsed.append(max(0, int(round(float(distance) * 1000))))
-            except (TypeError, ValueError) as exc:
+                distance = float(distance)
+                if not math.isfinite(distance) or distance < 0:
+                    raise ValueError("distance must be finite and nonnegative")
+                parsed.append(int(round(distance * 1000)))
+            except (TypeError, ValueError, OverflowError) as exc:
                 raise _MatrixUnavailable("matrix response held a non-numeric distance") from exc
         result.append(tuple(parsed))
     return tuple(result)
@@ -224,6 +231,8 @@ def solve_vrp(
         return {"routes": [], "total_distance_m": 0, "status": "no_vehicles"}
 
     distance_matrix = build_stadia_distance_matrix(stops) or build_road_distance_matrix(stops)
+    if distance_matrix is None:
+        return {"routes": [], "total_distance_m": 0, "status": "routing_unavailable"}
     demands = [int(s.get("demand", 0)) for s in stops]
 
     manager = pywrapcp.RoutingIndexManager(len(stops), num_vehicles, depot_idx)
@@ -330,6 +339,8 @@ def solve_shared_ride_pdp(
     distance_matrix = build_stadia_distance_matrix(matrix_nodes)
     if distance_matrix is None:
         distance_matrix = build_road_distance_matrix(matrix_nodes)
+    if distance_matrix is None:
+        return {"routes": [], "total_distance_m": 0, "status": "routing_unavailable"}
 
     if vehicle_capacities and len(vehicle_capacities) == num_vehicles:
         capacities = [max(1, int(capacity)) for capacity in vehicle_capacities]
