@@ -90,7 +90,26 @@ def test_shared_pool_accepts_two_riders():
     assert [len(group) for group in groups] == [2]
 
 
-def test_cross_cell_corridor_match_keeps_each_rider_in_the_group():
+def _mock_corridor_road_matrix(monkeypatch):
+    # Matching now uses road distances. Keep these grouping regressions offline
+    # with a deterministic road order: pickup A -> pickup B -> common dropoff.
+    from services import carpool_matching
+
+    def matrix(points, targets, **kwargs):
+        positions = [0, 3, 8, 8]
+        assert len(points) == len(targets) == len(positions)
+        return {
+            "sources_to_targets": [
+                [{"distance": abs(start - end)} for end in positions]
+                for start in positions
+            ]
+        }
+
+    monkeypatch.setattr(carpool_matching, "matrix", matrix)
+
+
+def test_cross_cell_corridor_match_keeps_each_rider_in_the_group(monkeypatch):
+    _mock_corridor_road_matrix(monkeypatch)
     common_destination = (13.027276, 77.731848)
     requests = [
         type(
@@ -125,8 +144,9 @@ def test_cross_cell_corridor_match_keeps_each_rider_in_the_group():
     assert matched_ids == {279, 280}
 
 
-def test_corridor_matched_riders_share_one_cluster():
+def test_corridor_matched_riders_share_one_cluster(monkeypatch):
     """The job gave each corridor match its own cluster, so they never pooled. Coordinates are a real production pair."""
+    _mock_corridor_road_matrix(monkeypatch)
     db = SessionLocal()
     user_id = None
     try:
