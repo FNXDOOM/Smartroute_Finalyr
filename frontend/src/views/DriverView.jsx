@@ -161,7 +161,19 @@ export default function DriverView({ user, view, setView, toast }) {
   // Presence is the dispatch availability signal: a driver who closed the app must not keep receiving automatic routes.
   useEffect(() => {
     let stopped = false
-    const beat = () => { if (!stopped) void authApi.driverPresence().catch(() => {}) }
+    const beat = async () => {
+      if (stopped) return
+      try {
+        await authApi.driverPresence()
+        const updated = await vehiclesApi.list()
+        if (!stopped && Array.isArray(updated)) {
+          setVehicles(updated)
+          setMyVehicle(updated[0] || null)
+        }
+      } catch {
+        // Keep the last known state; dispatch independently checks presence expiry.
+      }
+    }
     beat()
     const timer = setInterval(beat, 30000)
     return () => { stopped = true; clearInterval(timer) }

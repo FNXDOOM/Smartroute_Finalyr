@@ -25,7 +25,8 @@ from utils.auth_utils import (
     normalize_email,
     verify_password,
 )
-from utils.ride_states import VEHICLE_OFFLINE
+from utils.ride_states import VEHICLE_OFFLINE, VEHICLE_IDLE
+from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
 
@@ -95,6 +96,14 @@ def update_driver_presence(
     if current_user.driver_status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Driver is not active")
     current_user.driver_last_seen_at = datetime.now(timezone.utc)
+    # Opening the approved driver's app makes their unassigned live vehicle
+    # available. Never reset an active route or touch presentation vehicles.
+    db.query(Vehicle).filter(
+        Vehicle.driver_user_id == current_user.id,
+        Vehicle.mode == LIVE_MODE,
+        Vehicle.status == VEHICLE_OFFLINE,
+        Vehicle.assigned_route_id.is_(None),
+    ).update({Vehicle.status: VEHICLE_IDLE}, synchronize_session="fetch")
     db.commit()
     db.refresh(current_user)
     return current_user
