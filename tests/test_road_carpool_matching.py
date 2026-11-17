@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
+import pytest
 
 from services import carpool_matching as matching
 
@@ -44,4 +45,29 @@ def test_routing_failure_does_not_create_pool(monkeypatch):
     def fail(*args, **kwargs):
         raise RuntimeError("routing unavailable")
     monkeypatch.setattr(matching, "matrix", fail)
-    assert not matching.road_detour_compatible(riders())
+    monkeypatch.setattr(matching, "route", fail)
+    with pytest.raises(RuntimeError, match="matching could not be evaluated"):
+        matching.road_detour_compatible(riders())
+
+
+def test_matrix_denial_falls_back_to_standard_routes(monkeypatch, caplog):
+    def denied(*args, **kwargs):
+        raise RuntimeError("sensitive upstream URL must not be logged")
+    requests = riders()
+    positions = {
+        (requests[0].pickup_lat, requests[0].pickup_lng): 0,
+        (requests[1].pickup_lat, requests[1].pickup_lng): 3,
+        (requests[0].dest_lat, requests[0].dest_lng): 15,
+        (requests[1].dest_lat, requests[1].dest_lng): 9,
+    }
+    def standard_route(lat1, lon1, lat2, lon2, **kwargs):
+        return {"trip": {"units": "kilometers", "status": 0, "summary": {
+            "length": abs(positions[(lat1, lon1)] - positions[(lat2, lon2)])
+        }}}
+    monkeypatch.setattr(matching, "matrix", denied)
+    monkeypatch.setattr(matching, "route", standard_route)
+    groups, ids = matching.find_cross_cell_corridor_groups(requests)
+    assert len(groups) == 1
+    assert ids == {4, 5}
+    assert "trying standard road routes" in caplog.text
+    assert "sensitive upstream" not in caplog.text

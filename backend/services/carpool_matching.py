@@ -1,6 +1,7 @@
 """Carpool matching rules (who may pool with whom, along which corridor); pure predicates, so they run without the scheduler."""
 
 import math
+import logging
 from itertools import permutations
 from typing import List, Set, Tuple
 
@@ -11,7 +12,7 @@ from models.route_plan import RoutePlan
 from models.vehicle import Vehicle
 from models.virtual_stop import VirtualStop
 from services import route_plan_meta
-from services.stadia_client import matrix
+from services.stadia_client import matrix, route
 from services.carpool_lifecycle import run_is_open_to_riders
 from services.notifications import create_notification
 from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
@@ -35,6 +36,52 @@ MAX_CARPOOL_DETOUR_RATIO = 1.45
 MIN_CARPOOL_PASSENGERS = 2
 MAX_CARPOOL_PASSENGERS = 3
 MAX_PICKUP_WALK_METERS = 150
+logger = logging.getLogger(__name__)
+
+
+def _road_distances(points):
+    """Use matrix when available, otherwise cached point-to-point road routes."""
+    try:
+        rows = matrix(points, points, costing="auto")["sources_to_targets"]
+        if len(rows) != len(points) or any(len(row) != len(points) for row in rows):
+            raise ValueError("Invalid matrix dimensions")
+        distances = [
+            [float(cell["distance"]) * 1000 for cell in row] for row in rows
+        ]
+        if any(not math.isfinite(d) or d < 0 for row in distances for d in row):
+            raise ValueError("Invalid matrix distances")
+        return distances
+    except (RuntimeError, KeyError, TypeError, ValueError, IndexError):
+        # Never log upstream URLs/exceptions: they may contain API credentials.
+        logger.warning("Carpool matrix unavailable; trying standard road routes")
+
+    cache = {}
+    distances = []
+    try:
+        for start in points:
+            row = []
+            for end in points:
+                key = (start["lat"], start["lon"], end["lat"], end["lon"])
+                if key[:2] == key[2:]:
+                    distance = 0.0
+                else:
+                    if key not in cache:
+                        result = route(*key, costing="auto")
+                        trip = result["trip"]
+                        if trip.get("status", 0) != 0 or trip.get("units") != "kilometers":
+                            raise ValueError("Invalid road route")
+                        distance = float(trip["summary"]["length"]) * 1000
+                        if not math.isfinite(distance) or distance < 0:
+                            raise ValueError("Invalid road distance")
+                        cache[key] = distance
+                    distance = cache[key]
+                row.append(distance)
+            distances.append(row)
+    except (RuntimeError, KeyError, TypeError, ValueError, IndexError):
+        raise RuntimeError(
+            "Carpool road-distance services unavailable; matching could not be evaluated"
+        ) from None
+    return distances
 
 
 def point_to_segment_meters(
@@ -142,7 +189,7 @@ def road_detour_compatible(requests: List[RideRequest]) -> bool:
     """Require a feasible road itinerary within every rider's detour budget.
 
     Pickups remain individual stops; the pedestrian walking limit is not a
-    vehicle corridor width. Fail closed if routing is unavailable.
+    vehicle corridor width. Routing failures propagate rather than reject riders.
     """
     count = len(requests)
     points = [
@@ -151,13 +198,7 @@ def road_detour_compatible(requests: List[RideRequest]) -> bool:
         {"lat": item.dest_lat, "lon": item.dest_lng} for item in requests
     ]
     try:
-        rows = matrix(points, points, costing="auto")["sources_to_targets"]
-        distances = []
-        for row in rows:
-            distances.append([
-                float(cell["distance"]) * 1000 if cell.get("distance") is not None else math.inf
-                for cell in row
-            ])
+        distances = _road_distances(points)
         if len(distances) != count * 2 or any(len(row) != count * 2 for row in distances):
             return False
         direct = [distances[i][count + i] for i in range(count)]
@@ -179,8 +220,8 @@ def road_detour_compatible(requests: List[RideRequest]) -> bool:
                     for i in range(count)
                 ):
                     return True
-    except (RuntimeError, KeyError, TypeError, ValueError, IndexError):
-        return False
+    except (KeyError, TypeError, ValueError, IndexError):
+        raise RuntimeError("Invalid carpool road-distance data") from None
     return False
 
 
