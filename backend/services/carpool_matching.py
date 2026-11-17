@@ -1,6 +1,7 @@
 """Carpool matching rules (who may pool with whom, along which corridor); pure predicates, so they run without the scheduler."""
 
 import math
+from itertools import permutations
 from typing import List, Set, Tuple
 
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from models.route_plan import RoutePlan
 from models.vehicle import Vehicle
 from models.virtual_stop import VirtualStop
 from services import route_plan_meta
+from services.stadia_client import matrix
 from services.carpool_lifecycle import run_is_open_to_riders
 from services.notifications import create_notification
 from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
@@ -136,6 +138,52 @@ def split_compatible_shared_group(requests: List[RideRequest]) -> List[List[Ride
     return groups
 
 
+def road_detour_compatible(requests: List[RideRequest]) -> bool:
+    """Require a feasible road itinerary within every rider's detour budget.
+
+    Pickups remain individual stops; the pedestrian walking limit is not a
+    vehicle corridor width. Fail closed if routing is unavailable.
+    """
+    count = len(requests)
+    points = [
+        {"lat": item.pickup_lat, "lon": item.pickup_lng} for item in requests
+    ] + [
+        {"lat": item.dest_lat, "lon": item.dest_lng} for item in requests
+    ]
+    try:
+        rows = matrix(points, points, costing="auto")["sources_to_targets"]
+        distances = []
+        for row in rows:
+            distances.append([
+                float(cell["distance"]) * 1000 if cell.get("distance") is not None else math.inf
+                for cell in row
+            ])
+        if len(distances) != count * 2 or any(len(row) != count * 2 for row in distances):
+            return False
+        direct = [distances[i][count + i] for i in range(count)]
+        if any(not math.isfinite(value) or value < 0 for value in direct):
+            return False
+        for pickups in permutations(range(count)):
+            for dropoffs in permutations(range(count, count * 2)):
+                order = pickups + dropoffs
+                travelled = [0.0]
+                for start, end in zip(order, order[1:]):
+                    travelled.append(travelled[-1] + distances[start][end])
+                if not math.isfinite(travelled[-1]):
+                    continue
+                positions = {stop: index for index, stop in enumerate(order)}
+                if all(
+                    (shared := travelled[positions[count + i]] - travelled[positions[i]])
+                    <= direct[i] + MAX_CARPOOL_DETOUR_METERS
+                    and shared <= max(1.0, direct[i]) * MAX_CARPOOL_DETOUR_RATIO
+                    for i in range(count)
+                ):
+                    return True
+    except (RuntimeError, KeyError, TypeError, ValueError, IndexError):
+        return False
+    return False
+
+
 def find_cross_cell_corridor_groups(
     requests: List[RideRequest],
 ) -> Tuple[List[List[RideRequest]], Set[int]]:
@@ -157,11 +205,7 @@ def find_cross_cell_corridor_groups(
                 ) <= MAX_DESTINATION_SPREAD_METERS
                 for other in group
             )
-            corridor_ok = all(
-                pickup_corridor_distance_meters(request, other) <= MAX_PICKUP_WALK_METERS
-                for other in group
-            )
-            if destinations_close and corridor_ok:
+            if destinations_close and road_detour_compatible([*group, request]):
                 group.append(request)
                 matched_ids.add(request.id)
                 break
