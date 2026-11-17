@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { useSignIn, useSignUp, useAuth } from '@clerk/clerk-react'
+import { useSignIn, useSignUp } from '@clerk/clerk-react'
 import { CarFront, Loader2, Lock, MailCheck } from 'lucide-react'
-import { authApi } from '../services/api.js'
+import { beginDriverOnboarding } from '../services/driverOnboarding.js'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -11,7 +11,6 @@ import { Badge } from '@/components/ui/badge'
 export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   const { isLoaded: isSignInLoaded, signIn, setActive: setSignInActive } = useSignIn()
   const { isLoaded: isSignUpLoaded, signUp, setActive: setSignUpActive } = useSignUp()
-  const { getToken } = useAuth()
 
   const [mode, setMode] = useState('signin') // 'signin' | 'signup'
   const [identifier, setIdentifier] = useState('')
@@ -23,18 +22,6 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   const [noticeMsg, setNoticeMsg] = useState('')
   const [pendingVerification, setPendingVerification] = useState(false)
   const [code, setCode] = useState('')
-
-  // Poll briefly for Clerk session token.
-  const waitForSessionToken = async (tries = 6, delayMs = 800) => {
-    for (let i = 0; i < tries; i += 1) {
-      try {
-        const token = await getToken()
-        if (token) return token
-      } catch { /* retry until attempts run out */ }
-      await new Promise((r) => setTimeout(r, delayMs))
-    }
-    return null
-  }
 
   // Driver sign-in with credentials.
   const handleDriverSignIn = async (e) => {
@@ -51,19 +38,9 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
       })
 
       if (result.status === 'complete') {
+        beginDriverOnboarding()
         await setSignInActive({ session: result.createdSessionId })
-        // Route non-drivers to driver application.
-        try {
-          await waitForSessionToken(3, 700)
-          const profile = await authApi.getProfile()
-          if (profile?.role === 'driver') {
-            await onSuccess?.()
-          } else {
-            await onSuccess?.('driver-apply')
-          }
-        } catch {
-          await onSuccess?.()
-        }
+        await onSuccess?.()
       } else {
         setErrorMsg('Additional authentication step required. Please check your email/SMS.')
       }
@@ -72,32 +49,6 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
       setErrorMsg(msg)
     } finally {
       setLoading(false)
-    }
-  }
-
-  // Promote new account to driver role.
-  const submitDriverApplication = async () => {
-    const plate = licensePlate.trim().toUpperCase()
-    if (!plate) {
-      setErrorMsg('Vehicle license plate is required to complete driver onboarding.')
-      return false
-    }
-    const token = await waitForSessionToken()
-    if (!token) {
-      setErrorMsg('Session is still initializing. Please wait a moment and try again.')
-      return false
-    }
-    try {
-      await authApi.applyDriver({ license_plate: plate }, token)
-      return true
-    } catch (err) {
-      const detail = err.response?.data?.detail
-      const msg = (typeof detail === 'string' && detail)
-        || err.errors?.[0]?.longMessage
-        || err.errors?.[0]?.message
-        || 'Driver application failed. Please check the license plate and try again.'
-      setErrorMsg(msg)
-      return false
     }
   }
 
@@ -121,9 +72,9 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
       })
 
       if (result.status === 'complete') {
+        beginDriverOnboarding(licensePlate.trim().toUpperCase())
         await setSignUpActive({ session: result.createdSessionId })
         // Promote to driver, then refresh.
-        await submitDriverApplication()
         await onSuccess?.()
       } else if (result.status === 'missing_requirements') {
         // Prepare email verification if needed.
@@ -149,8 +100,8 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
     try {
       const result = await signUp.attemptEmailAddressVerification({ code: code.trim() })
       if (result.status === 'complete') {
+        beginDriverOnboarding(licensePlate.trim().toUpperCase())
         await setSignUpActive({ session: result.createdSessionId })
-        await submitDriverApplication()
         await onSuccess?.()
       } else {
         setErrorMsg('Verification incomplete. Please try again or request a new code.')

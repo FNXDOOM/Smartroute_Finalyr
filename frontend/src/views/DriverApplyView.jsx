@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import { CarFront, Loader2, ShieldCheck } from 'lucide-react'
 import { authApi } from '../services/api.js'
+import { getDriverOnboarding, clearDriverOnboarding } from '../services/driverOnboarding.js'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -10,7 +11,7 @@ import { Label } from '@/components/ui/label'
 // Driver onboarding bridge; also plate-change form.
 export default function DriverApplyView({ user, setView, toast, onApplied }) {
   const { getToken } = useAuth()
-  const [plate, setPlate] = useState('')
+  const [plate, setPlate] = useState(() => getDriverOnboarding()?.licensePlate || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -47,6 +48,7 @@ export default function DriverApplyView({ user, setView, toast, onApplied }) {
       // Attach token explicitly.
       const token = await getToken().catch(() => null)
       await authApi.applyDriver({ license_plate: value }, token || undefined)
+      clearDriverOnboarding()
       toast?.('success', 'Driver application submitted', 'An admin will review your application shortly.')
       await onApplied?.()
     } catch (err) {

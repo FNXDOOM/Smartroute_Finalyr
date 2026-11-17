@@ -10,6 +10,7 @@ import {
   notificationsApi, authApi, createNotificationsWS,
 } from './services/api.js'
 import { cn } from '@/lib/utils'
+import { getDriverOnboarding, clearDriverOnboarding } from './services/driverOnboarding.js'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -169,7 +170,7 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
         </Tabs>
 
         {/* Simulation mode chooser */}
-        <Card className="mb-4 border-[#E2E2E2] shadow-none dark:border-[#333333]">
+        {import.meta.env.DEV && <Card className="mb-4 border-[#E2E2E2] shadow-none dark:border-[#333333]">
           <CardContent className="p-5">
             <div className="mb-3 flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6B6B6B]">Try the demo</span>
@@ -184,10 +185,10 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
               </Button>
             </div>
           </CardContent>
-        </Card>
+        </Card>}
 
         {/* Quick Role Fast-Pass */}
-        <Card className="mb-4 shadow-none">
+        {import.meta.env.DEV && <Card className="mb-4 shadow-none">
           <CardContent className="p-4">
             <p className="mb-2.5 text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-[#8A8A8A]">Quick sign in</p>
             <div className="flex gap-1.5">
@@ -202,7 +203,7 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
               </Button>
             </div>
           </CardContent>
-        </Card>
+        </Card>}
 
         {/* Dynamic Auth Body depending on active Portal */}
         {portal === 'driver' ? (
@@ -256,7 +257,7 @@ function LoadingScreen({ onGuestLogin }) {
       </div>
 
       {/* Fallback fast pass if Clerk is taking a while or blocked by Brave Shields */}
-      <Card className="loading-access-card w-full max-w-[360px] border-[#333333] text-left shadow-none">
+      {import.meta.env.DEV && <Card className="loading-access-card w-full max-w-[360px] border-[#333333] text-left shadow-none">
         <CardHeader className="pb-2">
           <CardTitle className="text-[15px] font-semibold text-white">Continue to demo</CardTitle>
           <CardDescription className="text-[13px] text-white/60">If sign-in is slow, explore instantly:</CardDescription>
@@ -269,7 +270,7 @@ function LoadingScreen({ onGuestLogin }) {
             <GraduationCap className="h-3.5 w-3.5" /> Live demo
           </Button>
         </CardContent>
-      </Card>
+      </Card>}
     </div>
   )
 }
@@ -328,6 +329,7 @@ export default function App() {
   }, [])
 
   const handleLogout = useCallback(async () => {
+    clearDriverOnboarding()
     if (fetchedRef.current) clearAppBootstrap(fetchedRef.current)
     fetchedRef.current = null
     setAuthTokenGetter(null)
@@ -343,7 +345,8 @@ export default function App() {
     const uid = clerkUserRef.current?.id
     if (!uid) return
     try {
-      const [profile] = await loadAppBootstrap(uid)
+      clearAppBootstrap(uid)
+      const profile = await authApi.getProfile()
       const cu = clerkUserRef.current
       const u = {
         id: cu?.id || '', name: profile.name || cu?.fullName || cu?.firstName || 'User',
@@ -353,7 +356,9 @@ export default function App() {
         driver_status: profile.driver_status || cu?.publicMetadata?.driver_status || 'active',
       }
       setUser(u)
-      setView(targetView || roleHome(u.role))
+      const needsApplication = getDriverOnboarding() && u.role === 'passenger'
+      if (!needsApplication) clearDriverOnboarding()
+      setView(needsApplication ? 'driver-apply' : targetView || roleHome(u.role))
     } catch { /* keep existing state; background bootstrap already ran once */ }
   }, [])
 
@@ -397,7 +402,9 @@ export default function App() {
             setUser(u)
             const notifs = notifData?.notifications || []
             setNotifications(notifs)
-            setView(roleHome(u.role))
+            const needsApplication = getDriverOnboarding() && u.role === 'passenger'
+            if (!needsApplication) clearDriverOnboarding()
+            setView(needsApplication ? 'driver-apply' : roleHome(u.role))
             const unread = notifs.filter((n) => !n.is_read).length
             toast('success', `Welcome back, ${u.name.split(' ')[0]}!`, unread > 0 ? `${unread} unread notification${unread===1?'':'s'}` : '')
           })
@@ -435,6 +442,7 @@ export default function App() {
   }, [isLoaded, isSignedIn, userId, toast])
 
   const handleGuestLogin = useCallback((role = 'admin', targetView = 'presentation-demo') => {
+    if (!import.meta.env.DEV) return
     const guestUser = {
       id: 1,
       name: role === 'admin' ? 'Demo Admin (CIT)' : role === 'driver' ? 'Demo Driver (Rajesh)' : 'Demo Rider (Ananya)',
