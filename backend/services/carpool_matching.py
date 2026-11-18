@@ -51,7 +51,13 @@ def _road_distances(points):
         if any(not math.isfinite(d) or d < 0 for row in distances for d in row):
             raise ValueError("Invalid matrix distances")
         return distances
-    except (RuntimeError, KeyError, TypeError, ValueError, IndexError):
+    except (RuntimeError, KeyError, TypeError, ValueError, IndexError) as exc:
+        # An unconfigured provider cannot serve the point-to-point fallback either;
+        # skipping it avoids ~12 sequential 10 s timeouts per candidate pair.
+        if isinstance(exc, RuntimeError) and "not configured" in str(exc):
+            raise RuntimeError(
+                "Carpool road-distance services unavailable; matching could not be evaluated"
+            ) from None
         # Never log upstream URLs/exceptions: they may contain API credentials.
         logger.warning("Carpool matrix unavailable; trying standard road routes")
 
@@ -246,7 +252,16 @@ def find_cross_cell_corridor_groups(
                 ) <= MAX_DESTINATION_SPREAD_METERS
                 for other in group
             )
-            if destinations_close and road_detour_compatible([*group, request]):
+            if not destinations_close:
+                continue
+            try:
+                compatible = road_detour_compatible([*group, request])
+            except RuntimeError:
+                # A routing outage must not abort the tick: job_runs would roll back
+                # every cluster already formed this pass. Skip this pool instead.
+                logger.warning("Carpool road matching unavailable; skipping corridor pool this tick")
+                compatible = False
+            if compatible:
                 group.append(request)
                 matched_ids.add(request.id)
                 break

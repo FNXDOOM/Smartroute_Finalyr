@@ -1,4 +1,5 @@
 import functools
+import logging
 import math
 import os
 from typing import List, Dict, Any, Optional
@@ -232,6 +233,9 @@ def solve_vrp(
 
     distance_matrix = build_stadia_distance_matrix(stops) or build_road_distance_matrix(stops)
     if distance_matrix is None:
+        logging.getLogger(__name__).warning(
+            "No road matrix from Stadia or OSM; dispatch skipped for %s stops", len(stops)
+        )
         return {"routes": [], "total_distance_m": 0, "status": "routing_unavailable"}
     demands = [int(s.get("demand", 0)) for s in stops]
 
@@ -340,6 +344,9 @@ def solve_shared_ride_pdp(
     if distance_matrix is None:
         distance_matrix = build_road_distance_matrix(matrix_nodes)
     if distance_matrix is None:
+        logging.getLogger(__name__).warning(
+            "No road matrix from Stadia or OSM; dispatch skipped for %s stops", len(matrix_nodes)
+        )
         return {"routes": [], "total_distance_m": 0, "status": "routing_unavailable"}
 
     if vehicle_capacities and len(vehicle_capacities) == num_vehicles:

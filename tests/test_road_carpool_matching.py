@@ -50,6 +50,23 @@ def test_routing_failure_does_not_create_pool(monkeypatch):
         matching.road_detour_compatible(riders())
 
 
+def test_missing_provider_skips_route_fallback(monkeypatch):
+    calls = []
+
+    def unconfigured(*args, **kwargs):
+        raise RuntimeError("Stadia API is not configured on the server")
+
+    def route_spy(*args, **kwargs):
+        calls.append(args)
+        raise RuntimeError("fallback must not be attempted")
+
+    monkeypatch.setattr(matching, "matrix", unconfigured)
+    monkeypatch.setattr(matching, "route", route_spy)
+    with pytest.raises(RuntimeError, match="matching could not be evaluated"):
+        matching.road_detour_compatible(riders())
+    assert calls == []
+
+
 def test_matrix_denial_falls_back_to_standard_routes(monkeypatch, caplog):
     def denied(*args, **kwargs):
         raise RuntimeError("sensitive upstream URL must not be logged")
