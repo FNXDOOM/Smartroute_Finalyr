@@ -137,6 +137,11 @@ export default function PassengerView({ view, setView, toast }) {
       setPickup(point.label)
       setPickupConfirmed(true)
       setGpsActive(false)
+      // Stop the GPS watch or the next fix overwrites the chosen pickup.
+      if (gpsWatchRef.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchRef.current)
+        gpsWatchRef.current = null
+      }
     } else {
       setDestinationPoint(point)
       setDest(point.label)
@@ -261,11 +266,14 @@ export default function PassengerView({ view, setView, toast }) {
 
   useEffect(() => {
     if (!activeRideId) { clearInterval(pollRef.current); return undefined }
+    let cancelled = false
     const poll = async () => {
       try {
         const v = await ridesApi.getVehicle(activeRideId)
+        if (cancelled) return
         setRideVehicle(v)
         const r = await ridesApi.getById(activeRideId)
+        if (cancelled) return
         setActiveRide(r)
         setTrips(prev => prev.map(t => t.id === r.id ? r : t))
         if (r.status === 'completed' || r.status === 'cancelled') {
@@ -285,6 +293,7 @@ export default function PassengerView({ view, setView, toast }) {
     poll()
     pollRef.current = setInterval(poll, 4000)
     return () => {
+      cancelled = true
       clearInterval(pollRef.current)
       if (dismissTimeoutRef.current) { clearTimeout(dismissTimeoutRef.current); dismissTimeoutRef.current = null }
     }

@@ -82,7 +82,10 @@ export async function openRazorpayCheckout(checkoutData, handlers, theme) {
     try {
       const rzp = new Razorpay(options)
       rzp.on('payment.failed', (resp) => {
-        handlers?.onFailure?.(resp?.error || new Error('Payment failed'))
+        const error = resp?.error || new Error('Payment failed')
+        handlers?.onFailure?.(error)
+        // Settle the promise too, or the caller stays stuck in "paying" forever.
+        finish({ cancelled: false, error })
       })
       rzp.open()
     } catch (error) {

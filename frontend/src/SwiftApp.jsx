@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import {
   loadAppBootstrap, clearAppBootstrap, setAuthTokenGetter,
-  notificationsApi, authApi, createNotificationsWS,
+  notificationsApi, authApi, createNotificationsWS, apiErrorMessage,
 } from './services/api.js'
 import { cn } from '@/lib/utils'
 import { getDriverOnboarding, clearDriverOnboarding } from './services/driverOnboarding.js'
@@ -242,7 +242,7 @@ function AuthScreen({ view, onToggle, onGuestLogin, theme, onToggleTheme, refres
 }
 
 // Loading screen
-function LoadingScreen({ onGuestLogin }) {
+function LoadingScreen({ onGuestLogin, timeout = false }) {
   return (
     <div className="loading-screen flex max-h-full min-h-0 h-full w-full flex-col items-center justify-center gap-4 overflow-y-auto p-6 text-center">
       <div className="loading-orbit" aria-hidden="true">
@@ -251,6 +251,16 @@ function LoadingScreen({ onGuestLogin }) {
       </div>
       <div className="loading-wordmark">SmartRoute</div>
       <p className="loading-caption">Finding your route…</p>
+      {timeout && (
+        <>
+          <p className="max-w-[360px] text-[13px] text-white/70">
+            Sign-in is taking longer than expected. Check your connection or content blocker, then reload.
+          </p>
+          <Button variant="outline" className="border-[#333333] bg-transparent text-white hover:bg-[#1F1F1F]" onClick={() => window.location.reload()}>
+            Reload
+          </Button>
+        </>
+      )}
       <div className="flex w-full max-w-[360px] flex-col gap-2" aria-hidden="true">
         <Skeleton className="mx-auto h-2 w-2/3 bg-white/10" />
         <Skeleton className="mx-auto h-2 w-1/2 bg-white/10" />
@@ -429,16 +439,24 @@ export default function App() {
     if (!isLoaded || !isSignedIn || !userId) return
     let ws = null
     let cancelled = false
-    getTokenRef.current().then(token => {
-      if (!token || cancelled) return
-      ws = createNotificationsWS(token, (message) => {
-        const notification = message?.notification
-        if (!notification) return
-        setNotifications(prev => [notification, ...prev.filter(n => n.id !== notification.id)].slice(0, 50))
-        toast('info', notification.title, notification.message)
-      })
-    }).catch((error) => { void error })
-    return () => { cancelled = true; ws?.close() }
+    let retry = null
+    const connect = async () => {
+      try {
+        const token = await getTokenRef.current()
+        if (!token || cancelled) return
+        ws = createNotificationsWS(token, (message) => {
+          const notification = message?.notification
+          if (!notification) return
+          setNotifications(prev => [notification, ...prev.filter(n => n.id !== notification.id)].slice(0, 50))
+          toast('info', notification.title, notification.message)
+        }, () => {
+          // Without this the inbox silently stops updating after any disconnect.
+          if (!cancelled) retry = setTimeout(connect, 3000)
+        })
+      } catch (error) { void error }
+    }
+    connect()
+    return () => { cancelled = true; clearTimeout(retry); ws?.close() }
   }, [isLoaded, isSignedIn, userId, toast])
 
   const handleGuestLogin = useCallback((role = 'admin', targetView = 'presentation-demo') => {
@@ -735,7 +753,7 @@ function RoleRouter({ user, view, setView, notifications, setNotifications, toas
     if (view === 'presentation-demo') return <PresentationDemoView {...ctx} />
     if (view === 'driver-apply') return <DriverApplyView {...ctx} onApplied={onRefreshProfile} />
     if (view === 'inbox')   return <InboxView notifications={notifications} setNotifications={setNotifications} toast={toast} />
-    if (view === 'profile') return <ProfileView user={user} />
+    if (view === 'profile') return <ProfileView user={user} toast={toast} onSaved={onRefreshProfile} />
     if (user.role === 'passenger') return <PassengerView {...ctx} />
     if (user.role === 'driver')    return <DriverView {...ctx} />
     if (user.role === 'admin')     return <AdminView {...ctx} />
@@ -754,10 +772,10 @@ function RoleRouter({ user, view, setView, notifications, setNotifications, toas
 // Inbox
 function InboxView({ notifications, setNotifications, toast }) {
   const markAll = async () => {
-    try { await notificationsApi.markAllRead(); setNotifications(notifications.map((n) => ({ ...n, is_read: true }))); toast('success', 'All notifications marked as read') } catch (error) { void error }
+    try { await notificationsApi.markAllRead(); setNotifications(prev => prev.map((n) => ({ ...n, is_read: true }))); toast('success', 'All notifications marked as read') } catch (error) { void error }
   }
   const markOne = async (id) => {
-    try { await notificationsApi.markRead(id); setNotifications(notifications.map((n) => (n.id === id ? { ...n, is_read: true } : n))) } catch (error) { void error }
+    try { await notificationsApi.markRead(id); setNotifications(prev => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))) } catch (error) { void error }
   }
   const unread = notifications.filter((n) => !n.is_read).length
   return (
@@ -802,17 +820,27 @@ function InboxView({ notifications, setNotifications, toast }) {
 }
 
 // Profile
-function ProfileView({ user }) {
+function ProfileView({ user, toast, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [name, setName] = useState(user.name)
   const [phone, setPhone] = useState(user.phone)
   const [saved, setSaved] = useState(false)
+  const [prevUser, setPrevUser] = useState(user)
+  if (prevUser !== user) {
+    setPrevUser(user)
+    setName(user.name)
+    setPhone(user.phone)
+  }
   const save = async () => {
     setSaving(true)
     try {
       await authApi.updateProfile({ name, phone })
       setSaved(true); setTimeout(() => setSaved(false), 2000)
-    } catch (error) { void error } finally { setSaving(false) }
+      toast?.('success', 'Profile saved', 'Your details were updated.')
+      onSaved?.()
+    } catch (error) {
+      toast?.('error', 'Could not save profile', apiErrorMessage(error, 'Please try again.'))
+    } finally { setSaving(false) }
   }
   return (
     <div className="mx-auto w-full max-w-[560px] space-y-5 p-4 md:p-8">

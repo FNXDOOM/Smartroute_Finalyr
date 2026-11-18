@@ -29,6 +29,7 @@ export const VIEW_META = {
   'driver-home': { title: 'Driver dashboard', crumb: 'Driver / Overview' },
   'driver-map': { title: 'Live navigation', crumb: 'Driver / Map' },
   'driver-routes': { title: 'My routes', crumb: 'Driver / Routes' },
+  'driver-carpool': { title: 'Carpool run', crumb: 'Driver / Carpool' },
   'presentation-demo': { title: 'Presentation demo', crumb: 'Demo / Shared transit simulation' },
   'admin-overview': { title: 'Operations overview', crumb: 'Admin / Overview' },
   'admin-rides': { title: 'Rides', crumb: 'Admin / Rides' },
@@ -39,6 +40,7 @@ export const VIEW_META = {
   'admin-analytics': { title: 'Analytics', crumb: 'Admin / Analytics' },
   'admin-jobs': { title: 'Jobs', crumb: 'Admin / Jobs' },
   'admin-heatmap': { title: 'Heatmap', crumb: 'Admin / Heatmap' },
+  'admin-monitoring': { title: 'Monitoring', crumb: 'Admin / Monitoring' },
 }
 
 export default function AppTopBar({

@@ -307,6 +307,11 @@ export default function AppMap({
 
   useEffect(() => { onMapClickRef.current = onMapClick }, [onMapClick])
 
+  const latestPropsRef = useRef(null)
+  useEffect(() => {
+    latestPropsRef.current = { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers, vehicles, vehicleAnimation, vehicleMotion, vehicleRenderMode, followCamera }
+  })
+
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return undefined
     let cancelled = false
@@ -347,10 +352,13 @@ export default function AppMap({
           center: [initialCenter.current[1], initialCenter.current[0]],
           zoom: initialZoom.current,
           attributionControl: true,
-          transformRequest: (url) => {
+          transformRequest: async (url) => {
             const requestUrl = backendMapUrl(url)
             if (requestUrl.includes('/maps/stadia/')) {
-              return { url: requestUrl, headers: { Authorization: `Bearer ${token}` } }
+              // Clerk session tokens expire in ~60 s; a token captured at init
+              // would 401 every later tile. Ask for a fresh one per request.
+              const fresh = await getToken().catch(() => token)
+              return { url: requestUrl, headers: { Authorization: `Bearer ${fresh || token}` } }
             }
             return { url: requestUrl }
           },
@@ -376,21 +384,17 @@ export default function AppMap({
       map.on('error', (e) => {
         const rawMessage = e?.error?.message || e?.error?.status || e?.message || ''
         const message = String(rawMessage).toLowerCase()
-        // Style and tile failures share this MapLibre event; trusting isStyleLoaded alone would hide a blank map behind its controls.
-        if (!cancelled && (
-          !map.isStyleLoaded() ||
-          message.includes('tile') ||
-          message.includes('source') ||
-          message.includes('401') ||
-          message.includes('403') ||
-          message.includes('404') ||
-          message.includes('502') ||
-          message.includes('failed') ||
-          message.includes('network')
-        )) {
+        // A single failed tile after the style loaded is transient; only a broken
+        // style or an auth rejection deserves the full-map overlay.
+        const authFailure = message.includes('401') || message.includes('403')
+        if (!cancelled && (!map.isStyleLoaded() || authFailure)) {
           setMapError('Map tiles could not be loaded. Check the backend map proxy, authentication token, and Stadia API key.')
         }
         console.warn('MapLibre event:', e?.error || e)
+      })
+
+      map.on('idle', () => {
+        if (!cancelled && map.isStyleLoaded()) setMapError('')
       })
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right')
@@ -402,9 +406,11 @@ export default function AppMap({
         if (document.documentElement.classList.contains('dark')) applyDarkMapTheme(map)
 
         setupBaseSourcesAndLayers(map)
-        updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers })
-        syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion, vehicleRenderMode)
-        animateVehicleAlongPath(map, vehicleAnimation, markersRef, routeAnimationRef, followCamera)
+        // Props may have changed while the style was loading; use the latest snapshot.
+        const snap = latestPropsRef.current || { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers, vehicles, vehicleAnimation, vehicleMotion, vehicleRenderMode, followCamera }
+        updateOverlays(map, snap)
+        syncMarkers(map, snap.vehicles, markersRef, animationRef, snap.vehicleAnimation, snap.vehicleMotion, snap.vehicleRenderMode)
+        animateVehicleAlongPath(map, snap.vehicleAnimation, markersRef, routeAnimationRef, snap.followCamera)
       })
 
       mapRef.current = map
@@ -422,11 +428,6 @@ export default function AppMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getToken])
 
-  const latestPropsRef = useRef(null)
-  useEffect(() => {
-    latestPropsRef.current = { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers, vehicles, vehicleAnimation, vehicleMotion, vehicleRenderMode, followCamera }
-  })
-
   useEffect(() => {
     const observer = new MutationObserver(() => {
       const map = mapRef.current
@@ -437,9 +438,11 @@ export default function AppMap({
         // Restore the original light style; setStyle drops custom sources/layers.
         try {
           map.setStyle(STADIA_STYLE_URL)
-          map.once('idle', () => {
+          // 'idle' never fires if tile loads fail (e.g. expired token), which used
+          // to leave the map without its overlays after a theme switch.
+          map.once('style.load', () => {
             const current = mapRef.current
-            if (!current || current !== map || !current.isStyleLoaded()) return
+            if (!current || current !== map) return
             setupBaseSourcesAndLayers(current)
             const snap = latestPropsRef.current
             if (!snap) return

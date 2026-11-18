@@ -26,7 +26,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   // Driver sign-in with credentials.
   const handleDriverSignIn = async (e) => {
     e.preventDefault()
-    if (!isSignInLoaded) return
+    if (loading || !isSignInLoaded) return
     setErrorMsg('')
     setNoticeMsg('')
     setLoading(true)
@@ -55,7 +55,7 @@ export default function DriverLoginForm({ onSuccess, onSwitchToPassenger }) {
   // Driver sign-up and vehicle registration.
   const handleDriverSignUp = async (e) => {
     e.preventDefault()
-    if (!isSignUpLoaded) return
+    if (loading || !isSignUpLoaded) return
     setErrorMsg('')
     setNoticeMsg('')
     setLoading(true)

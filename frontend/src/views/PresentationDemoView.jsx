@@ -804,7 +804,7 @@ export default function PresentationDemoView({ toast }) {
             return (
               <button
                 key={stg.id}
-                onClick={!isPlaying ? triggers[idx] : undefined}
+                onClick={!isPlaying ? () => triggers[idx]() : undefined}
                 disabled={isPlaying}
                 aria-current={isActive ? 'step' : undefined}
                 className={cn(

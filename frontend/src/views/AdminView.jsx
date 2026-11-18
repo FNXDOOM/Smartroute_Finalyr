@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   Activity, ArrowLeft, ArrowRight, BarChart3, Ban, CarFront, CheckCircle2, CheckCheck,
   ChevronRight, CircleDot, ClipboardList, Clock, FlaskConical, Flame, Gauge, Info,
@@ -1019,6 +1019,8 @@ function JobsPanel({ setView, toast }) {
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(null)
+  const refreshTimerRef = useRef(null)
+  useEffect(() => () => clearTimeout(refreshTimerRef.current), [])
 
   const load = useCallback(async () => {
     try {
@@ -1038,7 +1040,8 @@ function JobsPanel({ setView, toast }) {
       const fn = type === 'auto_dispatch' ? jobsApi.runAutoDispatch : type === 'clustering' ? jobsApi.runClustering : type === 'demand' ? jobsApi.runDemand : jobsApi.runRebalance
       const res = await fn()
       toast('success', 'Job started', res?.message || (res?.clusters_formed !== undefined ? `${res.clusters_formed} groups formed` : 'Done'))
-      setTimeout(load, 1500)
+      clearTimeout(refreshTimerRef.current)
+      refreshTimerRef.current = setTimeout(load, 1500)
     } catch (e) {
       toast('error', 'Job failed', apiErrorMessage(e, ''))
     } finally {
@@ -1144,11 +1147,15 @@ function HeatmapPanel({ setView, toast }) {
   const [box, setBox] = useState({ minLat: '12.80', maxLat: '13.10', minLng: '77.40', maxLng: '77.80' })
 
   const load = useCallback(async () => {
+    const minLat = Number(box.minLat), maxLat = Number(box.maxLat)
+    const minLng = Number(box.minLng), maxLng = Number(box.maxLng)
+    // Ignore half-typed bounds ("12.") instead of firing 422s on every keystroke.
+    if (![minLat, maxLat, minLng, maxLng].every(Number.isFinite) || minLat >= maxLat || minLng >= maxLng) return
     setLoading(true)
     try {
       const res = await predictApi.heatmap({
-        min_lat: Number(box.minLat), max_lat: Number(box.maxLat),
-        min_lng: Number(box.minLng), max_lng: Number(box.maxLng),
+        min_lat: minLat, max_lat: maxLat,
+        min_lng: minLng, max_lng: maxLng,
       })
       const list = res?.cells || []
       setCells(list)
@@ -1159,7 +1166,10 @@ function HeatmapPanel({ setView, toast }) {
       setLoading(false)
     }
   }, [box, toast])
-  useDeferredLoad(load)
+  useEffect(() => {
+    const timer = setTimeout(() => { void load() }, 400)
+    return () => clearTimeout(timer)
+  }, [load])
 
   const sorted = useMemo(() => [...cells].sort((a, b) => (b.predicted_demand || 0) - (a.predicted_demand || 0)), [cells])
   const set = (k) => (e) => setBox((p) => ({ ...p, [k]: e.target.value }))

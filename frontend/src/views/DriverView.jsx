@@ -279,7 +279,7 @@ export default function DriverView({ user, view, setView, toast }) {
     const resolvedRoute = overrideRoute !== undefined ? overrideRoute : navRoute
     // Restart when switching ride or persisted route context.
     const switchingContext = (resolvedRide?.id ?? null) !== (runRide?.id ?? (simPathRef.current?.rideId ?? null))
-      || (resolvedRoute?.id ?? null) !== (simPathRef.current?.routeId ?? null)
+      || (resolvedRoute?.route_id ?? resolvedRoute?.id ?? null) !== (simPathRef.current?.routeId ?? null)
     let p = simProgress >= 1 || (switchingContext && simProgress > 0) ? 0 : simProgress
     let path
     if (p === 0) {
@@ -292,7 +292,7 @@ export default function DriverView({ user, view, setView, toast }) {
         toast('info', 'No assigned route', 'Optimize and assign a route before starting navigation.')
         return
       }
-      simPathRef.current = { path, rideId: resolvedRide?.id ?? null, routeId: resolvedRoute?.id ?? null }
+      simPathRef.current = { path, rideId: resolvedRide?.id ?? null, routeId: resolvedRoute?.route_id ?? resolvedRoute?.id ?? null }
       setRunRide(resolvedRide ?? null)
       setNavRoute(resolvedRoute ?? null)
       simFiredRef.current = new Set()
