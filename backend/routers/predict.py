@@ -3,9 +3,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
+from models.demand_snapshot import DemandSnapshot
 from models.ride_request import RideRequest
 from models.user import User
 from schemas.predict import (
@@ -20,6 +22,14 @@ from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
 
+
+def latest_demand_snapshots_query(db: Session, lookback_days: int):
+    """Latest demand-job snapshots, shared by the heatmap and EXPLAIN script."""
+    latest_job_id = db.query(func.max(DemandSnapshot.job_run_id)).scalar_subquery()
+    return db.query(DemandSnapshot).filter(
+        DemandSnapshot.job_run_id == latest_job_id,
+        DemandSnapshot.lookback_days == lookback_days,
+    )
 
 
 @router.get("/demand", response_model=DemandPredictionResult)
@@ -72,6 +82,35 @@ def predict_demand_heatmap(
         )
 
     threshold = reference_time or datetime.now(timezone.utc)
+
+    # Use latest snapshots only for their own resolution and lookback window.
+    if reference_time is None and resolution == 9:
+        snapshot_rows = (
+            latest_demand_snapshots_query(db, lookback_days)
+            .filter(
+                DemandSnapshot.lat >= min_lat,
+                DemandSnapshot.lat <= max_lat,
+                DemandSnapshot.lng >= min_lng,
+                DemandSnapshot.lng <= max_lng,
+            )
+            .all()
+        )
+        if snapshot_rows:
+            return DemandHeatmapResponse(
+                    status="ok",
+                    reference_time=threshold,
+                    cells=[
+                        DemandHeatmapCell(
+                            h3_index=row.h3_index,
+                            latitude=row.lat,
+                            longitude=row.lng,
+                            historical_request_count=row.historical_request_count,
+                            predicted_demand=row.predicted_demand,
+                        )
+                        for row in snapshot_rows
+                    ],
+                )
+
     query = (
         db.query(RideRequest)
         .filter(

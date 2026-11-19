@@ -126,6 +126,10 @@ Settings live in `backend/.env`; the full list is in
 | `CLERK_JWKS_URL`, `CLERK_ISSUER` | For Clerk sign-in | Clerk JWT verification |
 | `CLERK_SECRET_KEY` | No | Clerk metadata sync |
 | `STADIA_API_KEY` | For maps | Maps, geocoding and routing |
+| `STADIA_CACHE_ENABLED`, `STADIA_CACHE_MAX_ENTRIES` | No | Per-process Stadia response cache (defaults true/2000) |
+| `TRACKING_BROADCAST_INTERVAL_SECONDS` | No | Tracking snapshot poll interval (default 2) |
+| `ROUTE_SOLVER_MIN_SECONDS`, `ROUTE_SOLVER_MAX_SECONDS` | No | Adaptive OR-Tools budget tiers (defaults 2/15) |
+| `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_TIMEOUT` | No | PostgreSQL pool tuning (defaults 10/20/30) |
 | `ALLOWED_ORIGINS`, `CLERK_AUTHORIZED_PARTIES` | Production | Public HTTPS origins |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | No | Payments return 503 without them |
 | `APP_ENV` | No | `development` (default) or `production` |

@@ -467,6 +467,22 @@ its hub. A pickup-and-delivery route ends at its last `destination`.
 - `400` — Empty vehicle list
 - `404` — One or more vehicle/stop IDs not found
 
+The solver budget adapts to pool size: 2 s for ≤3 pairs, 4 s for ≤6, 8 s for ≤12,
+then `ROUTE_SOLVER_MAX_SECONDS` (default 15).
+
+### `POST /route/optimize/async`
+Queue the same solve for the worker and return immediately. Same auth/role rules and
+`route_optimize` rate-limit bucket as `/route/optimize`.
+
+**Responses:** `202` — `{ "job_id": 12, "status": "queued" }`
+
+### `GET /route/optimize/jobs/{job_id}`
+Return the queued/running/succeeded/failed job. Only the owner or an admin may read it.
+
+```json
+{ "job_id": 12, "status": "succeeded", "result": { "status": "solved", "routes": [] }, "error_message": null }
+```
+
 ---
 
 ### `GET /route/history`

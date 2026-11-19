@@ -6,9 +6,11 @@ from typing import Any, Dict, Iterable, List, Optional
 import pickle
 
 import numpy as np
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models.ride_request import RideRequest
+from services.clustering.h3_partitioner import get_h3_index
 from services.prediction.feature_engineering import (
     build_demand_features,
     features_to_dict,
@@ -102,6 +104,98 @@ def predict_zone_demand(
         "features": feature_dict,
     }
 
+def demand_count_query(db: Session, threshold: datetime):
+    """Grouped live-ride counts, shared by the demand jobs and EXPLAIN script."""
+    return (
+        db.query(RideRequest.h3_index, func.count(RideRequest.id))
+        .filter(
+            RideRequest.request_time >= threshold,
+            RideRequest.mode == LIVE_MODE,
+            RideRequest.h3_index.isnot(None),
+        )
+        .group_by(RideRequest.h3_index)
+    )
+
+
+def count_requests_by_h3(
+    db: Session,
+    *,
+    reference_time: datetime,
+    lookback_days: int,
+    resolution: int = 9,
+) -> Dict[str, int]:
+    """One grouped query plus a small null-H3 fallback, instead of a count per zone."""
+    threshold = reference_time - timedelta(days=lookback_days)
+    counts = dict(demand_count_query(db, threshold).all())
+    null_rows = (
+        db.query(RideRequest.pickup_lat, RideRequest.pickup_lng)
+        .filter(
+            RideRequest.request_time >= threshold,
+            RideRequest.mode == LIVE_MODE,
+            RideRequest.h3_index.is_(None),
+        )
+        .all()
+    )
+    for lat, lng in null_rows:
+        h3_index = get_h3_index(lat, lng, resolution=resolution)
+        counts[h3_index] = counts.get(h3_index, 0) + 1
+    return {key: int(value) for key, value in counts.items()}
+
+
+def predict_zone_demands(
+    db: Session,
+    *,
+    h3_indexes: Iterable[str],
+    reference_time: datetime,
+    lookback_days: int = 30,
+    counts_by_h3: Optional[Dict[str, int]] = None,
+) -> List[Dict[str, Any]]:
+    """Batch demand prediction: one count query and one model.predict call."""
+    indexes = sorted({index for index in h3_indexes if index})
+    if not indexes:
+        return []
+    counts = counts_by_h3 or count_requests_by_h3(
+        db, reference_time=reference_time, lookback_days=lookback_days
+    )
+    features: List[Dict[str, int]] = []
+    for h3_index in indexes:
+        engineered = build_demand_features(
+            h3_index=h3_index,
+            reference_time=reference_time,
+            historical_count=int(counts.get(h3_index, 0)),
+        )
+        features.append(features_to_dict(engineered))
+
+    model = load_model()
+    predictions: List[Optional[float]] = [None] * len(indexes)
+    if model is not None:
+        matrix = np.array(
+            [[feature[column] for column in FEATURE_ORDER] for feature in features],
+            dtype=float,
+        )
+        predictions = [float(value) for value in np.asarray(model.predict(matrix)).reshape(-1)]
+
+    results: List[Dict[str, Any]] = []
+    for h3_index, feature, prediction in zip(indexes, features, predictions):
+        if prediction is None:
+            predicted = _fallback_prediction(feature)
+            method = "heuristic_fallback"
+            model_name = "no_model_available"
+        else:
+            predicted = max(0.0, float(prediction))
+            method = "xgboost_model"
+            model_name = MODEL_PATH.name
+        results.append({
+            "h3_index": h3_index,
+            "historical_request_count": int(feature["historical_count"]),
+            "predicted_demand": predicted,
+            "model_name": model_name,
+            "method": method,
+            "features": feature,
+        })
+    return results
+
+
 def build_heatmap_cells(
     db: Session,
     *,
@@ -109,14 +203,10 @@ def build_heatmap_cells(
     lookback_days: int,
     h3_indexes: Iterable[str],
 ) -> List[Dict[str, Any]]:
-    cells: List[Dict[str, Any]] = []
-    for h3_index in sorted(set(h3_indexes)):
-        result = predict_zone_demand(
-            db,
-            h3_index=h3_index,
-            reference_time=reference_time,
-            lookback_days=lookback_days,
-        )
-        cells.append(result)
-    return cells
+    return predict_zone_demands(
+        db,
+        h3_indexes=h3_indexes,
+        reference_time=reference_time,
+        lookback_days=lookback_days,
+    )
 

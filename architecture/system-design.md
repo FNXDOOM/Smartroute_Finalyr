@@ -56,10 +56,14 @@ Map data flows through the FastAPI backend (all require Clerk JWT; all geo endpo
 - `/maps/stadia/style.json` + `/maps/stadia/resource/*` supply the Stadia style/tiles/sprites with the server-side `api_key` stripped and rewritten to the proxy prefix (prevents key leakage to the browser)
 - `/geocode/suggest|search|reverse` supply Stadia autocomplete/forward/reverse geocoding (India-filtered)
 - `/routing/route|nearest-road|map-match|matrix` supply Stadia road routing, snapping, map matching, and ≤25×25 cost matrices
+- Stadia geocode/route/matrix/nearest/map-match responses use a bounded in-process TTL
+  cache keyed on rounded coordinates and costing; it is per API worker (no Redis yet)
 - `/tracking/feed` supplies vehicle locations and recent tracking events.
 - `/tracking/ws` with the `bearer` WebSocket subprotocol supplies scoped live vehicle snapshots: admins see
   the fleet, drivers see their assigned vehicle, and passengers see only a
-  vehicle assigned to one of their active rides.
+  vehicle assigned to one of their active rides. New clients get a full snapshot
+  immediately; the 2-second loop skips idle DB work and only broadcasts changes
+  (or a 30-second keepalive).
 - `/predict/heatmap` supplies demand cells rendered as map circles.
 - Ride pickup and destination coordinates are rendered as markers and a route
   line after the ride form resolves addresses through the configured geocoder.

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Index
 from sqlalchemy.sql import func
 
 from database import Base
@@ -6,6 +6,11 @@ from database import Base
 
 class DemandSnapshot(Base):
     __tablename__ = "demand_snapshots"
+    __table_args__ = (
+        # Latest-snapshot and per-cell history reads.
+        Index("ix_demand_snapshots_created_at", "created_at"),
+        Index("ix_demand_snapshots_h3_index_created_at", "h3_index", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     job_run_id = Column(Integer, ForeignKey("job_runs.id"), nullable=False, index=True)

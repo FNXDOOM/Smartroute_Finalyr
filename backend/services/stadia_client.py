@@ -1,14 +1,17 @@
 """Small server-side client for Stadia geocoding and Valhalla routing."""
 
 import json
+import threading
 import time
 from functools import lru_cache
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlencode
-from urllib.request import Request, urlopen
+
+import httpx
 
 from config import (
     STADIA_API_KEY,
+    STADIA_CACHE_ENABLED,
+    STADIA_CACHE_MAX_ENTRIES,
     STADIA_GEOCODER_URL,
     STADIA_MAP_MATCH_URL,
     STADIA_MATRIX_URL,
@@ -18,6 +21,26 @@ from config import (
     STADIA_TILES_URL,
     STADIA_MAP_STYLE_PATH,
 )
+from services import metrics
+from utils.ttl_cache import CACHE_MISS, TTLCache
+
+_HTTP_CLIENT_LOCK = threading.Lock()
+_http_client: httpx.Client | None = None
+
+# Per-process cache: N workers each keep their own copy (swap for Redis later).
+_cache = TTLCache(max_entries=STADIA_CACHE_MAX_ENTRIES)
+_TRAFFIC_COSTINGS = {"auto_traffic", "auto_traffic_premium"}
+
+
+def _get_http_client() -> httpx.Client:
+    global _http_client
+    if _http_client is None:
+        with _HTTP_CLIENT_LOCK:
+            if _http_client is None:
+                _http_client = httpx.Client(
+                    limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                )
+    return _http_client
 
 
 def _request_json(url: str, *, params: dict | None = None, body: dict | None = None) -> dict:
@@ -29,19 +52,25 @@ def _request_json(url: str, *, params: dict | None = None, body: dict | None = N
     query["api_key"] = STADIA_API_KEY
     request_url = f"{url}?{urlencode(query)}"
     headers = {"Accept": "application/json", "User-Agent": "SmartRouteAI/1.0"}
-    data = None
     if body is not None:
         headers["Content-Type"] = "application/json"
-        data = json.dumps(body).encode("utf-8")
 
-    request = Request(request_url, data=data, headers=headers, method="POST" if body else "GET")
     try:
-        with urlopen(request, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RuntimeError("Stadia request failed") from exc
-    except Exception as exc:
-        raise RuntimeError(f"Stadia request failed: {exc}") from exc
+        response = _get_http_client().request(
+            "POST" if body is not None else "GET",
+            request_url,
+            headers=headers,
+            json=body,
+            timeout=10.0,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError("Stadia request failed")
+        return response.json()
+    except RuntimeError:
+        raise
+    except Exception:
+        # Never include the request URL or exception text: both can carry the API key.
+        raise RuntimeError("Stadia request failed") from None
 
 
 def _request_bytes(url: str, *, params: dict | None = None) -> tuple[bytes, str]:
@@ -52,18 +81,45 @@ def _request_bytes(url: str, *, params: dict | None = None) -> tuple[bytes, str]
     query = dict(params or {})
     query["api_key"] = STADIA_API_KEY
     request_url = f"{url}?{urlencode(query)}"
-    request = Request(
-        request_url,
-        headers={"Accept": "*/*", "User-Agent": "SmartRouteAI/1.0"},
-        method="GET",
-    )
     try:
-        with urlopen(request, timeout=15) as response:
-            return response.read(), response.headers.get_content_type()
-    except (HTTPError, URLError, TimeoutError) as exc:
-        raise RuntimeError("Stadia map resource request failed") from exc
-    except Exception as exc:
-        raise RuntimeError(f"Stadia map resource request failed: {exc}") from exc
+        response = _get_http_client().get(
+            request_url,
+            headers={"Accept": "*/*", "User-Agent": "SmartRouteAI/1.0"},
+            timeout=15.0,
+        )
+        if response.status_code >= 400:
+            raise RuntimeError("Stadia map resource request failed")
+        content_type = response.headers.get("content-type", "application/octet-stream").split(";", 1)[0]
+        return response.content, content_type
+    except RuntimeError:
+        raise
+    except Exception:
+        raise RuntimeError("Stadia map resource request failed") from None
+
+
+def _round_coord(value: float) -> float:
+    return round(float(value), 5)
+
+
+def _locations_key(locations: list[dict]) -> tuple:
+    return tuple(
+        (_round_coord(point["lat"]), _round_coord(point.get("lng", point.get("lon"))))
+        for point in locations
+    )
+
+
+def _cached(endpoint: str, key, ttl_seconds: int, compute):
+    """Return a cached result or compute and cache one; failures are never cached."""
+    if not STADIA_CACHE_ENABLED:
+        return compute()
+    cached = _cache.get((endpoint, key))
+    if cached is not CACHE_MISS:
+        metrics.STADIA_CACHE_HITS.labels(endpoint).inc()
+        return cached
+    metrics.STADIA_CACHE_MISSES.labels(endpoint).inc()
+    result = compute()
+    _cache.set((endpoint, key), result, ttl_seconds)
+    return result
 
 
 def fetch_stadia_style() -> dict:
@@ -102,25 +158,48 @@ def fetch_stadia_resource(resource_path: str) -> tuple[bytes, str]:
 def autocomplete(text: str, *, focus_point: str | None = None) -> dict:
     """Return location suggestions for a search term."""
     params = {"text": text, "lang": "en", "boundary.country": "IND", "size": 8}
+    focus_key = None
     if focus_point:
         lng, lat = focus_point.split(",", 1)
         params["focus.point.lat"] = lat
         params["focus.point.lon"] = lng
-    return _request_json(f"{STADIA_GEOCODER_URL}/autocomplete", params=params)
+        try:
+            focus_key = (round(float(lng), 2), round(float(lat), 2))
+        except ValueError:
+            focus_key = focus_point
+    key = (text.strip().lower(), focus_key)
+    return _cached(
+        "autocomplete",
+        key,
+        10 * 60,
+        lambda: _request_json(f"{STADIA_GEOCODER_URL}/autocomplete", params=params),
+    )
 
 
 def reverse_geocode(lat: float, lng: float) -> dict:
     """Resolve coordinates to a nearby address."""
-    return _request_json(
-        f"{STADIA_GEOCODER_URL}/reverse", params={"point.lat": lat, "point.lon": lng}
+    key = (round(float(lat), 4), round(float(lng), 4))
+    return _cached(
+        "reverse_geocode",
+        key,
+        24 * 60 * 60,
+        lambda: _request_json(
+            f"{STADIA_GEOCODER_URL}/reverse", params={"point.lat": lat, "point.lon": lng}
+        ),
     )
 
 
 def forward_geocode(text: str) -> dict:
     """Resolve a place name to matching locations."""
-    return _request_json(
-        f"{STADIA_GEOCODER_URL}/search",
-        params={"text": text, "lang": "en", "boundary.country": "IND", "size": 8},
+    key = text.strip().lower()
+    return _cached(
+        "forward_geocode",
+        key,
+        60 * 60,
+        lambda: _request_json(
+            f"{STADIA_GEOCODER_URL}/search",
+            params={"text": text, "lang": "en", "boundary.country": "IND", "size": 8},
+        ),
     )
 
 
@@ -148,43 +227,65 @@ def route_many(locations: list[dict], *, costing: str | None = None) -> dict:
         "units": "kilometers",
         "directions_options": {"units": "kilometers"},
     }
-    if selected_costing in {"auto_traffic", "auto_traffic_premium"}:
+    if selected_costing in _TRAFFIC_COSTINGS:
         # type 0 = depart now (live traffic).
         body["date_time"] = {"type": 0}
-    return _request_json(
-        STADIA_ROUTER_URL,
-        body=body,
-    )
+    ttl = 5 * 60 if selected_costing in _TRAFFIC_COSTINGS else 60 * 60
+    key = (selected_costing, _locations_key(locations))
+    return _cached("route", key, ttl, lambda: _request_json(STADIA_ROUTER_URL, body=body))
 
 
 def nearest_roads(locations: list[dict]) -> dict:
     """Snap locations to their nearest roads."""
-    return _request_json(STADIA_NEAREST_ROADS_URL, body={"locations": locations, "verbose": True})
+    key = _locations_key(locations)
+    return _cached(
+        "nearest_roads",
+        key,
+        60 * 60,
+        lambda: _request_json(
+            STADIA_NEAREST_ROADS_URL, body={"locations": locations, "verbose": True}
+        ),
+    )
 
 
 def matrix(sources: list[dict], targets: list[dict], *, costing: str | None = None) -> dict:
     """Return a travel-cost matrix for source and target locations."""
-    return _request_json(
-        STADIA_MATRIX_URL,
-        body={
-            "sources": sources,
-            "targets": targets,
-            "costing": costing or STADIA_ROUTING_COSTING,
-            "units": "kilometers",
-        },
+    selected_costing = costing or STADIA_ROUTING_COSTING
+    key = (selected_costing, _locations_key(sources), _locations_key(targets))
+    ttl = 5 * 60 if selected_costing in _TRAFFIC_COSTINGS else 60 * 60
+    return _cached(
+        "matrix",
+        key,
+        ttl,
+        lambda: _request_json(
+            STADIA_MATRIX_URL,
+            body={
+                "sources": sources,
+                "targets": targets,
+                "costing": selected_costing,
+                "units": "kilometers",
+            },
+        ),
     )
 
 
 def map_match(locations: list[dict], *, costing: str | None = None) -> dict:
     """Match an ordered coordinate trace to roads."""
-    return _request_json(
-        STADIA_MAP_MATCH_URL,
-        body={
-            "shape": locations,
-            "costing": costing or STADIA_ROUTING_COSTING,
-            "units": "kilometers",
-            "linear_references": True,
-        },
+    selected_costing = costing or STADIA_ROUTING_COSTING
+    key = (selected_costing, _locations_key(locations))
+    return _cached(
+        "map_match",
+        key,
+        60 * 60,
+        lambda: _request_json(
+            STADIA_MAP_MATCH_URL,
+            body={
+                "shape": locations,
+                "costing": selected_costing,
+                "units": "kilometers",
+                "linear_references": True,
+            },
+        ),
     )
 
 

@@ -3,7 +3,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy.types import String
 from sqlalchemy import inspect, text
 from geoalchemy2 import Geometry
-from config import DATABASE_URL
+from config import DATABASE_URL, DB_MAX_OVERFLOW, DB_POOL_SIZE, DB_POOL_TIMEOUT
 
 if not DATABASE_URL:
     raise RuntimeError(
@@ -11,10 +11,22 @@ if not DATABASE_URL:
         "before starting the backend."
     )
 
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+def build_engine_kwargs(database_url: str) -> dict:
+    """SQLite needs its connect args; PostgreSQL gets a pre-ping pool."""
+    if database_url.startswith("sqlite"):
+        return {"connect_args": {"check_same_thread": False}}
+    return {
+        "pool_pre_ping": True,
+        "pool_size": DB_POOL_SIZE,
+        "max_overflow": DB_MAX_OVERFLOW,
+        "pool_timeout": DB_POOL_TIMEOUT,
+        "pool_recycle": 1800,
+    }
+
 
 try:
-    engine = create_engine(DATABASE_URL, connect_args=connect_args)
+    engine = create_engine(DATABASE_URL, **build_engine_kwargs(DATABASE_URL))
 except Exception as exc:
     if DATABASE_URL.startswith("sqlite"):
         raise
@@ -73,6 +85,29 @@ def postgres_backfill_statements(*, table_exists, column_exists):
         yield "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS is_shared BOOLEAN NOT NULL DEFAULT true"
         yield "CREATE INDEX IF NOT EXISTS ix_ride_requests_is_shared ON ride_requests (is_shared)"
         yield "ALTER TABLE ride_requests ADD COLUMN IF NOT EXISTS carpool_status VARCHAR"
+    if table_exists("ride_requests"):
+        yield "CREATE INDEX IF NOT EXISTS ix_ride_requests_ride_mode_status ON ride_requests (ride_mode, status)"
+        yield "CREATE INDEX IF NOT EXISTS ix_ride_requests_h3_index_status ON ride_requests (h3_index, status)"
+        yield "CREATE INDEX IF NOT EXISTS ix_ride_requests_status_request_time ON ride_requests (status, request_time)"
+        yield "CREATE INDEX IF NOT EXISTS ix_ride_requests_cluster_id ON ride_requests (cluster_id)"
+        yield "CREATE INDEX IF NOT EXISTS ix_ride_requests_virtual_stop_id ON ride_requests (virtual_stop_id)"
+    if table_exists("demand_snapshots"):
+        yield "CREATE INDEX IF NOT EXISTS ix_demand_snapshots_created_at ON demand_snapshots (created_at)"
+        yield (
+            "CREATE INDEX IF NOT EXISTS ix_demand_snapshots_h3_index_created_at "
+            "ON demand_snapshots (h3_index, created_at)"
+        )
+    if table_exists("notifications"):
+        yield (
+            "CREATE INDEX IF NOT EXISTS ix_notifications_user_id_is_read_created_at "
+            "ON notifications (user_id, is_read, created_at)"
+        )
+    if table_exists("tracking_events"):
+        yield "CREATE INDEX IF NOT EXISTS ix_tracking_events_created_at ON tracking_events (created_at)"
+        yield (
+            "CREATE INDEX IF NOT EXISTS ix_tracking_events_vehicle_id_created_at "
+            "ON tracking_events (vehicle_id, created_at)"
+        )
 
 
 def drop_db_tables(bind_engine=None):

@@ -11,11 +11,11 @@ Every dispatch query is scoped with `apply_ride_scope(query, mode, demo_run_id)`
 Jobs are managed by `backend/services/background_jobs.py`. On startup (`lifespan` in `main.py` for the broadcast loop, `worker.py` for jobs), asyncio Tasks are created:
 
 ```python
-loop.create_task(_run_periodic("cluster_pending_rides",    60,  run_cluster_job))
 loop.create_task(_run_periodic("auto_dispatch_pipeline",   60,  run_scheduled_auto_dispatch_job))
 loop.create_task(_run_periodic("refresh_demand_snapshots", 300, run_demand_refresh_job))
 loop.create_task(_run_periodic("rebalance_idle_vehicles",  300, run_vehicle_rebalance_job))
 loop.create_task(_run_periodic("simulate_ride_dispatch",   5,   run_simulate_ride_dispatch_job))
+loop.create_task(_run_periodic("optimize_route_jobs",      2,   run_optimize_jobs))
 # plus on-demand only: run_auto_dispatch_pipeline (POST /jobs/run/auto-dispatch)
 ```
 
@@ -32,8 +32,8 @@ On server shutdown, all tasks are cancelled and awaited via `stop_background_job
 
 ## Job 1: `cluster_pending_rides`
 
-**Interval:** every 60 seconds  
-**Function:** `run_cluster_job(db)`  
+**Interval:** every 60 seconds
+**Function:** `run_cluster_job(db)`
 **Manual trigger:** `POST /jobs/run/clustering`
 
 ### What it does
@@ -90,8 +90,8 @@ On exception: rollback, merge job_run, mark as `failed` with error_message, comm
 
 ## Job 2: `refresh_demand_snapshots`
 
-**Interval:** every 300 seconds (5 minutes)  
-**Function:** `run_demand_refresh_job(db)`  
+**Interval:** every 300 seconds (5 minutes)
+**Function:** `run_demand_refresh_job(db)`
 **Manual trigger:** `POST /jobs/run/demand`
 
 ### What it does
@@ -128,8 +128,8 @@ For each H3 zone that has had rides in the last 30 days, predicts current demand
 
 ## Job 3: `rebalance_idle_vehicles`
 
-**Interval:** every 300 seconds (5 minutes)  
-**Function:** `run_vehicle_rebalance_job(db)`  
+**Interval:** every 300 seconds (5 minutes)
+**Function:** `run_vehicle_rebalance_job(db)`
 **Manual trigger:** `POST /jobs/run/rebalance`
 
 ### What it does
@@ -168,7 +168,7 @@ Vehicles are NOT automatically repositioned. The suggestions appear in `GET /job
 
 ## Job 4: `simulate_ride_dispatch`
 
-**Interval:** every 5 seconds  
+**Interval:** every 5 seconds
 **Function:** `run_simulate_ride_dispatch_job(db)`
 
 ### What it does
@@ -215,8 +215,8 @@ in_progress  → completed
 
 ## Job 5 (on-demand): `auto_dispatch_pipeline`
 
-**Interval:** none (manual only)  
-**Function:** `run_auto_dispatch_pipeline(db, depot_lat=12.9784, depot_lng=77.6408, mode, demo_run_id)`  
+**Interval:** none (manual only)
+**Function:** `run_auto_dispatch_pipeline(db, depot_lat=12.9784, depot_lng=77.6408, mode, demo_run_id)`
 **Manual trigger:** `POST /jobs/run/auto-dispatch?mode=live|presentation_demo&demo_run_id=...` (live = admin/driver only; demo = any authenticated user)
 
 ### What it does
@@ -234,32 +234,42 @@ vehicle is released. This prevents an offline driver from blocking passengers.
 
 The plans it writes carry stops but no road geometry — a client reading the plan later resolves it once (`GET /route/history/{route_id}`), and that result is cached on the plan. Demo mode uses/creates the reserved `DEMO-PRESENTATION-01` vehicle (capacity 4) so presentations never consume live fleet.
 
+The pooled solver uses an adaptive budget: 2 s for up to 3 pickup/delivery pairs,
+4 s for up to 6, 8 s for up to 12, then `ROUTE_SOLVER_MAX_SECONDS` (default 15).
+
 ### Writes to
 - Same tables as Job 1 plus `route_plans`, `route_waypoints`, `vehicles`, `notifications`
 - `job_runs` with `job_name="auto_dispatch_pipeline"` (`is_scheduled=False` for manual triggers)
 
 ---
 
+## Job 6: `optimize_route_jobs`
+
+**Interval:** every 2 seconds
+**Function:** `run_optimize_jobs(db)`
+**Queue:** `POST /route/optimize/async` creates a `job_runs` row with
+`job_name="optimize_route"` and `status="queued"`.
+
+The worker claims one queued job at a time (`SELECT ... FOR UPDATE SKIP LOCKED`
+on PostgreSQL; a conditional status update re-checked on SQLite), runs the same
+`run_route_optimization()` path as the sync endpoint, and writes the response
+into `summary.result`. `GET /route/optimize/jobs/{job_id}` exposes it to the
+owner or an admin. Jobs stuck in `running` for longer than the solver ceiling +
+60 s are marked failed on the next poll.
+
+---
+
 ## Live Tracking Broadcast (not a job, but runs in background)
 
-**Interval:** every 2 seconds  
-**Function:** `broadcast_live_feed()` in `backend/routers/tracking.py`  
+**Interval:** `TRACKING_BROADCAST_INTERVAL_SECONDS` (default 2)
+**Function:** `broadcast_live_feed()` in `backend/routers/tracking.py`
 **Started by:** `tracking.start_simulation()` in `main.py` lifespan
 
-### What it does
-
-Continuously queries the DB for all vehicles and recent events, then broadcasts a snapshot to every connected WebSocket client.
-
-```python
-while True:
-    vehicles = db.query(Vehicle).all()
-    events = db.query(TrackingEvent).order_by(...).limit(10).all()
-    payload = { "type": "tracking_snapshot", "vehicles": [...], "events": [...] }
-    await manager.broadcast(json.dumps(payload))
-    await asyncio.sleep(2)
-```
-
-This is separate from the per-update broadcast triggered by `POST /tracking/vehicles/{id}/location`.
+The loop skips all DB work when no tracking clients are connected. Otherwise it selects
+only the columns used in the payload and sends a full-shape `tracking_snapshot` only when
+a vehicle changed, a new event arrived, or a 30-second keepalive is due. New clients get a
+full scoped snapshot immediately; `POST /tracking/vehicles/{id}/location` pushes that
+vehicle immediately and marks it sent so the loop does not repeat it.
 
 ### Writes to
 Nothing — read-only query, broadcast only.

@@ -26,6 +26,16 @@ HTTP_LATENCY = Histogram(
     ("route",),
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
 )
+STADIA_CACHE_HITS = Counter(
+    "stadia_cache_hits_total",
+    "Stadia responses served from the in-process TTL cache.",
+    ("endpoint",),
+)
+STADIA_CACHE_MISSES = Counter(
+    "stadia_cache_misses_total",
+    "Stadia responses fetched upstream because the TTL cache missed.",
+    ("endpoint",),
+)
 
 
 def route_label(request) -> str:

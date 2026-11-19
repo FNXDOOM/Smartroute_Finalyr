@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional
 
 import networkx as nx
 
+from config import ROUTE_SOLVER_MAX_SECONDS, ROUTE_SOLVER_MIN_SECONDS
 from services.stops.road_snapper import build_road_graph
 from services.stadia_client import matrix as stadia_matrix
 from utils.geo import haversine_meters as _haversine_meters
@@ -18,9 +19,24 @@ DEFAULT_SHARED_RIDE_SOLVER_SECONDS = 15
 def shared_ride_solver_time_limit() -> int:
     raw = os.getenv("SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS", "")
     try:
-        return max(1, int(raw))
+        return max(1, int(raw)) if raw else max(1, int(ROUTE_SOLVER_MAX_SECONDS))
     except ValueError:
         return DEFAULT_SHARED_RIDE_SOLVER_SECONDS
+
+
+def solver_time_limit_for_size(pairs: int, *, max_seconds: Optional[int] = None) -> int:
+    """Tiered budget: small pools return quickly, large pools keep the old ceiling."""
+    ceiling = max(1, int(max_seconds or shared_ride_solver_time_limit()))
+    floor = max(1, min(int(ROUTE_SOLVER_MIN_SECONDS), ceiling))
+    if pairs <= 3:
+        tier = floor
+    elif pairs <= 6:
+        tier = floor * 2
+    elif pairs <= 12:
+        tier = floor * 4
+    else:
+        tier = ceiling
+    return max(1, min(tier, ceiling))
 
 
 # Stadia's matrix endpoint accepts at most 25 sources x 25 targets per call.
@@ -270,7 +286,7 @@ def solve_vrp(
     params = pywrapcp.DefaultRoutingSearchParameters()
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
     params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    params.time_limit.seconds = 10
+    params.time_limit.seconds = solver_time_limit_for_size(max(1, len(stops) - 1))
 
     solution = routing.SolveWithParameters(params)
 
@@ -422,7 +438,7 @@ def solve_shared_ride_pdp(
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
     params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
     params.time_limit.seconds = (
-        shared_ride_solver_time_limit() if time_limit_seconds is None else max(1, time_limit_seconds)
+        solver_time_limit_for_size(len(pickups)) if time_limit_seconds is None else max(1, time_limit_seconds)
     )
 
     solution = routing.SolveWithParameters(params)

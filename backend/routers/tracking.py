@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import List
 
@@ -25,7 +26,7 @@ from services.notifications import create_notification, create_notifications_for
 from services.websocket_hub import accept_connection, fan_out
 from services.stadia_client import extract_route_details, map_match
 from utils.auth_utils import get_current_driver_user, get_user_from_token, get_websocket_token
-from config import ALLOWED_ORIGINS
+from config import ALLOWED_ORIGINS, TRACKING_BROADCAST_INTERVAL_SECONDS
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_IN_PIPELINE_STATUSES
 
@@ -42,14 +43,40 @@ class TrackingConnection:
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[TrackingConnection] = []
+        self.last_vehicle_state: dict[int, tuple] = {}
+        self.last_event_cursor = None
+        self.last_sent_at = 0.0
 
-    async def connect(self, websocket: WebSocket, user_id: int, role: str):
+    @property
+    def active_count(self) -> int:
+        return len(self.active_connections)
+
+    async def connect(self, websocket: WebSocket, user_id: int, role: str) -> TrackingConnection:
         # Flutter omits bearer; accept without subprotocol.
         await accept_connection(websocket, "bearer")
-        self.active_connections.append(TrackingConnection(websocket, user_id, role))
+        entry = TrackingConnection(websocket, user_id, role)
+        self.active_connections.append(entry)
+        return entry
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections = [entry for entry in self.active_connections if entry.websocket is not websocket]
+
+    def mark_vehicle_sent(self, vehicle, event=None) -> None:
+        """Record a push-on-update so the loop does not resend vehicle or event."""
+        self.last_vehicle_state[vehicle.id] = _vehicle_state_value(vehicle)
+        created_at = getattr(event, "created_at", None)
+        if created_at and (self.last_event_cursor is None or created_at > self.last_event_cursor):
+            self.last_event_cursor = created_at
+
+    async def send_initial_snapshot(self, entry: TrackingConnection) -> None:
+        """A newly connected client gets the full current state immediately."""
+        db = SessionLocal()
+        try:
+            vehicles = _vehicle_rows(db)
+            events = latest_tracking_events_query(db).all()
+            await self._send_snapshot(entry, db, vehicles, events)
+        finally:
+            db.close()
 
     async def _send_snapshot(self, entry: TrackingConnection, db: Session, vehicles, events) -> None:
         visible_vehicle_ids, visible_ride_ids = _visible_tracking_ids(db, entry)
@@ -95,6 +122,36 @@ class ConnectionManager:
                 self.disconnect(entry.websocket)
         finally:
             db.close()
+
+
+def _vehicle_rows(db: Session):
+    """Only the columns the tracking payload actually uses."""
+    return (
+        db.query(
+            Vehicle.id,
+            Vehicle.license_plate,
+            Vehicle.status,
+            Vehicle.lat,
+            Vehicle.lng,
+            Vehicle.assigned_route_id,
+        )
+        .filter(Vehicle.mode == LIVE_MODE)
+        .order_by(Vehicle.id.asc())
+        .all()
+    )
+
+
+def _vehicle_state_value(vehicle) -> tuple:
+    return vehicle.lat, vehicle.lng, vehicle.status, vehicle.assigned_route_id
+
+
+def _vehicle_state(vehicles) -> dict[int, tuple]:
+    return {vehicle.id: _vehicle_state_value(vehicle) for vehicle in vehicles}
+
+
+def latest_tracking_events_query(db: Session, limit: int = 10):
+    """Latest tracking events, shared by initial snapshots and EXPLAIN."""
+    return db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(limit)
 
 
 def _visible_tracking_ids(db: Session, entry: TrackingConnection) -> tuple[set[int], set[int]]:
@@ -174,19 +231,45 @@ def _get_snapshot(db: Session, limit: int = 20) -> tuple[list[VehicleSnapshot], 
     return vehicle_snapshots, event_responses
 
 
-async def broadcast_live_feed():
-    """Broadcast current vehicle snapshot and recent telemetry events."""
-    while True:
-        db = SessionLocal()
-        try:
-            vehicles = db.query(Vehicle).filter(Vehicle.mode == LIVE_MODE).order_by(Vehicle.id.asc()).all()
+async def broadcast_once() -> bool:
+    """Broadcast a full-shape snapshot only when something changed (or on keepalive)."""
+    if manager.active_count == 0:
+        return False
+    db = SessionLocal()
+    try:
+        vehicles = _vehicle_rows(db)
+        state = _vehicle_state(vehicles)
+        if manager.last_event_cursor is None:
             events = db.query(TrackingEvent).order_by(TrackingEvent.created_at.desc()).limit(10).all()
-            await manager.broadcast_snapshot(db, vehicles, events)
-        except Exception:
-            pass
-        finally:
-            db.close()
-        await asyncio.sleep(2)
+        else:
+            events = (
+                db.query(TrackingEvent)
+                .filter(TrackingEvent.created_at > manager.last_event_cursor)
+                .order_by(TrackingEvent.created_at.asc())
+                .limit(50)
+                .all()
+            )
+        now = time.monotonic()
+        keepalive = now - manager.last_sent_at >= 30
+        if state == manager.last_vehicle_state and not events and not keepalive:
+            return False
+        await manager.broadcast_snapshot(db, vehicles, events)
+        manager.last_vehicle_state = state
+        if events:
+            manager.last_event_cursor = max(event.created_at for event in events)
+        manager.last_sent_at = now
+        return True
+    except Exception:
+        return False
+    finally:
+        db.close()
+
+
+async def broadcast_live_feed():
+    """Broadcast changed vehicle state and new telemetry events."""
+    while True:
+        await broadcast_once()
+        await asyncio.sleep(TRACKING_BROADCAST_INTERVAL_SECONDS)
 
 
 def start_simulation():
@@ -339,7 +422,8 @@ async def update_vehicle_location(
     db.refresh(vehicle)
     db.refresh(event)
 
-    # Scoped broadcast: passengers get own vehicle only.
+    # Scoped push-on-update; mark vehicle and event cursor sent.
+    manager.mark_vehicle_sent(vehicle, event)
     asyncio.create_task(manager.broadcast_vehicle_update(_serialize_vehicle(vehicle), _serialize_event(event)))
 
     return VehicleSnapshot.model_validate(vehicle)
@@ -367,8 +451,9 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         db.close()
 
-    await manager.connect(websocket, user.id, user.role)
+    entry = await manager.connect(websocket, user.id, user.role)
     try:
+        await manager.send_initial_snapshot(entry)
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:

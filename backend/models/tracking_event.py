@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Index, JSON
 from sqlalchemy.sql import func
 
 from database import Base
@@ -6,6 +6,10 @@ from database import Base
 
 class TrackingEvent(Base):
     __tablename__ = "tracking_events"
+    __table_args__ = (
+        # Feed queries filter by vehicle and order by time.
+        Index("ix_tracking_events_vehicle_id_created_at", "vehicle_id", "created_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True, index=True)

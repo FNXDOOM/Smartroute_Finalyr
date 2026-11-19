@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     DateTime,
     Boolean,
+    Index,
     text,
 )
 from sqlalchemy.orm import relationship
@@ -17,6 +18,17 @@ from database import Base, PortableGeometry
 
 class RideRequest(Base):
     __tablename__ = "ride_requests"
+    __table_args__ = (
+        # Pending/status scans scoped to live or demo mode.
+        Index("ix_ride_requests_ride_mode_status", "ride_mode", "status"),
+        # Cluster and demand lookups by H3 cell and status.
+        Index("ix_ride_requests_h3_index_status", "h3_index", "status"),
+        # Pending-ride ordering and demand lookback.
+        Index("ix_ride_requests_status_request_time", "status", "request_time"),
+        # Cluster and stop membership lookups.
+        Index("ix_ride_requests_cluster_id", "cluster_id"),
+        Index("ix_ride_requests_virtual_stop_id", "virtual_stop_id"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)

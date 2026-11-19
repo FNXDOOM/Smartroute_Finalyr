@@ -44,6 +44,14 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 SEED_ADMIN_PASSWORD = os.getenv("SEED_ADMIN_PASSWORD", "").strip()
 SEED_DEMO_PASSWORD = os.getenv("SEED_DEMO_PASSWORD", "").strip()
 ENABLE_TRACKING_BROADCAST = os.getenv("ENABLE_TRACKING_BROADCAST", "true").lower() == "true"
+TRACKING_BROADCAST_INTERVAL_SECONDS = float(os.getenv("TRACKING_BROADCAST_INTERVAL_SECONDS", "2"))
+# OR-Tools budgets; small pools finish quickly, large pools keep the old ceiling.
+ROUTE_SOLVER_MIN_SECONDS = int(os.getenv("ROUTE_SOLVER_MIN_SECONDS", "2"))
+ROUTE_SOLVER_MAX_SECONDS = int(os.getenv("ROUTE_SOLVER_MAX_SECONDS", "15"))
+# PostgreSQL pool tuning; ignored for SQLite.
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
+DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
 # Opt-in: run dispatch jobs in API for local dev.
 ENABLE_BACKGROUND_JOBS_IN_API = os.getenv("ENABLE_BACKGROUND_JOBS_IN_API", "false").lower() == "true"
 STADIA_API_KEY = os.getenv("STADIA_API_KEY", "").strip()
@@ -69,6 +77,9 @@ STADIA_TILES_URL = os.getenv(
 STADIA_MAP_STYLE_PATH = os.getenv(
     "STADIA_MAP_STYLE_PATH", "styles/alidade_smooth.json"
 ).strip().lstrip("/")
+# Per-process Stadia response cache; disabled or extra workers each multiply upstream calls.
+STADIA_CACHE_ENABLED = os.getenv("STADIA_CACHE_ENABLED", "true").lower() == "true"
+STADIA_CACHE_MAX_ENTRIES = int(os.getenv("STADIA_CACHE_MAX_ENTRIES", "2000"))
 
 # Per-client throttling for endpoints and downstream services — NOT DDoS protection, which belongs at the edge.
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"

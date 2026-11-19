@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.cluster_run import ClusterRun
+from models.job_run import JobRun
 from models.ride_request import RideRequest
 from models.route_plan import RoutePlan
 from models.user import User
@@ -54,13 +55,7 @@ def _rider_ack(route_id: str, ride: RideRequest) -> dict:
     }
 
 
-@router.post("/optimize", response_model=OptimizedRouteResponse)
-def optimize_routes(
-    payload: VRPRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Build and persist optimized routes for eligible clusters."""
+def _authorize_optimizer(current_user: User) -> None:
     if current_user.role not in {"admin", "driver"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -68,12 +63,25 @@ def optimize_routes(
         )
     ensure_active_driver(current_user)
 
+
+@router.post("/optimize", response_model=OptimizedRouteResponse)
+def optimize_routes(
+    payload: VRPRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Build and persist optimized routes for eligible clusters."""
+    return run_route_optimization(db, payload, current_user)
+
+
+def _validate_optimize_inputs(db: Session, payload: VRPRequest, current_user: User):
+    """Validate ownership/existence once for both the sync and queued paths."""
+    _authorize_optimizer(current_user)
     if not payload.vehicle_ids:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="At least one vehicle is required for route optimization",
         )
-
     if payload.source_cluster_run_id is not None:
         cluster_run = db.query(ClusterRun).filter(
             ClusterRun.id == payload.source_cluster_run_id,
@@ -95,8 +103,7 @@ def optimize_routes(
         )
 
     if not payload.virtual_stop_ids:
-        return OptimizedRouteResponse(status="no_virtual_stops", routes=[], unassigned_stops=[])
-
+        return vehicles, None
     virtual_stops = (
         db.query(VirtualStop)
         .filter(VirtualStop.id.in_(payload.virtual_stop_ids), VirtualStop.mode == LIVE_MODE)
@@ -110,6 +117,16 @@ def optimize_routes(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"message": "Some virtual stops were not found", "missing_virtual_stop_ids": missing_ids},
         )
+    return vehicles, virtual_stops
+
+
+def run_route_optimization(
+    db: Session, payload: VRPRequest, current_user: User
+) -> OptimizedRouteResponse:
+    """Shared solve path for the sync endpoint and the worker."""
+    vehicles, virtual_stops = _validate_optimize_inputs(db, payload, current_user)
+    if virtual_stops is None:
+        return OptimizedRouteResponse(status="no_virtual_stops", routes=[], unassigned_stops=[])
 
     built_routes = build_shared_routes(
         vehicles=vehicles,
@@ -210,6 +227,55 @@ def optimize_routes(
         routes=route_solutions,
         unassigned_stops=unassigned_stops,
     )
+
+
+@router.post("/optimize/async", status_code=status.HTTP_202_ACCEPTED)
+def optimize_routes_async(
+    payload: VRPRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Queue the same solve for the worker and return immediately."""
+    _validate_optimize_inputs(db, payload, current_user)
+    job = JobRun(
+        job_name="optimize_route",
+        status="queued",
+        triggered_by_user_id=current_user.id,
+        is_scheduled=False,
+        summary={"request": payload.model_dump(mode="json")},
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return {"job_id": job.id, "status": "queued"}
+
+
+@router.get("/optimize/jobs/{job_id}")
+def get_optimize_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return a queued/solved optimize job; only its owner or an admin."""
+    job = (
+        db.query(JobRun)
+        .filter(JobRun.id == job_id, JobRun.job_name == "optimize_route")
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    if job.triggered_by_user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to this job",
+        )
+    summary = job.summary or {}
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "result": summary.get("result"),
+        "error_message": job.error_message,
+    }
 
 
 def _route_plan_response(route_plan: RoutePlan) -> RoutePlanResponse:

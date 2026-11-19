@@ -7,11 +7,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from database import SessionLocal
 from models.cluster_run import ClusterRun
 from models.demand_snapshot import DemandSnapshot
+from models.job_run import JobRun
 from models.ride_request import RideRequest
 from models.route_plan import RoutePlan
 from models.route_waypoint import RouteWaypointRecord
@@ -26,10 +27,11 @@ from services.clustering.h3_partitioner import (
     partition_requests,
 )
 from services.clustering.hdbscan_clusterer import cluster_passengers, get_cluster_groups
-from services.prediction.demand_model import predict_zone_demand
+from services.prediction.demand_model import count_requests_by_h3, predict_zone_demands
 from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
 from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
+from services.routing.vrp_solver import shared_ride_solver_time_limit
 from services.notifications import create_notification, create_notifications_for_users
 from services import job_runs, route_plan_meta
 from services.carpool_matching import (
@@ -68,6 +70,7 @@ DEMAND_INTERVAL_SECONDS = 300
 REBALANCE_INTERVAL_SECONDS = 300
 SIMULATE_DISPATCH_INTERVAL_SECONDS = 5
 DRIVER_PRESENCE_TIMEOUT_SECONDS = 90
+OPTIMIZE_JOB_POLL_SECONDS = 2
 
 @dataclass
 class SchedulerState:
@@ -174,6 +177,13 @@ def _create_per_rider_stops(
     return payloads
 
 
+def pending_rides_query(db: Session, mode: str, demo_run_id: Optional[str]):
+    """Pending rides scoped by mode, used by the clustering job and EXPLAIN script."""
+    return apply_ride_scope(db.query(RideRequest), mode, demo_run_id).filter(
+        RideRequest.status == RIDE_PENDING
+    ).order_by(RideRequest.request_time.asc())
+
+
 def run_cluster_job(
     db: Session,
     resolution: int = 9,
@@ -192,12 +202,7 @@ def run_cluster_job(
     with job_runs.running(
         db, "cluster_pending_rides", triggered_by_user_id=triggered_by_user_id, is_scheduled=is_scheduled
     ) as job_run:
-        requests = (
-            ride_query
-            .filter(RideRequest.status == RIDE_PENDING)
-            .order_by(RideRequest.request_time.asc())
-            .all()
-        )
+        requests = pending_rides_query(db, mode, demo_run_id).all()
         if not requests:
             cluster_run = ClusterRun(
                 run_uuid=str(uuid4()),
@@ -389,24 +394,21 @@ def run_demand_refresh_job(
         db, "refresh_demand_snapshots", triggered_by_user_id=triggered_by_user_id, is_scheduled=is_scheduled
     ) as job_run:
         ref_time = reference_time or datetime.now(timezone.utc)
-        threshold = ref_time - timedelta(days=lookback_days)
-        rides = db.query(RideRequest).filter(
-            RideRequest.request_time >= threshold,
-            RideRequest.mode == LIVE_MODE,
-        ).all()
-        h3_indexes = set()
-        for ride in rides:
-            h3_indexes.add(ride.h3_index or get_h3_index(ride.pickup_lat, ride.pickup_lng, resolution=resolution))
+        counts_by_h3 = count_requests_by_h3(
+            db, reference_time=ref_time, lookback_days=lookback_days, resolution=resolution
+        )
+        predictions = predict_zone_demands(
+            db,
+            h3_indexes=counts_by_h3.keys(),
+            reference_time=ref_time,
+            lookback_days=lookback_days,
+            counts_by_h3=counts_by_h3,
+        )
 
         snapshots = []
-        for h3_index in sorted(h3_indexes):
+        for prediction in predictions:
+            h3_index = prediction["h3_index"]
             cell_lat, cell_lng = get_h3_center(h3_index)
-            prediction = predict_zone_demand(
-                db,
-                h3_index=h3_index,
-                reference_time=ref_time,
-                lookback_days=lookback_days,
-            )
             snapshot = DemandSnapshot(
                 job_run_id=job_run.id,
                 h3_index=h3_index,
@@ -466,25 +468,18 @@ def run_vehicle_rebalance_job(
                 "idle_vehicles": 0,
             }
 
-        threshold = datetime.now(timezone.utc) - timedelta(days=lookback_days)
-        rides = db.query(RideRequest).filter(
-            RideRequest.request_time >= threshold,
-            RideRequest.mode == LIVE_MODE,
-        ).all()
-        demand_cells = {}
-        for ride in rides:
-            h3_index = ride.h3_index or get_h3_index(ride.pickup_lat, ride.pickup_lng)
-            demand_cells.setdefault(h3_index, 0)
-            demand_cells[h3_index] += 1
-
+        ref_time = datetime.now(timezone.utc)
+        demand_cells = count_requests_by_h3(db, reference_time=ref_time, lookback_days=lookback_days)
+        predictions = predict_zone_demands(
+            db,
+            h3_indexes=demand_cells.keys(),
+            reference_time=ref_time,
+            lookback_days=lookback_days,
+            counts_by_h3=demand_cells,
+        )
         ranked_cells = []
-        for h3_index, count in demand_cells.items():
-            prediction = predict_zone_demand(
-                db,
-                h3_index=h3_index,
-                reference_time=datetime.now(timezone.utc),
-                lookback_days=lookback_days,
-            )
+        for prediction in predictions:
+            h3_index = prediction["h3_index"]
             lat, lng = get_h3_center(h3_index)
             ranked_cells.append(
                 {
@@ -492,7 +487,7 @@ def run_vehicle_rebalance_job(
                     "lat": lat,
                     "lng": lng,
                     "score": float(prediction["predicted_demand"]),
-                    "historical_count": count,
+                    "historical_count": demand_cells.get(h3_index, 0),
                 }
             )
 
@@ -776,13 +771,58 @@ def run_auto_dispatch_pipeline(
             "assigned_rides": assigned_rides_count,
         }
 
+def simulate_rides_query(db: Session):
+    """The serving-ride selection used by the simulator and the EXPLAIN script."""
+    return db.query(RideRequest).options(
+        load_only(
+            RideRequest.id,
+            RideRequest.user_id,
+            RideRequest.is_shared,
+            RideRequest.virtual_stop_id,
+            RideRequest.status,
+        )
+    ).filter(
+        RideRequest.status.in_(RIDE_SERVING_STATUSES),
+        RideRequest.virtual_stop_id.isnot(None),
+    )
+
+
 def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Dict:
     """Advance pipeline rides for live WS demo."""
     with job_runs.running(db, "simulate_ride_dispatch", is_scheduled=is_scheduled) as job_run:
-        active_rides = db.query(RideRequest).filter(
-            RideRequest.status.in_(RIDE_SERVING_STATUSES),
-            RideRequest.virtual_stop_id.isnot(None),
-        ).all()
+        active_rides = simulate_rides_query(db).all()
+
+        stop_ids = {ride.virtual_stop_id for ride in active_rides if not ride.is_shared}
+        waypoint_by_stop = {}
+        if stop_ids:
+            for stop_id, route_plan_id in (
+                db.query(RouteWaypointRecord.stop_id, RouteWaypointRecord.route_plan_id)
+                .filter(RouteWaypointRecord.stop_id.in_(stop_ids))
+                .all()
+            ):
+                waypoint_by_stop.setdefault(stop_id, route_plan_id)
+
+        plan_ids = set(waypoint_by_stop.values())
+        plans_by_id = {}
+        if plan_ids:
+            for plan in (
+                db.query(RoutePlan)
+                .options(load_only(RoutePlan.id, RoutePlan.status, RoutePlan.vehicle_id, RoutePlan.route_metadata))
+                .filter(RoutePlan.id.in_(plan_ids), RoutePlan.status == ROUTE_SOLVED)
+                .all()
+            ):
+                plans_by_id[plan.id] = plan
+
+        vehicle_ids = {plan.vehicle_id for plan in plans_by_id.values() if plan.vehicle_id}
+        vehicles_by_id = {}
+        if vehicle_ids:
+            for vehicle in (
+                db.query(Vehicle)
+                .options(load_only(Vehicle.id, Vehicle.status, Vehicle.assigned_route_id))
+                .filter(Vehicle.id.in_(vehicle_ids))
+                .all()
+            ):
+                vehicles_by_id[vehicle.id] = vehicle
 
         transitions = {
             RIDE_ASSIGNED: RIDE_ARRIVING,
@@ -790,21 +830,19 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
             RIDE_IN_PROGRESS: RIDE_COMPLETED,
         }
 
+        active_counts: dict[int, int] = {}
+        for ride in active_rides:
+            if not ride.is_shared and ride.virtual_stop_id:
+                stop_id = ride.virtual_stop_id
+                active_counts[stop_id] = active_counts.get(stop_id, 0) + 1
+
         updates_count = 0
         for ride in active_rides:
             # Shared rides advance stop-by-stop from the carpool run screen; the generic timer must never simulate those events.
             if ride.is_shared:
                 continue
             # A solved route is only an offer: nothing progresses until the assigned driver explicitly accepts.
-            waypoint = db.query(RouteWaypointRecord).filter(
-                RouteWaypointRecord.stop_id == ride.virtual_stop_id
-            ).first()
-            route_plan = None
-            if waypoint:
-                route_plan = db.query(RoutePlan).filter(
-                    RoutePlan.id == waypoint.route_plan_id,
-                    RoutePlan.status == ROUTE_SOLVED,
-                ).first()
+            route_plan = plans_by_id.get(waypoint_by_stop.get(ride.virtual_stop_id))
             if not route_plan or not route_plan_meta.is_driver_accepted(route_plan):
                 continue
 
@@ -825,19 +863,14 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
                 )
                 updates_count += 1
 
-                # If done, free vehicle if idle
-                if new_status == RIDE_COMPLETED and ride.virtual_stop_id:
-                    if waypoint:
-                        if route_plan and route_plan.vehicle_id:
-                            veh = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
-                            if veh:
-                                other_active = db.query(RideRequest).filter(
-                                    RideRequest.status.in_(RIDE_SERVING_STATUSES),
-                                    RideRequest.virtual_stop_id == ride.virtual_stop_id,
-                                ).count()
-                                if other_active == 0:
-                                    veh.status = VEHICLE_IDLE
-                                    veh.assigned_route_id = None
+                # If done, free the already-preloaded vehicle if nothing else serves the stop.
+                if new_status == RIDE_COMPLETED and ride.virtual_stop_id and route_plan.vehicle_id:
+                    veh = vehicles_by_id.get(route_plan.vehicle_id)
+                    if veh:
+                        other_active = active_counts.get(ride.virtual_stop_id, 0) - 1
+                        if other_active <= 0:
+                            veh.status = VEHICLE_IDLE
+                            veh.assigned_route_id = None
 
         job_runs.finish(
             db,
@@ -851,6 +884,101 @@ def run_simulate_ride_dispatch_job(db: Session, is_scheduled: bool = True) -> Di
 def run_scheduled_auto_dispatch_job(db: Session) -> Dict:
     """Run live dispatch from the worker and mark it as scheduled."""
     return run_auto_dispatch_pipeline(db, is_scheduled=True)
+
+
+def _as_aware(value):
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _claim_optimize_job(db: Session) -> Optional[JobRun]:
+    """Claim one queued optimize job; SKIP LOCKED on Postgres, re-checked update on SQLite."""
+    now = datetime.now(timezone.utc)
+    running_jobs = (
+        db.query(JobRun)
+        .filter(JobRun.job_name == "optimize_route", JobRun.status == "running")
+        .all()
+    )
+    changed = False
+    for job in running_jobs:
+        started = _as_aware(job.started_at)
+        if started and started < now - timedelta(seconds=shared_ride_solver_time_limit() + 60):
+            job.status = "failed"
+            job.error_message = "Optimize worker timed out"
+            job.finished_at = now
+            changed = True
+    if changed:
+        db.commit()
+
+    queued = (
+        db.query(JobRun)
+        .filter(JobRun.job_name == "optimize_route", JobRun.status == "queued")
+        .order_by(JobRun.id.asc())
+    )
+    if db.get_bind().dialect.name == "postgresql":
+        job = queued.with_for_update(skip_locked=True).first()
+        if job:
+            job.status = "running"
+            job.started_at = now
+            job.finished_at = None
+            job.error_message = None
+            db.commit()
+            db.refresh(job)
+        return job
+
+    job = queued.first()
+    if not job:
+        return None
+    claimed = (
+        db.query(JobRun)
+        .filter(JobRun.id == job.id, JobRun.status == "queued")
+        .update(
+            {"status": "running", "started_at": now, "finished_at": None, "error_message": None},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    if not claimed:
+        return None
+    db.refresh(job)
+    return job
+
+
+def run_optimize_jobs(db: Session) -> Dict:
+    """Claim and execute one queued /route/optimize/async job."""
+    job = _claim_optimize_job(db)
+    if job is None:
+        return {"processed": 0}
+    job_id = job.id
+    try:
+        from routers.route import run_route_optimization
+        from schemas.route import VRPRequest
+
+        request_data = (job.summary or {}).get("request")
+        if not request_data:
+            raise ValueError("Optimize job is missing its request payload")
+        user = db.query(User).filter(User.id == job.triggered_by_user_id).first()
+        if user is None:
+            raise ValueError("Optimize job owner no longer exists")
+        result = run_route_optimization(db, VRPRequest.model_validate(request_data), user)
+        job = db.query(JobRun).filter(JobRun.id == job_id).first()
+        job.status = "succeeded"
+        job.finished_at = datetime.now(timezone.utc)
+        job.error_message = None
+        job.summary = {**(job.summary or {}), "result": result.model_dump(mode="json")}
+        db.commit()
+        return {"processed": 1, "job_id": job_id, "status": "succeeded"}
+    except Exception as exc:
+        db.rollback()
+        job = db.query(JobRun).filter(JobRun.id == job_id).first()
+        if job:
+            job.status = "failed"
+            job.finished_at = datetime.now(timezone.utc)
+            job.error_message = str(getattr(exc, "detail", exc))[:1000]
+            db.commit()
+        logger.warning("optimize job %s failed: %s", job_id, exc.__class__.__name__)
+        return {"processed": 1, "job_id": job_id, "status": "failed"}
 
 
 async def _run_periodic(name: str, interval_seconds: int, runner):
@@ -903,6 +1031,7 @@ def start_background_jobs() -> None:
     _TASKS.append(loop.create_task(_run_periodic("refresh_demand_snapshots", DEMAND_INTERVAL_SECONDS, run_demand_refresh_job)))
     _TASKS.append(loop.create_task(_run_periodic("rebalance_idle_vehicles", REBALANCE_INTERVAL_SECONDS, run_vehicle_rebalance_job)))
     _TASKS.append(loop.create_task(_run_periodic("simulate_ride_dispatch", SIMULATE_DISPATCH_INTERVAL_SECONDS, run_simulate_ride_dispatch_job)))
+    _TASKS.append(loop.create_task(_run_periodic("optimize_route_jobs", OPTIMIZE_JOB_POLL_SECONDS, run_optimize_jobs)))
 
 
 async def stop_background_jobs() -> None:
