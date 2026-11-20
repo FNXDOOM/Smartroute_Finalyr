@@ -378,57 +378,14 @@ export default function PassengerView({ view, setView, toast }) {
   const destCoords    = destinationPoint || null
   // Show vehicle only after backend assigns one.
   const mapVehicle = rideVehicle
-  // Simulate driver marker from ride stage.
-  const simDriver = (!mapVehicle && activeRide && activeRide.pickup_lat != null && activeRide.dest_lat != null
-    && ['assigned', 'arriving', 'ready_for_pickup', 'in_progress'].includes(activeRide.status))
-    ? (() => {
-        const st = activeRide.status
-        if (st === 'in_progress') {
-          const path = routeGeometry.length > 1
-            ? routeGeometry
-            : [[activeRide.pickup_lng, activeRide.pickup_lat], [activeRide.dest_lng, activeRide.dest_lat]]
-          return {
-            vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: path[0][1], lng: path[0][0] },
-            path,
-            durationMs: 18000,
-            label: "You're on your way — sit back",
-          }
-        }
-        const off = st === 'arriving' ? 0.004 : 0.012
-        const start = [activeRide.pickup_lng + off, activeRide.pickup_lat + off * 0.6]
-        return {
-          vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: start[1], lng: start[0] },
-          path: [start, [activeRide.pickup_lng, activeRide.pickup_lat]],
-          durationMs: st === 'arriving' ? 12000 : 25000,
-          label: st === 'arriving' ? 'Driver arriving at your pickup' : 'Driver found — on the way to you',
-        }
-      })()
-    : null
-  const displayVehicle = mapVehicle || simDriver?.vehicle || null
+  // Live rides only display positions received from the backend.
+  const displayVehicle = mapVehicle || null
   const isRideActive = !!activeRide && !['completed', 'cancelled'].includes(activeRide.status)
   const mapPickupPulse = !!activeRide && ['pending', 'clustered'].includes(activeRide.status)
   const mapPickup = activeRide ? { lat:activeRide.pickup_lat, lng:activeRide.pickup_lng, label:activeRide.pickup_label } : pickupCoords
   const mapDestination = activeRide ? { lat:activeRide.dest_lat, lng:activeRide.dest_lng, label:activeRide.destination_label } : destCoords
   
-  const mapVehicleAnimation = displayVehicle && activeRide && isRideActive && (routeGeometry.length > 1 || simDriver)
-    ? mapVehicle
-      ? {
-          key: `${mapVehicle.id}:${activeRide.status}:${routeGeometry.length}`,
-          vehicleId: mapVehicle.id,
-          path: ['pending', 'clustered', 'assigned', 'arriving', 'ready_for_pickup'].includes(activeRide.status)
-            ? [[mapVehicle.lng, mapVehicle.lat], [activeRide.pickup_lng, activeRide.pickup_lat]]
-            : routeGeometry,
-          durationMs: activeRide.status === 'in_progress' ? 18000 : 8000,
-          loop: true,
-        }
-      : {
-          key: `sim-driver:${activeRide.id}:${activeRide.status}`,
-          vehicleId: displayVehicle.id,
-          path: simDriver.path,
-          durationMs: simDriver.durationMs,
-          loop: true,
-        }
-    : null
+  const mapVehicleAnimation = null
 
   const mapCenter = activeRide
     ? [(activeRide.pickup_lat + activeRide.dest_lat) / 2, (activeRide.pickup_lng + activeRide.dest_lng) / 2]
@@ -512,7 +469,7 @@ export default function PassengerView({ view, setView, toast }) {
                         </p>
                         <Badge variant="secondary" className="shrink-0 font-mono text-[11px]">{displayVehicle.license_plate}</Badge>
                       </div>
-                      <p className="mt-0.5 truncate text-[12px] text-[#6B6B6B] dark:text-[#AFAFAF]">{mapVehicle ? 'Tata Tigor EV · White · 3 seats shared' : simDriver?.label || 'On the way'}</p>
+                      <p className="mt-0.5 truncate text-[12px] text-[#6B6B6B] dark:text-[#AFAFAF]">{mapVehicle ? 'Live vehicle location' : 'Waiting for driver location'}</p>
                     </div>
                   </div>
                 )}
@@ -722,6 +679,7 @@ export default function PassengerView({ view, setView, toast }) {
             routeGeometry={routeGeometry}
             vehicles={activeRide && displayVehicle ? [displayVehicle] : activeRide ? [] : vehicles.filter(v => v.status !== 'offline')}
             vehicleAnimation={mapVehicleAnimation}
+            followCamera={activeRide?.status === 'in_progress'}
             pickupPulse={mapPickupPulse}
             onMapClick={mapPickupMode ? choosePickupOnMap : undefined}
             style={{ borderRadius: 0 }}
@@ -875,49 +833,12 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
 function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
   const pickupCoords = ride ? { lat: ride.pickup_lat, lng: ride.pickup_lng, label: ride.pickup_label } : null
   const destCoords = ride ? { lat: ride.dest_lat, lng: ride.dest_lng, label: ride.destination_label } : null
-  // Same driver simulation as Home.
-  const simDriver = (!vehicle && ride && ride.pickup_lat != null && ride.dest_lat != null
-    && ['assigned', 'arriving', 'ready_for_pickup', 'in_progress'].includes(ride.status))
-    ? (() => {
-      if (ride.status === 'in_progress') {
-        const path = routeGeometry?.length > 1
-          ? routeGeometry
-          : [[ride.pickup_lng, ride.pickup_lat], [ride.dest_lng, ride.dest_lat]]
-        return { vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: path[0][1], lng: path[0][0] }, path, durationMs: 18000 }
-      }
-      const off = ride.status === 'arriving' ? 0.004 : 0.012
-      const start = [ride.pickup_lng + off, ride.pickup_lat + off * 0.6]
-      return {
-        vehicle: { id: 'sim-driver', license_plate: 'Your driver', status: 'en_route', lat: start[1], lng: start[0] },
-        path: [start, [ride.pickup_lng, ride.pickup_lat]],
-        durationMs: ride.status === 'arriving' ? 12000 : 25000,
-      }
-    })()
-    : null
-  const displayVehicle = vehicle || simDriver?.vehicle || null
+  const displayVehicle = vehicle || null
   const trackingPickupPulse = !!ride && ['pending', 'clustered'].includes(ride.status)
   const vList = displayVehicle?.lat != null ? [displayVehicle] : []
   const center = displayVehicle?.lat != null ? [displayVehicle.lat, displayVehicle.lng] : ride ? [ride.pickup_lat, ride.pickup_lng] : [12.9784, 77.6408]
 
-  const vehicleAnimation = displayVehicle && (routeGeometry?.length > 1 || simDriver)
-    ? vehicle
-      ? {
-        key: `${displayVehicle.id}:${ride?.status}:${routeGeometry.length}`,
-        vehicleId: displayVehicle.id,
-        path: ['pending', 'clustered', 'assigned', 'arriving', 'ready_for_pickup'].includes(ride?.status)
-          ? [[displayVehicle.lng, displayVehicle.lat], [ride.pickup_lng, ride.pickup_lat]]
-          : routeGeometry,
-        durationMs: ride?.status === 'in_progress' ? 18000 : 8000,
-        loop: true,
-      }
-      : {
-        key: `sim-driver:${ride?.id}:${ride?.status}`,
-        vehicleId: displayVehicle.id,
-        path: simDriver.path,
-        durationMs: simDriver.durationMs,
-        loop: true,
-      }
-    : null
+  const vehicleAnimation = null
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

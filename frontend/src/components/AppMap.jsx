@@ -5,6 +5,7 @@ import * as maplibregl from 'maplibre-gl'
 import { setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
+import { headingDelta, telemetryPath, vehicleKind, vehicleSvg } from './vehicleTracking'
 
 setWorkerUrl(workerUrl)
 
@@ -98,7 +99,7 @@ function markerElement(label, type = 'pickup') {
   return el
 }
 
-function vehicleMarkerElement() {
+function vehicleMarkerElement(vehicle) {
   const el = document.createElement('div')
   // Keep root transform for MapLibre positioning.
   el.className = 'sr-vehicle-root'
@@ -131,7 +132,10 @@ function vehicleMarkerElement() {
     font-size: 16px;
     z-index: 2;
   `
-  inner.textContent = '🚗'
+  inner.className = 'sr-vehicle-body'
+  inner.style.cssText = 'position:relative;width:42px;height:58px;filter:drop-shadow(0 3px 3px rgba(0,0,0,.35));'
+  inner.innerHTML = vehicleSvg(vehicleKind(vehicle))
+  el.setAttribute('aria-label', `${vehicleKind(vehicle)} location`)
 
   el.appendChild(aura)
   el.appendChild(inner)
@@ -295,6 +299,7 @@ export default function AppMap({
 }) {
   const { getToken } = useAuth()
   const [mapError, setMapError] = useState('')
+  const [followPaused, setFollowPaused] = useState(false)
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const markersRef = useRef(new Map())
@@ -398,6 +403,10 @@ export default function AppMap({
       })
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right')
+      const pauseFollow = () => { map.__followPaused = true; setFollowPaused(true) }
+      map.on('dragstart', pauseFollow)
+      map.on('zoomstart', event => { if (event.originalEvent) pauseFollow() })
+      map.on('rotatestart', event => { if (event.originalEvent) pauseFollow() })
       map.on('click', event => onMapClickRef.current?.(event.lngLat.lat, event.lngLat.lng))
 
       map.on('load', () => {
@@ -408,6 +417,7 @@ export default function AppMap({
         setupBaseSourcesAndLayers(map)
         // Props may have changed while the style was loading; use the latest snapshot.
         const snap = latestPropsRef.current || { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers, vehicles, vehicleAnimation, vehicleMotion, vehicleRenderMode, followCamera }
+        map.__followCamera = snap.followCamera
         updateOverlays(map, snap)
         syncMarkers(map, snap.vehicles, markersRef, animationRef, snap.vehicleAnimation, snap.vehicleMotion, snap.vehicleRenderMode)
         animateVehicleAlongPath(map, snap.vehicleAnimation, markersRef, routeAnimationRef, snap.followCamera)
@@ -462,7 +472,7 @@ export default function AppMap({
   const [centerLat, centerLng] = center
   useEffect(() => {
     const map = mapRef.current
-    if (map && !followCamera) map.easeTo({ center: [centerLng, centerLat], duration: 500 })
+    if (map && !followCamera && !map.__followPaused) map.easeTo({ center: [centerLng, centerLat], duration: 500 })
   }, [centerLat, centerLng, followCamera])
 
   useEffect(() => {
@@ -476,7 +486,8 @@ export default function AppMap({
     const map = mapRef.current
     if (!map?.getSource('vehicles')) return
     syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, vehicleMotion, vehicleRenderMode)
-    if (vehicleMotion === 'direct' && followCamera) {
+    map.__followCamera = followCamera
+    if (vehicleMotion === 'direct' && followCamera && !map.__followPaused) {
       const leader = vehicles.find(vehicle => vehicle.lat != null && vehicle.lng != null)
       if (leader) map.jumpTo({ center: [leader.lng, leader.lat] })
     }
@@ -504,7 +515,18 @@ export default function AppMap({
         .sr-pulse-2 { animation-delay:1.3s }
         @keyframes sr-pulse { from { transform:scale(.4); opacity:.55 } to { transform:scale(2.8); opacity:0 } }
         @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 15px rgba(22,163,74,0.4) } 50% { box-shadow: 0 0 25px rgba(22,163,74,0.7) } }
+        @media (prefers-reduced-motion: reduce) { .sr-drop, .sr-pulse-ring { animation:none!important; } }
       `}</style>
+      {followPaused && vehicles.length > 0 && (
+        <button type="button" onClick={() => {
+          const map = mapRef.current
+          if (!map) return
+          map.__followPaused = false
+          setFollowPaused(false)
+          const marker = markersRef.current.values().next().value
+          if (marker) map.easeTo({ center: marker.getLngLat(), duration: 500 })
+        }} style={{ position:'absolute', bottom:32, right:12, zIndex:1, background:'#fff', color:'#15191d', border:0, borderRadius:24, padding:'12px 16px', boxShadow:'0 2px 12px #0003', cursor:'pointer', fontWeight:600 }}>Recenter</button>
+      )}
       {mapError && (
         <div style={{ position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', padding:24, background:'rgba(37,42,40,.96)', color:'#d7d4c8', textAlign:'center', zIndex:2, pointerEvents:'none' }}>
           <span style={{ maxWidth:320, fontSize:12, lineHeight:1.5 }}>{mapError}</span>
@@ -515,6 +537,7 @@ export default function AppMap({
 }
 
 function updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells, pickup, destination, pickupPulse, mapLayerMarkers = false }) {
+  map.__trackingRoute = routeGeometry
   const routeSource = map.getSource('route')
   if (routeSource) {
     const coords = routeGeometry.length > 1 ? routeGeometry : []
@@ -684,11 +707,11 @@ function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, 
 
     let marker = markersRef.current.get(id)
     if (!marker) {
-      const element = vehicleMarkerElement()
+      const element = vehicleMarkerElement(vehicle)
       element.style.setProperty('--pin-color', vehicleColor(vehicle.status))
-      marker = new maplibregl.Marker({ element, anchor: 'center' }).setLngLat(target).addTo(map)
+      marker = new maplibregl.Marker({ element, anchor: 'center', rotationAlignment: 'map', rotation: vehicle.bearing || 0 }).setLngLat(target).addTo(map)
       const route = vehicle.assigned_route_id ? `Route: ${escapeHtml(vehicle.assigned_route_id.slice(0, 18))}…` : ''
-      marker.getElement().addEventListener('click', () => popup(map, target, `<b>${escapeHtml(vehicle.license_plate || 'Vehicle')}</b><br/>Status: ${escapeHtml(vehicle.status)}<br/>${route}`))
+      marker.getElement().addEventListener('click', () => popup(map, marker.getLngLat(), `<b>${escapeHtml(vehicle.license_plate || 'Vehicle')}</b><br/>Status: ${escapeHtml(vehicle.status)}<br/>${route}`))
       markersRef.current.set(id, marker)
     }
 
@@ -707,18 +730,26 @@ function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, 
     }
 
     const started = performance.now()
-    const duration = 1200
+    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1200
     const fromArr = [from.lng, from.lat]
-    if (Math.hypot(target[0] - fromArr[0], target[1] - fromArr[1]) > 1e-5) {
-      marker.setRotation(bearingBetween(fromArr, target))
-    }
+    if (animationRef.current.has(id)) cancelAnimationFrame(animationRef.current.get(id))
+    animationRef.current.delete(id)
+    if (Math.hypot(target[0] - fromArr[0], target[1] - fromArr[1]) < 1e-8) return
+    const path = telemetryPath(fromArr, target, map.__trackingRoute)
+    let rotation = marker.getRotation()
 
     if (animationRef.current.has(id)) cancelAnimationFrame(animationRef.current.get(id))
 
     const animate = now => {
-      const progress = Math.min(1, (now - started) / duration)
+      const progress = duration ? Math.min(1, (now - started) / duration) : 1
       const eased = progress * progress * (3 - 2 * progress)
-      marker.setLngLat([from.lng + (target[0] - from.lng) * eased, from.lat + (target[1] - from.lat) * eased])
+      const { position, bearing } = interpolatePath(path, eased)
+      marker.setLngLat(position)
+      if (bearing != null) {
+        rotation += headingDelta(rotation, bearing) * (progress === 1 ? 1 : .18)
+        marker.setRotation(rotation)
+      }
+      if (map.__followCamera && !map.__followPaused) map.jumpTo({ center: position })
       if (progress < 1) animationRef.current.set(id, requestAnimationFrame(animate))
       else animationRef.current.delete(id)
     }
@@ -728,6 +759,8 @@ function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, 
   markersRef.current.forEach((marker, id) => {
     if (!activeIds.has(id) && id !== animatingId) {
       marker.remove()
+      if (animationRef.current.has(id)) cancelAnimationFrame(animationRef.current.get(id))
+      animationRef.current.delete(id)
       markersRef.current.delete(id)
     }
   })
@@ -744,7 +777,7 @@ function animateVehicleAlongPath(map, animation, markersRef, animationRef, follo
   if (!marker) {
     const element = vehicleMarkerElement()
     element.style.setProperty('--pin-color', '#111111')
-    marker = new maplibregl.Marker({ element, anchor: 'center' }).setLngLat(animation.path[0]).addTo(map)
+    marker = new maplibregl.Marker({ element, anchor: 'center', rotationAlignment: 'map' }).setLngLat(animation.path[0]).addTo(map)
     markersRef.current.set(markerId, marker)
   }
 
@@ -759,9 +792,9 @@ function animateVehicleAlongPath(map, animation, markersRef, animationRef, follo
     const progress = startProgress + (1 - startProgress) * Math.min(1, (now - started) / duration)
     const { position, bearing } = interpolatePath(path, progress)
     marker.setLngLat(position)
-    if (bearing != null) marker.setRotation(bearing)
+    if (bearing != null) marker.setRotation(marker.getRotation() + headingDelta(marker.getRotation(), bearing) * .18)
 
-    if (followCamera && map) {
+    if (followCamera && map && !map.__followPaused) {
       // Use jumpTo to avoid camera jitter.
       map.jumpTo({ center: position, zoom: Math.max(14, map.getZoom()) })
     }
