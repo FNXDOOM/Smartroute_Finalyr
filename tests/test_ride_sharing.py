@@ -47,7 +47,7 @@ def _ride(db, user, plat, plng, is_shared):
     return ride
 
 
-def test_shared_pool_is_capped_at_three_riders():
+def test_shared_pool_is_capped_at_three_riders(mock_carpool_roads):
     requests = [
         type(
             "Request",
@@ -66,10 +66,10 @@ def test_shared_pool_is_capped_at_three_riders():
 
     groups = split_compatible_shared_group(requests)
 
-    assert [len(group) for group in groups] == [3, 1]
+    assert [len(group) for group in groups] == [2, 2]
 
 
-def test_shared_pool_accepts_two_riders():
+def test_shared_pool_accepts_two_riders(mock_carpool_roads):
     requests = [
         type(
             "Request",
@@ -96,12 +96,11 @@ def _mock_corridor_road_matrix(monkeypatch):
     from services import carpool_matching
 
     def matrix(points, targets, **kwargs):
-        positions = [0, 3, 8, 8]
-        assert len(points) == len(targets) == len(positions)
+        from utils.geo import haversine_meters
         return {
             "sources_to_targets": [
-                [{"distance": abs(start - end)} for end in positions]
-                for start in positions
+                [{"distance": haversine_meters(start["lat"], start["lon"], end["lat"], end["lon"]) / 1000}
+                 for end in targets] for start in points
             ]
         }
 
@@ -238,7 +237,7 @@ def test_manual_cluster_run_keeps_the_carpool_stage_in_step():
         db.close()
 
 
-def test_private_rides_never_pool_and_shared_rides_do():
+def test_private_rides_never_pool_and_shared_rides_do(mock_carpool_roads):
     """Shared riders pool into one cluster but each keeps a dedicated stop."""
     db = SessionLocal()
     user_id = None
@@ -268,6 +267,11 @@ def test_private_rides_never_pool_and_shared_rides_do():
 
         private_stops = {ride.virtual_stop_id for ride in private}
         assert len(private_stops) == len(private), "private rides must not share a stop"
+        for ride in private:
+            stop = db.query(VirtualStop).filter(VirtualStop.id == ride.virtual_stop_id).one()
+            assert stop.lat == ride.pickup_lat
+            assert stop.lng == ride.pickup_lng
+            assert ride.carpool_status is None
 
         # Riders pooled together still keep a separate pickup stop each.
         shared_stops = {ride.virtual_stop_id for ride in shared}

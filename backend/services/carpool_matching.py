@@ -2,6 +2,9 @@
 
 import math
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from contextvars import ContextVar
 from itertools import permutations
 from typing import List, Set, Tuple
 
@@ -17,6 +20,11 @@ from services.carpool_lifecycle import run_is_open_to_riders
 from services.notifications import create_notification
 from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
 from utils.carpool_status import CARPOOL_CLUSTERED, set_carpool_stage
+from utils.carpool_policy import (
+    MAX_DESTINATION_SPREAD_METERS, MAX_CARPOOL_DETOUR_METERS,
+    MAX_CARPOOL_DETOUR_RATIO, MIN_CARPOOL_PASSENGERS,
+    MAX_CARPOOL_PASSENGERS, MAX_PICKUP_WALK_METERS,
+)
 from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_scope import PRESENTATION_DEMO_MODE
 from utils.ride_states import (
@@ -24,70 +32,111 @@ from utils.ride_states import (
     RIDE_ASSIGNED,
     RIDE_BOUND_STATUSES,
     RIDE_CLUSTERED,
+    RIDE_PENDING,
     ROUTE_SOLVED,
     ROUTE_SUPERSEDED,
     vehicle_is_dispatchable,
 )
 
-# Pickup clustering alone would pool far-apart destinations, so each pool also stays inside one corridor.
-MAX_DESTINATION_SPREAD_METERS = 7000
-MAX_CARPOOL_DETOUR_METERS = 5000
-MAX_CARPOOL_DETOUR_RATIO = 1.45
-MIN_CARPOOL_PASSENGERS = 2
-MAX_CARPOOL_PASSENGERS = 3
-MAX_PICKUP_WALK_METERS = 150
 logger = logging.getLogger(__name__)
+_matching_batch = ContextVar("road_matching_batch", default=None)
+
+
+@contextmanager
+def road_matching_batch():
+    """One tick's directed-distance cache and diagnostics; never shared across DB threads."""
+    current = _matching_batch.get()
+    if current is not None:
+        yield current["stats"]
+        return
+    state = {
+        "edges": {}, "failed_edges": set(), "matrix_unavailable": False,
+        "stats": {"routing_failures": 0, "matrix_attempts": 0, "route_attempts": 0},
+    }
+    token = _matching_batch.set(state)
+    try:
+        yield state["stats"]
+    finally:
+        _matching_batch.reset(token)
+
+
+def road_matching_diagnostics():
+    state = _matching_batch.get()
+    return dict(state["stats"]) if state else {}
+
+
+def _route_edge(key):
+    data = route(*key, costing="auto")
+    if not isinstance(data, dict) or not isinstance(data.get("trip"), dict):
+        raise ValueError("Invalid road route")
+    trip = data["trip"]
+    if trip.get("status", 0) != 0 or trip.get("units") != "kilometers":
+        raise ValueError("Invalid road route")
+    distance = float(trip["summary"]["length"]) * 1000
+    if not math.isfinite(distance) or distance < 0:
+        raise ValueError("Invalid road distance")
+    return distance
 
 
 def _road_distances(points):
-    """Use matrix when available, otherwise cached point-to-point road routes."""
+    """Matrix first, then at most four concurrent road requests; reuse directed edges."""
+    if _matching_batch.get() is None:
+        with road_matching_batch():
+            return _road_distances(points)
+    state = _matching_batch.get()
+    cache, stats = state["edges"], state["stats"]
+    keys = [[(a["lat"], a["lon"], b["lat"], b["lon"]) for b in points] for a in points]
+    for row in keys:
+        for key in row:
+            if key[:2] == key[2:]:
+                cache[key] = 0.0
+    missing = {key for row in keys for key in row if key not in cache}
     try:
-        rows = matrix(points, points, costing="auto")["sources_to_targets"]
-        if len(rows) != len(points) or any(len(row) != len(points) for row in rows):
-            raise ValueError("Invalid matrix dimensions")
-        distances = [
-            [float(cell["distance"]) * 1000 for cell in row] for row in rows
-        ]
-        if any(not math.isfinite(d) or d < 0 for row in distances for d in row):
-            raise ValueError("Invalid matrix distances")
-        return distances
-    except (RuntimeError, KeyError, TypeError, ValueError, IndexError) as exc:
-        # An unconfigured provider cannot serve the point-to-point fallback either;
-        # skipping it avoids ~12 sequential 10 s timeouts per candidate pair.
-        if isinstance(exc, RuntimeError) and "not configured" in str(exc):
-            raise RuntimeError(
-                "Carpool road-distance services unavailable; matching could not be evaluated"
-            ) from None
-        # Never log upstream URLs/exceptions: they may contain API credentials.
-        logger.warning("Carpool matrix unavailable; trying standard road routes")
-
-    cache = {}
-    distances = []
-    try:
-        for start in points:
-            row = []
-            for end in points:
-                key = (start["lat"], start["lon"], end["lat"], end["lon"])
-                if key[:2] == key[2:]:
-                    distance = 0.0
-                else:
-                    if key not in cache:
-                        result = route(*key, costing="auto")
-                        trip = result["trip"]
-                        if trip.get("status", 0) != 0 or trip.get("units") != "kilometers":
-                            raise ValueError("Invalid road route")
-                        distance = float(trip["summary"]["length"]) * 1000
-                        if not math.isfinite(distance) or distance < 0:
-                            raise ValueError("Invalid road distance")
-                        cache[key] = distance
-                    distance = cache[key]
-                row.append(distance)
-            distances.append(row)
+        if missing & state["failed_edges"]:
+            raise RuntimeError("Road edges unavailable in this batch")
+        if missing and not state["matrix_unavailable"]:
+            try:
+                stats["matrix_attempts"] += 1
+                data = matrix(points, points, costing="auto")
+                if not isinstance(data, dict):
+                    raise ValueError("Invalid matrix response")
+                if data.get("units", "kilometers") != "kilometers":
+                    raise ValueError("Invalid matrix units")
+                rows = data["sources_to_targets"]
+                if not isinstance(rows, list) or len(rows) != len(points) or any(
+                    not isinstance(row, list) or len(row) != len(points) for row in rows
+                ):
+                    raise ValueError("Invalid matrix dimensions")
+                parsed = [[float(cell["distance"]) * 1000 for cell in row] for row in rows]
+                if any(not math.isfinite(d) or d < 0 for row in parsed for d in row):
+                    raise ValueError("Invalid matrix distances")
+                for row_keys, row in zip(keys, parsed):
+                    cache.update(zip(row_keys, row))
+                missing = set()
+            except (RuntimeError, KeyError, TypeError, ValueError, IndexError) as exc:
+                state["matrix_unavailable"] = True
+                if isinstance(exc, RuntimeError) and "not configured" in str(exc):
+                    state["failed_edges"].update(missing)
+                    raise
+                logger.warning("Carpool matrix unavailable; trying standard road routes")
+        if missing:
+            ordered = sorted(missing)
+            stats["route_attempts"] += len(ordered)
+            with ThreadPoolExecutor(max_workers=4) as workers:
+                futures = {key: workers.submit(_route_edge, key) for key in ordered}
+                for key, future in futures.items():
+                    try:
+                        cache[key] = future.result()
+                    except (RuntimeError, KeyError, TypeError, ValueError, IndexError):
+                        state["failed_edges"].add(key)
+                if any(key not in cache for key in ordered):
+                    raise RuntimeError("Road edges unavailable")
     except (RuntimeError, KeyError, TypeError, ValueError, IndexError):
+        stats["routing_failures"] += 1
         raise RuntimeError(
             "Carpool road-distance services unavailable; matching could not be evaluated"
         ) from None
-    return distances
+    return [[cache[key] for key in row] for row in keys]
 
 
 def point_to_segment_meters(
@@ -134,61 +183,8 @@ def pickup_corridor_distance_meters(request: RideRequest, other: RideRequest) ->
 
 
 def split_compatible_shared_group(requests: List[RideRequest]) -> List[List[RideRequest]]:
-    """Split a pickup cluster into destination-compatible pools; HDBSCAN only sees pickup density."""
-    groups: List[List[RideRequest]] = []
-    for request in sorted(requests, key=lambda item: (item.request_time, item.id)):
-        placed = False
-        for group in groups:
-            if len(group) >= MAX_CARPOOL_PASSENGERS:
-                continue
-            candidate_group = [*group, request]
-            pickup_centre = (
-                sum(item.pickup_lat for item in candidate_group) / len(candidate_group),
-                sum(item.pickup_lng for item in candidate_group) / len(candidate_group),
-            )
-            destination_centre = (
-                sum(item.dest_lat for item in candidate_group) / len(candidate_group),
-                sum(item.dest_lng for item in candidate_group) / len(candidate_group),
-            )
-            destinations_close = all(
-                _haversine_meters(
-                    request.dest_lat,
-                    request.dest_lng,
-                    other.dest_lat,
-                    other.dest_lng,
-                ) <= MAX_DESTINATION_SPREAD_METERS
-                for other in group
-            )
-            pickup_walk_ok = all(
-                _haversine_meters(item.pickup_lat, item.pickup_lng, *pickup_centre)
-                <= MAX_PICKUP_WALK_METERS
-                for item in candidate_group
-            )
-            shared_distance = (
-                _haversine_meters(request.pickup_lat, request.pickup_lng, *pickup_centre)
-                + _haversine_meters(*pickup_centre, *destination_centre)
-                + _haversine_meters(request.dest_lat, request.dest_lng, *destination_centre)
-            )
-            direct_distance = max(
-                1.0,
-                _haversine_meters(
-                    request.pickup_lat,
-                    request.pickup_lng,
-                    request.dest_lat,
-                    request.dest_lng,
-                ),
-            )
-            detour_ok = (
-                shared_distance - direct_distance <= MAX_CARPOOL_DETOUR_METERS
-                and shared_distance / direct_distance <= MAX_CARPOOL_DETOUR_RATIO
-            )
-            if pickup_walk_ok and destinations_close and detour_ok:
-                group.append(request)
-                placed = True
-                break
-        if not placed:
-            groups.append([request])
-    return groups
+    """HDBSCAN supplies candidates, not a different compatibility policy."""
+    return _compatible_groups(requests)
 
 
 def road_detour_compatible(requests: List[RideRequest]) -> bool:
@@ -198,6 +194,14 @@ def road_detour_compatible(requests: List[RideRequest]) -> bool:
     vehicle corridor width. Routing failures propagate rather than reject riders.
     """
     count = len(requests)
+    if not MIN_CARPOOL_PASSENGERS <= count <= MAX_CARPOOL_PASSENGERS:
+        return False
+    if any(getattr(item, "is_shared", True) is False for item in requests):
+        return False
+    # Identical trips have zero additional detour regardless of road shape.
+    # Dispatch still independently verifies road reachability before assignment.
+    if len({(r.pickup_lat, r.pickup_lng, r.dest_lat, r.dest_lng) for r in requests}) == 1:
+        return True
     points = [
         {"lat": item.pickup_lat, "lon": item.pickup_lng} for item in requests
     ] + [
@@ -210,22 +214,37 @@ def road_detour_compatible(requests: List[RideRequest]) -> bool:
         direct = [distances[i][count + i] for i in range(count)]
         if any(not math.isfinite(value) or value < 0 for value in direct):
             return False
-        for pickups in permutations(range(count)):
-            for dropoffs in permutations(range(count, count * 2)):
-                order = pickups + dropoffs
-                travelled = [0.0]
-                for start, end in zip(order, order[1:]):
-                    travelled.append(travelled[-1] + distances[start][end])
-                if not math.isfinite(travelled[-1]):
-                    continue
-                positions = {stop: index for index, stop in enumerate(order)}
-                if all(
-                    (shared := travelled[positions[count + i]] - travelled[positions[i]])
-                    <= direct[i] + MAX_CARPOOL_DETOUR_METERS
-                    and shared <= max(1.0, direct[i]) * MAX_CARPOOL_DETOUR_RATIO
-                    for i in range(count)
-                ):
-                    return True
+        # At most three riders => only 720 orders. Permit interleaved drop-offs,
+        # but require every rider to actually share a segment with someone else.
+        for order in permutations(range(count * 2)):
+            positions = {stop: index for index, stop in enumerate(order)}
+            if any(positions[i] >= positions[count + i] for i in range(count)):
+                continue
+            if not all(any(
+                i != j and max(positions[i], positions[j])
+                < min(positions[count + i], positions[count + j])
+                for j in range(count)
+            ) for i in range(count)):
+                continue
+            travelled = [0.0]
+            for start, end in zip(order, order[1:]):
+                travelled.append(travelled[-1] + distances[start][end])
+            if not math.isfinite(travelled[-1]):
+                continue
+            if not all(any(
+                i != j and travelled[min(positions[count + i], positions[count + j])]
+                - travelled[max(positions[i], positions[j])] > 1.0
+                for j in range(count)
+            ) for i in range(count)):
+                # Boarding at another rider's exact drop-off is not shared travel.
+                continue
+            if all(
+                (shared := travelled[positions[count + i]] - travelled[positions[i]])
+                <= direct[i] + MAX_CARPOOL_DETOUR_METERS
+                and shared <= max(1.0, direct[i]) * MAX_CARPOOL_DETOUR_RATIO
+                for i in range(count)
+            ):
+                return True
     except (KeyError, TypeError, ValueError, IndexError):
         raise RuntimeError("Invalid carpool road-distance data") from None
     return False
@@ -235,42 +254,63 @@ def find_cross_cell_corridor_groups(
     requests: List[RideRequest],
 ) -> Tuple[List[List[RideRequest]], Set[int]]:
     """Corridor pass over riders H3 left out: H3 is a spatial pre-filter, not a carpool boundary, so nearby cells can still pool."""
-    groups: List[List[RideRequest]] = []
-    matched_ids: Set[int] = set()
+    groups = _compatible_groups(requests)
+    qualified_groups = [group for group in groups if len(group) >= MIN_CARPOOL_PASSENGERS]
+    qualified_ids = {request.id for group in qualified_groups for request in group}
+    return qualified_groups, qualified_ids
+
+
+def _compatible_groups(requests):
+    if _matching_batch.get() is None:
+        with road_matching_batch():
+            return _compatible_groups(requests)
+
+    def compatible(group):
+        if len(group) > MAX_CARPOOL_PASSENGERS:
+            return False
+        if any(
+            _haversine_meters(a.dest_lat, a.dest_lng, b.dest_lat, b.dest_lng)
+            > MAX_DESTINATION_SPREAD_METERS
+            for a, b in permutations(group, 2)
+        ):
+            return False
+        try:
+            return road_detour_compatible(group)
+        except RuntimeError:
+            # Keep unrelated good pools; the caller records incomplete evaluation.
+            logger.warning("Carpool road matching unavailable; skipping corridor pool this tick")
+            return False
+
+    groups = []
+    seen = set()
     for request in sorted(requests, key=lambda item: (item.request_time, item.id)):
-        if request.id in matched_ids:
+        if request.id in seen or getattr(request, "is_shared", True) is False:
             continue
+        seen.add(request.id)
         for group in groups:
-            if len(group) >= MAX_CARPOOL_PASSENGERS:
-                continue
-            destinations_close = all(
-                _haversine_meters(
-                    request.dest_lat,
-                    request.dest_lng,
-                    other.dest_lat,
-                    other.dest_lng,
-                ) <= MAX_DESTINATION_SPREAD_METERS
-                for other in group
-            )
-            if not destinations_close:
-                continue
-            try:
-                compatible = road_detour_compatible([*group, request])
-            except RuntimeError:
-                # A routing outage must not abort the tick: job_runs would roll back
-                # every cluster already formed this pass. Skip this pool instead.
-                logger.warning("Carpool road matching unavailable; skipping corridor pool this tick")
-                compatible = False
-            if compatible:
+            if compatible([*group, request]):
                 group.append(request)
-                matched_ids.add(request.id)
                 break
         else:
             groups.append([request])
 
-    qualified_groups = [group for group in groups if len(group) >= MIN_CARPOOL_PASSENGERS]
-    qualified_ids = {request.id for group in qualified_groups for request in group}
-    return qualified_groups, qualified_ids
+    # 3 + 1 is avoidable starvation when both replacement pairs are feasible.
+    # Recheck both pairs; never relax detour or destination limits to fill seats.
+    for singleton in groups:
+        if len(singleton) != 1:
+            continue
+        for donor in groups:
+            if len(donor) != MAX_CARPOOL_PASSENGERS:
+                continue
+            for member in reversed(donor):
+                remaining = [item for item in donor if item.id != member.id]
+                if compatible([*singleton, member]) and compatible(remaining):
+                    donor.remove(member)
+                    singleton.append(member)
+                    break
+            if len(singleton) > 1:
+                break
+    return groups
 
 
 def attach_to_existing_run(
@@ -281,6 +321,8 @@ def attach_to_existing_run(
     demo_run_id: str | None,
 ) -> bool:
     """Insert a rider into an unstarted run, then rebuild it as a PDP so the driver gets a real itinerary, not an appended waypoint."""
+    if not request.is_shared or request.status != RIDE_PENDING:
+        return False
     plans_query = db.query(RoutePlan).filter(
         RoutePlan.mode == mode,
         RoutePlan.status == ROUTE_SOLVED,
@@ -313,6 +355,8 @@ def attach_to_existing_run(
         if len(active_requests) != len(passenger_ids):
             # A run that started or has stale ids must not be rewritten.
             continue
+        if any(not item.is_shared for item in active_requests):
+            continue
 
         pickup_waypoints = [
             waypoint for waypoint in route_plan.waypoints or []
@@ -321,22 +365,7 @@ def attach_to_existing_run(
         if not pickup_waypoints:
             continue
 
-        ordered_waypoints = sorted(route_plan.waypoints or [], key=lambda waypoint: waypoint.sequence)
-        corridor_distance = min(
-            point_to_segment_meters(
-                request.pickup_lat,
-                request.pickup_lng,
-                start.lat,
-                start.lng,
-                end.lat,
-                end.lng,
-            )
-            for start, end in zip(ordered_waypoints, ordered_waypoints[1:])
-        )
-        if corridor_distance > MAX_PICKUP_WALK_METERS:
-            continue
-
-        nearest_destination_meters = min(
+        furthest_destination_meters = max(
             _haversine_meters(
                 request.dest_lat,
                 request.dest_lng,
@@ -345,7 +374,13 @@ def attach_to_existing_run(
             )
             for existing in active_requests
         )
-        if nearest_destination_meters > MAX_DESTINATION_SPREAD_METERS:
+        if furthest_destination_meters > MAX_DESTINATION_SPREAD_METERS:
+            continue
+        try:
+            if not road_detour_compatible([*active_requests, request]):
+                continue
+        except RuntimeError:
+            logger.warning("Carpool insertion road matching unavailable; retrying next tick")
             continue
 
         pickup_waypoint = min(
@@ -405,7 +440,8 @@ def attach_to_existing_run(
             request_statuses=(RIDE_CLUSTERED, RIDE_ASSIGNED, RIDE_ARRIVING),
             enrich=True,
         )
-        if not rebuilt or not rebuilt[0].ride_ids or request.id not in rebuilt[0].ride_ids:
+        required_ids = {item.id for item in active_requests} | {request.id}
+        if not rebuilt or not required_ids.issubset(set(rebuilt[0].ride_ids)):
             request.status = original_status
             request.carpool_status = original_carpool_status
             request.cluster_id = None

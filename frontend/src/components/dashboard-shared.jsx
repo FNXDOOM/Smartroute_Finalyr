@@ -24,14 +24,14 @@ export const STATUS_STYLES = {
   no_pending_requests: 'border-[#E2E2E2] bg-transparent text-[#6B6B6B] dark:border-[#333333] dark:text-[#AFAFAF]',
 }
 
-export function StatusBadge({ status, className }) {
+export function StatusBadge({ status, className, label }) {
   const key = status || 'pending'
   return (
     <Badge
       variant="outline"
       className={cn('shrink-0 text-[10px] font-semibold uppercase tracking-[0.06em]', STATUS_STYLES[key] || STATUS_STYLES.pending, className)}
     >
-      {String(key).replace(/_/g, ' ')}
+      {label || String(key).replace(/_/g, ' ')}
     </Badge>
   )
 }

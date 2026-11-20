@@ -117,6 +117,8 @@ def _resolve_ride_amount(
             )
         if ride.status == "cancelled":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Cannot pay for a cancelled ride")
+        if ride.status != "completed":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Payment is available only after the ride is completed")
         if ride.ride_option_id not in VALID_FARE_IDS:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This ride has no valid stored fare option")
         if ride_option_id != ride.ride_option_id:
@@ -125,6 +127,8 @@ def _resolve_ride_amount(
         ride_id = ride.id
         distance_km = _route_distance_km(ride)
 
+    if ride_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A completed ride is required for payment")
     try:
         amount = compute_fare_amount_paise(ride_option_id, distance_km)
     except ValueError as exc:

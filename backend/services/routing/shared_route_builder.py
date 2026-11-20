@@ -16,6 +16,7 @@ from services.routing import vrp_solver
 from services.routing.vrp_solver import solve_shared_ride_pdp
 from services.stadia_client import extract_route_details, route_many
 from utils.carpool_status import CARPOOL_ASSIGNED, set_carpool_stage
+from utils.carpool_policy import MIN_CARPOOL_PASSENGERS, MAX_CARPOOL_PASSENGERS
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_ASSIGNED, ROUTE_SOLVED, VEHICLE_ACTIVE
@@ -27,8 +28,6 @@ ROUTE_LOCATION_WINDOW = 24
 MAX_ENRICHMENT_CHUNKS = 6
 # ~30 km/h, used when the router returns no duration.
 FALLBACK_METRES_PER_SECOND = 8.33
-MIN_CARPOOL_PASSENGERS = 2
-MAX_CARPOOL_PASSENGERS = 3
 
 
 @dataclass
@@ -303,12 +302,20 @@ def build_shared_routes(
             node_meta.append({"kind": "destination", "stop": None, "requests": [request]})
 
     problem = "pdp"
-    solution = solve_shared_ride_pdp(
+    solve_options = dict(
         nodes=nodes,
         num_vehicles=len(remaining_vehicles),
         vehicle_capacity=smallest_capacity,
         vehicle_capacities=capacities,
+        min_passengers_per_vehicle=MIN_CARPOOL_PASSENGERS,
+        max_passengers_per_vehicle=MAX_CARPOOL_PASSENGERS,
     )
+    # With enough vehicles, require all riders first. Making every node optional
+    # up front lets a heuristic settle on 3 + an unserved singleton instead of 2+2.
+    needs_partial = shared_passenger_count > MAX_CARPOOL_PASSENGERS * len(remaining_vehicles)
+    solution = solve_shared_ride_pdp(**solve_options, allow_unserved=needs_partial)
+    if solution.get("status") != ROUTE_SOLVED and not needs_partial:
+        solution = solve_shared_ride_pdp(**solve_options, allow_unserved=True)
     if solution.get("status") != ROUTE_SOLVED:
         # A pickup-only route has no drop-off waypoint and would falsely mark riders assigned; leave the pool clustered to retry.
         return built_routes

@@ -59,7 +59,7 @@ export default function PassengerView({ view, setView, toast }) {
   const [mapPickupMode, setMapPickupMode] = useState(false)
   const [mapPickupLoading, setMapPickupLoading] = useState(false)
   const [trafficRouting, setTrafficRouting] = useState(false)
-  const [sharedRide, setSharedRide] = useState(true)
+  const [sharedRide, setSharedRide] = useState(false)
   const pollRef = useRef(null)
   const dismissTimeoutRef = useRef(null)
   const gpsWatchRef = useRef(null)
@@ -280,7 +280,9 @@ export default function PassengerView({ view, setView, toast }) {
           clearInterval(pollRef.current)
           if (r.status === 'completed') toast('success', 'Ride completed!', 'Tap Dismiss to book a new ride.')
           else toast('info', 'Ride ' + r.status)
-          // Auto-dismiss finished card to allow new bookings.
+          // Keep completed fares available until the passenger dismisses them.
+          if (r.status === 'completed') return
+          // Auto-dismiss cancelled rides.
           if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current)
           dismissTimeoutRef.current = setTimeout(() => {
             setActiveRide(null); setRideVehicle(null)
@@ -422,7 +424,7 @@ export default function PassengerView({ view, setView, toast }) {
                       <p className="mt-1 text-[11px] font-semibold text-primary">Walk about {Math.round(pickupWalkMeters)} m to the shared pickup stop</p>
                     )}
                   </div>
-                  <StatusBadge status={activeRide.status} />
+                    <StatusBadge status={activeRide.status} label={activeRide.is_shared === false && activeRide.status === 'clustered' ? 'Finding driver' : undefined} />
                 </div>
 
                 <div>
@@ -445,10 +447,10 @@ export default function PassengerView({ view, setView, toast }) {
                             {passed && !current ? <CheckCircle2 className="h-3 w-3" /> : idx + 1}
                           </span>
                           <span className={cn('hidden truncate text-[10px] font-medium leading-tight sm:block', current ? 'text-black dark:text-white' : passed ? 'text-[#333333] dark:text-[#E2E2E2]' : 'text-[#8A8A8A]')}>
-                            {RIDE_STAGE_LABELS[key]}
+                            {key === 'clustered' && activeRide.is_shared === false ? 'Finding driver' : RIDE_STAGE_LABELS[key]}
                           </span>
                           <span className={cn('truncate text-[10px] font-medium leading-tight sm:hidden', current ? 'text-black dark:text-white' : 'text-[#8A8A8A]')}>
-                            {current ? RIDE_STAGE_LABELS[key] : idx + 1}
+                            {current ? (key === 'clustered' && activeRide.is_shared === false ? 'Finding driver' : RIDE_STAGE_LABELS[key]) : idx + 1}
                           </span>
                         </li>
                       )
@@ -486,12 +488,6 @@ export default function PassengerView({ view, setView, toast }) {
                     )}
                     {/* Razorpay fare payment — backend-verified; success only
                         after POST /payments/verify confirms it. */}
-                    <RazorpayPayment
-                      rideRequest={activeRide}
-                      rideOptionId={activeRide.ride_option_id || selected}
-                      rideOptionName={activeRide.ride_option_name || 'ride fare'}
-                      onPaid={() => toast('success', 'Payment successful!', 'Your ride fare has been received.')}
-                    />
                     <div className="flex gap-2">
                       <Button className="flex-1" size="sm" onClick={() => setView('tracking')}>
                         <Navigation className="h-3.5 w-3.5" /> Fullscreen tracking
@@ -503,7 +499,13 @@ export default function PassengerView({ view, setView, toast }) {
                   </div>
                 ) : (
                   <div className="flex flex-col gap-1.5">
-                    <p className="text-center text-[11px] text-muted-foreground">Auto-dismisses in a few seconds…</p>
+                    {activeRide.status === 'completed' && <RazorpayPayment
+                      key={activeRide.id}
+                      rideRequest={activeRide}
+                      rideOptionId={activeRide.ride_option_id}
+                      rideOptionName={activeRide.ride_option_name || 'ride fare'}
+                      onPaid={() => toast('success', 'Payment successful!', 'Your ride fare has been received.')}
+                    />}
                     <Button className="w-full" size="sm" onClick={clearActiveRideState}>Dismiss · Book new ride</Button>
                   </div>
                 )}
@@ -696,7 +698,7 @@ export default function PassengerView({ view, setView, toast }) {
             className="absolute left-1/2 top-4 z-10 hidden -translate-x-1/2 items-center gap-2.5 rounded-lg border border-[#E2E2E2] bg-white py-2 pl-4 pr-2 text-[13px] font-semibold text-black shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-colors duration-150 hover:border-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black lg:left-[calc(448px+((100%-448px)/2))] lg:flex"
           >
             <span className="h-2 w-2 animate-pulse rounded-full bg-black" aria-hidden="true" />
-            Ride #{activeRide.id} · {RIDE_STAGE_LABELS[activeRide.status] || activeRide.status.replace(/_/g, ' ')}
+            Ride #{activeRide.id} · {activeRide.is_shared === false && activeRide.status === 'clustered' ? 'Finding driver' : RIDE_STAGE_LABELS[activeRide.status] || activeRide.status.replace(/_/g, ' ')}
             <span className="rounded-md bg-black px-2.5 py-1 text-[12px] font-semibold text-white">Track</span>
           </button>
         )}
@@ -737,7 +739,7 @@ function TripCard({ trip, onClick }) {
           <p className="truncate text-[14px] font-semibold">→ {trip.destination_label || `${trip.dest_lat?.toFixed(3)}, ${trip.dest_lng?.toFixed(3)}`}</p>
           <p className="mt-0.5 text-[12px] text-[#6B6B6B]">{trip.request_time ? new Date(trip.request_time).toLocaleTimeString() : ''}</p>
         </div>
-        <StatusBadge status={trip.status} />
+        <StatusBadge status={trip.status} label={trip.is_shared === false && trip.status === 'clustered' ? 'Finding driver' : undefined} />
       </CardContent>
     </Card>
   )
@@ -775,7 +777,7 @@ function TripsView({ trips, loading, setView, onOpenTrip, title = 'My Trips' }) 
               <div className="min-w-0">
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <span className="font-mono text-[12px] text-[#8A8A8A]">#{t.id}</span>
-                  <StatusBadge status={t.status} />
+                  <StatusBadge status={t.status} label={t.is_shared === false && t.status === 'clustered' ? 'Finding driver' : undefined} />
                 </div>
                 <p className="truncate text-[14px] font-semibold tracking-[-0.01em]">
                   {t.pickup_label || 'Pickup'} <ArrowRight className="mx-1 inline h-4 w-4 text-[#8A8A8A]" />
@@ -796,7 +798,7 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
   const canCancel = ['pending', 'clustered'].includes(ride.status)
   return (
     <div className="mx-auto w-full max-w-[580px] space-y-5 p-4 md:p-8">
-      <PageHeader title={`Ride #${ride.id}`} description={ride.request_time ? new Date(ride.request_time).toLocaleString() : undefined} onBack={onBack} backLabel="Back" actions={<StatusBadge status={ride.status} />} />
+      <PageHeader title={`Ride #${ride.id}`} description={ride.request_time ? new Date(ride.request_time).toLocaleString() : undefined} onBack={onBack} backLabel="Back" actions={<StatusBadge status={ride.status} label={ride.is_shared === false && ride.status === 'clustered' ? 'Finding driver' : undefined} />} />
       <Card className="shadow-none">
         <CardContent className="flex flex-col gap-2 p-5">
           <InfoCard label="From" value={ride.pickup_label || `${ride.pickup_lat}, ${ride.pickup_lng}`} />
@@ -821,6 +823,7 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
           </CardContent>
         </Card>
       )}
+      {ride.status === 'completed' && <RazorpayPayment key={ride.id} rideRequest={ride} rideOptionId={ride.ride_option_id} rideOptionName={ride.ride_option_name || 'ride fare'} />}
       {canCancel && (
         <Button variant="outline" onClick={onCancel} className="h-12 w-full text-[#D93025] hover:text-[#D93025]">
           <X className="h-4 w-4" /> Cancel ride
@@ -848,7 +851,7 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
         </Button>
         <Separator orientation="vertical" className="h-5 bg-[#E2E2E2] dark:bg-[#333333]" />
         <p className="text-[15px] font-semibold tracking-[-0.01em]">Live ride tracking</p>
-        {ride && <StatusBadge status={ride.status} />}
+        {ride && <StatusBadge status={ride.status} label={ride.is_shared === false && ride.status === 'clustered' ? 'Finding driver' : undefined} />}
         <span className="ml-auto text-[13px] text-[#6B6B6B]">
           {displayVehicle
             ? <Badge variant="secondary" className="gap-1.5 font-mono text-[12px]"><CarFront className="h-3.5 w-3.5" /> {displayVehicle.license_plate}</Badge>

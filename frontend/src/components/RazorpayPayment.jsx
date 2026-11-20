@@ -26,6 +26,7 @@ export default function RazorpayPayment({
   }, [phase])
 
   const handlePay = async () => {
+    if (rideRequest?.status !== 'completed') return
     setError('')
     setPhase('creating')
     let checkoutData
@@ -95,6 +96,8 @@ export default function RazorpayPayment({
     : phase === 'cancelled' ? 'Payment cancelled — tap to retry'
     : phase === 'failed' ? 'Payment failed — tap to retry'
     : `Pay ${rideOptionName ? `· ${rideOptionName}` : ''}`
+
+  if (rideRequest?.status !== 'completed') return null
 
   return (
     <div className={cn('flex flex-col gap-2', className)}>

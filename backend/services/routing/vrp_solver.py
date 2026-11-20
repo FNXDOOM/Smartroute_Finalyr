@@ -11,6 +11,7 @@ from services.stops.road_snapper import build_road_graph
 from services.stadia_client import matrix as stadia_matrix
 from utils.geo import haversine_meters as _haversine_meters
 from utils.ride_states import ROUTE_SOLVED
+from utils.carpool_policy import MAX_CARPOOL_DETOUR_METERS, MAX_CARPOOL_DETOUR_RATIO
 
 # GUIDED_LOCAL_SEARCH always spends the full time_limit, so CI lowers it via SHARED_RIDE_SOLVER_TIME_LIMIT_SECONDS instead of this default.
 DEFAULT_SHARED_RIDE_SOLVER_SECONDS = 15
@@ -181,10 +182,31 @@ def build_stadia_distance_matrix(
                 targets[target_offset:target_offset + MATRIX_CHUNK_SIZE],
             )
             if block is None:
-                return None
+                return build_standard_route_distance_matrix(sources, targets)
             for row_offset, row in enumerate(block):
                 result[source_offset + row_offset][target_offset:target_offset + len(row)] = row
     return result
+
+
+def build_standard_route_distance_matrix(sources, targets):
+    """Small dispatch pools use the same road fallback as matching, before OSM.
+
+    Import at call time because the matching service also uses this solver via
+    shared_route_builder. No solver call happens while modules are initialized.
+    """
+    points = sources if sources == targets else [*sources, *targets]
+    # Three riders plus depot; never turn an arbitrary large solve into N² calls.
+    if not 2 <= len({(p["lat"], p["lng"]) for p in points}) <= 8:
+        return None
+    from services.carpool_matching import _road_distances
+
+    try:
+        distances = _road_distances([{"lat": p["lat"], "lon": p["lng"]} for p in points])
+    except RuntimeError:
+        return None
+    offset = 0 if sources == targets else len(sources)
+    return [[int(round(distances[i][offset + j])) for j in range(len(targets))]
+            for i in range(len(sources))]
 
 
 def build_road_distance_to_targets(
@@ -329,6 +351,9 @@ def solve_shared_ride_pdp(
     vehicle_capacities: Optional[List[int]] = None,
     depot_idx: int = 0,
     time_limit_seconds: Optional[int] = None,
+    min_passengers_per_vehicle: int = 1,
+    max_passengers_per_vehicle: Optional[int] = None,
+    allow_unserved: bool = False,
 ) -> Dict[str, Any]:
     """Pooled PDP over depot + pickup + destination nodes; each destination carries pair_index at its boarding pickup and returns its demand."""
     try:
@@ -417,6 +442,31 @@ def solve_shared_ride_pdp(
     # Some OR-Tools builds return a success flag from AddDimension, so look the dimension up by name.
     load_dimension = routing.GetDimensionOrDie("Load")
 
+    if max_passengers_per_vehicle is not None:
+        # Occupancy alone allows a fourth/fifth rider after an earlier drop-off.
+        # A separate monotonic count enforces the total carpool-run policy.
+        def passenger_count_callback(from_index):
+            node = matrix_nodes[manager.IndexToNode(from_index)]
+            return int(node.get("demand") or 0) if node.get("kind") == "pickup" else 0
+        count_cb = routing.RegisterUnaryTransitCallback(passenger_count_callback)
+        routing.AddDimension(count_cb, 0, max_passengers_per_vehicle, True, "Passengers")
+        count_dimension = routing.GetDimensionOrDie("Passengers")
+        for vehicle_idx in range(num_vehicles):
+            start, end = routing.Start(vehicle_idx), routing.End(vehicle_idx)
+            used = routing.NextVar(start) != end
+            if capacities[vehicle_idx] < min_passengers_per_vehicle:
+                routing.solver().Add(routing.NextVar(start) == end)
+            routing.solver().Add(
+                count_dimension.CumulVar(end) >= min_passengers_per_vehicle * used
+            )
+
+    if allow_unserved:
+        # Serve feasible pools now rather than blocking everyone on excess demand.
+        # Pickup and all its deliveries are optional together, never independently.
+        penalty = max_route_distance * (num_vehicles + 1)
+        for node_index in [*pickups, *destinations]:
+            routing.AddDisjunction([manager.NodeToIndex(node_index)], penalty)
+
     for index in destinations:
         pair_index = nodes[index].get("pair_index")
         if pair_index is None:
@@ -430,8 +480,19 @@ def solve_shared_ride_pdp(
         routing.solver().Add(
             routing.VehicleVar(pickup_var) == routing.VehicleVar(destination_var)
         )
+        if allow_unserved:
+            routing.solver().Add(routing.ActiveVar(pickup_var) == routing.ActiveVar(destination_var))
         routing.solver().Add(
             distance_dimension.CumulVar(pickup_var) <= distance_dimension.CumulVar(destination_var)
+        )
+        direct_distance = distance_matrix[int(pair_index)][index]
+        max_rider_distance = math.floor(min(
+            direct_distance + MAX_CARPOOL_DETOUR_METERS,
+            max(1, direct_distance) * MAX_CARPOOL_DETOUR_RATIO,
+        ))
+        routing.solver().Add(
+            distance_dimension.CumulVar(destination_var)
+            - distance_dimension.CumulVar(pickup_var) <= max_rider_distance
         )
 
     params = pywrapcp.DefaultRoutingSearchParameters()

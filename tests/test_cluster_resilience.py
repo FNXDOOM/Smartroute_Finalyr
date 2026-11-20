@@ -65,7 +65,8 @@ def test_unroutable_rider_does_not_roll_back_good_clusters(monkeypatch):
 
     monkeypatch.setattr(matching, "matrix", unavailable)
     monkeypatch.setattr(matching, "route", unavailable)
-    monkeypatch.setattr(background_jobs, "build_road_graph", lambda *a, **k: None)
+    monkeypatch.setattr(background_jobs, "build_road_graph",
+                        lambda *a, **k: pytest.fail("Dedicated pickups must not download OSM graphs"))
 
     db = SessionLocal()
     user = None
@@ -88,6 +89,10 @@ def test_unroutable_rider_does_not_roll_back_good_clusters(monkeypatch):
         )
 
         assert result["clusters_formed"] >= 1
+        assert result["routing_failures"] > 0
+        assert result["matrix_attempts"] == 1
+        from models.job_run import JobRun
+        assert db.get(JobRun, result["job_run_id"]).status == "partial"
         db.expire_all()
         rides = db.query(RideRequest).filter(RideRequest.id.in_(ids)).all()
         statuses = {ride.id: ride.status for ride in rides}

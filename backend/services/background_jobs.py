@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
@@ -10,6 +11,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session, load_only
 
 from database import SessionLocal
+from config import AUTO_DISPATCH_INTERVAL_SECONDS
 from models.cluster_run import ClusterRun
 from models.demand_snapshot import DemandSnapshot
 from models.job_run import JobRun
@@ -40,6 +42,8 @@ from services.carpool_matching import (
     attach_to_existing_run,
     find_cross_cell_corridor_groups,
     split_compatible_shared_group,
+    road_matching_batch,
+    road_matching_diagnostics,
 )
 from utils.carpool_status import (
     CARPOOL_CLUSTERED,
@@ -64,8 +68,7 @@ from utils.ride_states import (
 
 logger = logging.getLogger(__name__)
 
-CLUSTER_INTERVAL_SECONDS = 60
-AUTO_DISPATCH_INTERVAL_SECONDS = 60
+CLUSTER_INTERVAL_SECONDS = AUTO_DISPATCH_INTERVAL_SECONDS
 DEMAND_INTERVAL_SECONDS = 300
 REBALANCE_INTERVAL_SECONDS = 300
 SIMULATE_DISPATCH_INTERVAL_SECONDS = 5
@@ -97,14 +100,20 @@ def _create_clustered_stop(
     resolution: int,
     mode: str,
     demo_run_id: Optional[str],
+    exact_pickup: bool = False,
 ) -> Dict:
     """One virtual stop for a group of rides, marked clustered; shared by HDBSCAN groups and private singletons so they can't drift."""
     centroid_lat = sum(req.pickup_lat for req in members) / len(members)
     centroid_lng = sum(req.pickup_lng for req in members) / len(members)
-    candidate_stops = generate_virtual_stops(members, n_stops=1)
-    stop_lat, stop_lng = candidate_stops[0]
-    road_graph = build_road_graph(centroid_lat, centroid_lng, dist=2500)
-    snapped_lat, snapped_lng, snapped_node_id = snap_to_road(road_graph, stop_lat, stop_lng)
+    if exact_pickup or all(not request.is_shared for request in members):
+        if len(members) != 1:
+            raise ValueError("Private rides must have an exclusive pickup")
+        snapped_lat, snapped_lng, snapped_node_id = members[0].pickup_lat, members[0].pickup_lng, "requested-pickup"
+    else:
+        candidate_stops = generate_virtual_stops(members, n_stops=1)
+        stop_lat, stop_lng = candidate_stops[0]
+        road_graph = build_road_graph(centroid_lat, centroid_lng, dist=2500)
+        snapped_lat, snapped_lng, snapped_node_id = snap_to_road(road_graph, stop_lat, stop_lng)
     max_walk_meters = max(
         _haversine_meters(request.pickup_lat, request.pickup_lng, snapped_lat, snapped_lng)
         for request in members
@@ -172,6 +181,7 @@ def _create_per_rider_stops(
                 resolution=resolution,
                 mode=mode,
                 demo_run_id=demo_run_id,
+                exact_pickup=True,
             )
         )
     return payloads
@@ -184,6 +194,7 @@ def pending_rides_query(db: Session, mode: str, demo_run_id: Optional[str]):
     ).order_by(RideRequest.request_time.asc())
 
 
+@road_matching_batch()
 def run_cluster_job(
     db: Session,
     resolution: int = 9,
@@ -194,6 +205,7 @@ def run_cluster_job(
     demo_run_id: Optional[str] = None,
 ) -> Dict:
     """Execute clustering and record the background-job outcome."""
+    started = time.monotonic()
     try:
         mode = validate_ride_mode(mode)
         ride_query = apply_ride_scope(db.query(RideRequest), mode, demo_run_id)
@@ -361,15 +373,18 @@ def run_cluster_job(
         db.add(cluster_run)
         db.flush()
 
+        diagnostics = road_matching_diagnostics()
+        diagnostics["clustering_duration_ms"] = round((time.monotonic() - started) * 1000)
         job_runs.finish(
             db,
             job_run,
-            "success",
+            "partial" if diagnostics.get("routing_failures") else "success",
             {
                 "cluster_run_id": cluster_run.id,
                 "processed_requests": len(requests),
                 "clusters_formed": clusters_formed,
                 "noise_requests_count": noise_count,
+                **diagnostics,
             },
         )
         db.commit()
@@ -379,6 +394,7 @@ def run_cluster_job(
             "processed_requests": len(requests),
             "clusters_formed": clusters_formed,
             "noise_requests_count": noise_count,
+            **diagnostics,
         }
 
 def run_demand_refresh_job(
@@ -543,6 +559,7 @@ def run_vehicle_rebalance_job(
             "candidate_zones": len(ranked_cells),
         }
 
+@road_matching_batch()
 def run_auto_dispatch_pipeline(
     db: Session,
     triggered_by_user_id: Optional[int] = None,
@@ -617,6 +634,10 @@ def run_auto_dispatch_pipeline(
             mode=mode,
             demo_run_id=demo_run_id,
         )
+        matching_info = {
+            **road_matching_diagnostics(),
+            "clustering_duration_ms": cluster_res.get("clustering_duration_ms", 0),
+        }
 
         # Clustered stops without active routes.
         clustered_rides = apply_ride_scope(
@@ -627,11 +648,13 @@ def run_auto_dispatch_pipeline(
         ).all()
 
         if not clustered_rides:
-            job_runs.finish(db, job_run, "success", {
+            job_runs.finish(db, job_run, "partial" if matching_info["routing_failures"] else "success", {
                 "clusters_formed": cluster_res.get("clusters_formed", 0),
                 "routes_optimized": 0,
                 "assigned_rides": 0,
-                "message": "No unassigned clustered rides to dispatch",
+                "message": ("Road matching incomplete; pending riders will be retried"
+                            if matching_info["routing_failures"] else "No unassigned clustered rides to dispatch"),
+                **matching_info,
             })
             db.commit()
             return {
@@ -639,6 +662,7 @@ def run_auto_dispatch_pipeline(
                 "clusters_formed": cluster_res.get("clusters_formed", 0),
                 "routes_optimized": 0,
                 "assigned_rides": 0,
+                **matching_info,
             }
 
         virtual_stop_ids = sorted({r.virtual_stop_id for r in clustered_rides if r.virtual_stop_id})
@@ -685,11 +709,12 @@ def run_auto_dispatch_pipeline(
         ).order_by(Vehicle.id.asc()).all()
 
         if not idle_vehicles or not virtual_stops:
-            job_runs.finish(db, job_run, "success", {
+            job_runs.finish(db, job_run, "partial" if matching_info["routing_failures"] else "success", {
                 "clusters_formed": cluster_res.get("clusters_formed", 0),
                 "routes_optimized": 0,
                 "idle_vehicles": len(idle_vehicles),
                 "message": "No idle vehicles available for dispatch",
+                **matching_info,
             })
             db.commit()
             return {
@@ -697,6 +722,7 @@ def run_auto_dispatch_pipeline(
                 "clusters_formed": cluster_res.get("clusters_formed", 0),
                 "routes_optimized": 0,
                 "idle_vehicles": len(idle_vehicles),
+                **matching_info,
             }
 
         built_routes = build_shared_routes(
@@ -706,6 +732,7 @@ def run_auto_dispatch_pipeline(
             depot_lng=depot_lng,
             request_statuses=(RIDE_CLUSTERED,),
         )
+        matching_info.update(road_matching_diagnostics())
 
         routes_count = 0
         assigned_rides_count = 0
@@ -758,10 +785,11 @@ def run_auto_dispatch_pipeline(
                 )
             routes_count += 1
 
-        job_runs.finish(db, job_run, "success", {
+        job_runs.finish(db, job_run, "partial" if matching_info["routing_failures"] else "success", {
             "clusters_formed": cluster_res.get("clusters_formed", 0),
             "routes_optimized": routes_count,
             "assigned_rides": assigned_rides_count,
+            **matching_info,
         })
         db.commit()
         return {
@@ -769,6 +797,7 @@ def run_auto_dispatch_pipeline(
             "clusters_formed": cluster_res.get("clusters_formed", 0),
             "routes_optimized": routes_count,
             "assigned_rides": assigned_rides_count,
+            **matching_info,
         }
 
 def simulate_rides_query(db: Session):
@@ -994,6 +1023,7 @@ async def _run_periodic(name: str, interval_seconds: int, runner):
     STATE.active_tasks.append(name)
     try:
         while True:
+            tick_started = asyncio.get_running_loop().time()
             try:
                 await asyncio.to_thread(run_once)
             except asyncio.CancelledError:
@@ -1010,7 +1040,10 @@ async def _run_periodic(name: str, interval_seconds: int, runner):
                 STATE.last_rebalance_run_at = now
             elif name == "simulate_ride_dispatch":
                 STATE.last_dispatch_run_at = now
-            await asyncio.sleep(interval_seconds)
+            # Scheduling is start-to-start, not processing time + another full wait.
+            # Awaiting run_once above guarantees no overlapping ticks.
+            elapsed = asyncio.get_running_loop().time() - tick_started
+            await asyncio.sleep(max(0.1, interval_seconds - elapsed))
     except asyncio.CancelledError:
         pass
     finally:
@@ -1056,6 +1089,7 @@ def get_background_job_state() -> Dict:
         "last_dispatch_run_at": STATE.last_dispatch_run_at,
         "active_tasks": list(STATE.active_tasks),
         "cluster_interval_seconds": CLUSTER_INTERVAL_SECONDS,
+        "auto_dispatch_interval_seconds": AUTO_DISPATCH_INTERVAL_SECONDS,
         "demand_interval_seconds": DEMAND_INTERVAL_SECONDS,
         "rebalance_interval_seconds": REBALANCE_INTERVAL_SECONDS,
         "simulate_dispatch_interval_seconds": SIMULATE_DISPATCH_INTERVAL_SECONDS,

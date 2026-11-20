@@ -19,7 +19,22 @@ LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1", "::ffff:127.0.0.1"}
 
 
 @pytest.fixture
-def mock_road_matrix(monkeypatch):
+def mock_carpool_roads(monkeypatch):
+    """Explicit synthetic road lengths for matching tests, never live geography."""
+    from services import carpool_matching
+    from utils.geo import haversine_meters
+
+    def matrix(sources, targets, **kwargs):
+        return {"sources_to_targets": [
+            [{"distance": haversine_meters(a["lat"], a["lon"], b["lat"], b["lon"]) / 1000}
+             for b in targets] for a in sources
+        ]}
+    monkeypatch.setattr(carpool_matching, "matrix", matrix)
+    return matrix
+
+
+@pytest.fixture
+def mock_road_matrix(monkeypatch, mock_carpool_roads):
     """Explicit synthetic routing for solver tests, never live-road evidence."""
     from services.routing import vrp_solver
 

@@ -162,7 +162,7 @@ def ride(db, user):
         user_id=user.id,
         pickup_lat=12.9716, pickup_lng=77.5946,
         dest_lat=12.9352, dest_lng=77.6245,
-        status="pending",
+        status="completed",
         ride_option_id="swift-x",
     )
     db.add(r)
@@ -485,6 +485,16 @@ def test_checkout_requires_persisted_tier_for_linked_ride(db, user, ride, fake_c
         )
     assert refused.value.status_code == 409
     assert db.query(Payment).count() == 0
+
+
+@pytest.mark.parametrize("ride_status", ["pending", "clustered", "assigned", "arriving", "ready_for_pickup", "in_progress"])
+def test_checkout_rejects_unfinished_ride(db, user, ride, fake_client, set_secrets, ride_status):
+    from routers.payments import _resolve_ride_amount
+    ride.status = ride_status
+    db.commit()
+    with pytest.raises(HTTPException) as exc:
+        _resolve_ride_amount(db, user, ride.id, ride.ride_option_id)
+    assert exc.value.status_code == 409
 
 
 def test_checkout_rejects_cancelled_ride(db, user, ride, fake_client, set_secrets):
@@ -958,7 +968,7 @@ def test_parallel_checkouts_return_one_active_payment_and_order(tmp_path, set_se
         setup.flush()
         booking = RideRequest(
             user_id=owner.id, pickup_lat=13, pickup_lng=77.6,
-            dest_lat=13.1, dest_lng=77.7, status="pending", ride_option_id="swift-x",
+            dest_lat=13.1, dest_lng=77.7, status="completed", ride_option_id="swift-x",
         )
         setup.add(booking)
         setup.commit()

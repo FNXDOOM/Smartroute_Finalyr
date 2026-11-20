@@ -54,6 +54,8 @@ DB_MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
 DB_POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
 # Opt-in: run dispatch jobs in API for local dev.
 ENABLE_BACKGROUND_JOBS_IN_API = os.getenv("ENABLE_BACKGROUND_JOBS_IN_API", "false").lower() == "true"
+# Non-overlapping dispatch ticks; bounded so a bad setting cannot busy-loop.
+AUTO_DISPATCH_INTERVAL_SECONDS = max(2, int(os.getenv("AUTO_DISPATCH_INTERVAL_SECONDS", "5")))
 STADIA_API_KEY = os.getenv("STADIA_API_KEY", "").strip()
 STADIA_GEOCODER_URL = os.getenv(
     "STADIA_GEOCODER_URL", "https://api.stadiamaps.com/geocoding/v1"

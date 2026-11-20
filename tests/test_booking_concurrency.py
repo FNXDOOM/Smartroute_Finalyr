@@ -14,7 +14,7 @@ from test_carpool_lifecycle import _two_rider_route, _cleanup
 
 
 @pytest.fixture
-def open_run():
+def open_run(mock_carpool_roads):
     db = SessionLocal()
     driver, rider_a, rider_b, vehicle, ride_a, ride_b, persisted = _two_rider_route(db)
     stop_ids = [ride_a.virtual_stop_id, ride_b.virtual_stop_id]
@@ -33,6 +33,10 @@ def open_run():
     try:
         yield persisted.route_plan.id, vehicle.id, candidate_ids
     finally:
+        stop_ids.extend(
+            ride.virtual_stop_id for ride in db.query(RideRequest).filter(RideRequest.id.in_(candidate_ids))
+            if ride.virtual_stop_id and ride.virtual_stop_id not in stop_ids
+        )
         # Include replacement plans owned by this fixture's vehicle.
         from models.route_waypoint import RouteWaypointRecord
         plans = db.query(RoutePlan).filter(RoutePlan.vehicle_id == vehicle.id).all()
@@ -45,6 +49,42 @@ def open_run():
         db.commit()
         _cleanup(db, persisted, [ride_a.id, ride_b.id, *candidate_ids], stop_ids, vehicle.id)
         db.close()
+
+
+@pytest.mark.parametrize("reason", ["accepted", "full", "private", "opposite"])
+def test_late_rider_must_not_join_unavailable_or_incompatible_run(open_run, reason):
+    from models.vehicle import Vehicle
+    plan_id, vehicle_id, candidate_ids = open_run
+    with SessionLocal() as db:
+        plan, vehicle = db.get(RoutePlan, plan_id), db.get(Vehicle, vehicle_id)
+        request = db.get(RideRequest, candidate_ids[0])
+        if reason == "accepted":
+            plan.route_metadata = {**plan.route_metadata, "driver_accepted": True}
+        elif reason == "full":
+            vehicle.capacity = 2
+        elif reason == "private":
+            request.is_shared = False
+        else:
+            request.pickup_lat, request.dest_lat = request.dest_lat, request.pickup_lat
+            request.pickup_lng, request.dest_lng = request.dest_lng, request.pickup_lng
+            # Continue beyond the original pickup: unlike a tiny reversal, this
+            # cannot be inserted within every passenger's 45% detour budget.
+            request.dest_lng += .03
+        db.commit()
+        assert not carpool_matching.attach_to_existing_run(db, request, mode="live", demo_run_id=None)
+        assert request.status == "pending"
+        assert request.virtual_stop_id is None
+
+
+def test_curved_road_candidate_not_rejected_by_150m_straight_line(open_run, mock_road_matrix):
+    _, _, candidate_ids = open_run
+    with SessionLocal() as db:
+        request = db.get(RideRequest, candidate_ids[0])
+        request.pickup_lat, request.pickup_lng = 12.9800, 77.6330
+        db.commit()
+        assert carpool_matching.attach_to_existing_run(db, request, mode="live", demo_run_id=None)
+        db.commit()
+        assert request.status == "assigned"
 
 
 def test_compatible_rider_can_take_last_seat_before_acceptance(open_run, mock_road_matrix):
