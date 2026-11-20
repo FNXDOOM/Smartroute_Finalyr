@@ -43,6 +43,49 @@ def test_same_pickup_nested_destinations_are_order_independent(destinations, lin
     assert list(map(len, matching.split_compatible_shared_group(requests))) == [2]
 
 
+@pytest.mark.parametrize("local", [True, False])
+@pytest.mark.parametrize("reverse", [True, False])
+def test_rides_35_and_36_are_evaluated_by_roads_not_destination_spread(monkeypatch, local, reverse):
+    # Production coordinates; the distances below are a synthetic nested-road
+    # fixture, not a claim about the live provider's actual routes.
+    requests = [rider(35), rider(36)]
+    for request, destination in zip(requests, [(13.027276, 77.731848), (13.072354, 77.787191)]):
+        request.pickup_lat, request.pickup_lng = 12.997038, 77.669131
+        request.dest_lat, request.dest_lng = destination
+    positions = {(12.997038, 77.669131): 0, (13.027276, 77.731848): 14, (13.072354, 77.787191): 23}
+    calls = []
+    def matrix(sources, targets, **kwargs):
+        calls.append(1)
+        return {"sources_to_targets": [
+            [{"distance": abs(positions[(a["lat"], a["lon"])] - positions[(b["lat"], b["lon"])])}
+             for b in targets] for a in sources
+        ]}
+    monkeypatch.setattr(matching, "matrix", matrix)
+    if reverse:
+        requests.reverse()
+        # Change arrival order too; the matcher sorts by request_time/id.
+        requests[0].id, requests[1].id = 35, 36
+    groups = (matching.split_compatible_shared_group(requests) if local
+              else matching.find_cross_cell_corridor_groups(requests)[0])
+    assert list(map(len, groups)) == [2]
+    assert calls, "The road check must not be skipped by a destination-radius gate"
+
+
+@pytest.mark.parametrize("destinations", [(10, 25), (25, 10)])
+def test_far_apart_destinations_still_require_road_detour_limits(monkeypatch, destinations):
+    requests = [rider(i, destination=destination) for i, destination in enumerate(destinations)]
+    def matrix(sources, targets, **kwargs):
+        pickup = requests[0].pickup_lng
+        return {"sources_to_targets": [
+            [{"distance": 0 if a["lon"] == b["lon"] else (
+                abs(a["lon"] - b["lon"]) * 110
+                if pickup in (a["lon"], b["lon"]) else 50
+            )} for b in targets] for a in sources
+        ]}
+    monkeypatch.setattr(matching, "matrix", matrix)
+    assert matching.find_cross_cell_corridor_groups(requests) == ([], set())
+
+
 def test_local_pickups_cannot_bypass_road_detour_policy(monkeypatch):
     requests = [rider(0), rider(1, pickup=.001, destination=11)]
     distances = [[0, 20, 10, 20], [20, 0, 20, 10], [10, 20, 0, 20], [20, 10, 20, 0]]

@@ -33,6 +33,7 @@ from services.carpool_lifecycle import (
     detach_ride,
     route_plan_serving_ride,
     settle_carpool_run,
+    route_rides,
 )
 from services.notifications import create_notification
 from services.routing.shared_route_builder import resolve_route_geometry
@@ -58,6 +59,7 @@ from utils.ride_states import (
     RIDE_READY_FOR_PICKUP,
     RIDE_STATUSES,
     ROUTE_SOLVED,
+    ROUTE_COMPLETED,
     VEHICLE_ACTIVE,
     VEHICLE_IDLE,
     is_terminal_ride,
@@ -696,8 +698,8 @@ def _vehicle_serving_ride(db: Session, ride: RideRequest) -> Optional[Vehicle]:
 
 
 def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
-    """Close a carpool route when its last passenger reaches the destination."""
-    if not ride.is_shared or not ride.virtual_stop_id:
+    """Close a fully served route and release its backend-owned reservation."""
+    if not ride.virtual_stop_id:
         return
     # autoflush is off, so flush the status change that triggered this call or the roster below reads the previous state.
     db.flush()
@@ -708,7 +710,17 @@ def _finalize_carpool_route_if_complete(db: Session, ride: RideRequest) -> None:
         .all()
     )
     for route_plan in route_plans:
-        settle_carpool_run(db, route_plan)
+        if route_plan_meta.is_carpool(route_plan):
+            settle_carpool_run(db, route_plan)
+        else:
+            remaining = route_rides(db, route_plan)
+            if remaining and all(item.status == RIDE_COMPLETED for item in remaining):
+                route_plan.status = ROUTE_COMPLETED
+                route_plan_meta.mark_run_completed(route_plan, datetime.now(timezone.utc).isoformat())
+                vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+                if vehicle and vehicle.assigned_route_id == route_plan.route_id:
+                    vehicle.assigned_route_id = None
+                    vehicle.status = VEHICLE_IDLE
 
 
 @router.get("/", response_model=List[RideRequestResponse])

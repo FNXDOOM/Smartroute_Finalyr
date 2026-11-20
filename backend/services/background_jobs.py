@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session, load_only
 
 from database import SessionLocal
@@ -36,6 +37,7 @@ from services.routing.shared_route_builder import build_shared_routes, persist_s
 from services.routing.vrp_solver import shared_ride_solver_time_limit
 from services.notifications import create_notification, create_notifications_for_users
 from services import job_runs, route_plan_meta
+from services.carpool_lifecycle import reconcile_reoptimization_run
 from services.carpool_matching import (
     MAX_PICKUP_WALK_METERS,
     MIN_CARPOOL_PASSENGERS,
@@ -60,9 +62,12 @@ from utils.ride_states import (
     RIDE_IN_PROGRESS,
     RIDE_PENDING,
     RIDE_SERVING_STATUSES,
+    LIVE_ROUTE_STATUSES,
     ROUTE_CANCELLED,
     ROUTE_SOLVED,
+    ROUTE_NEEDS_REOPTIMIZATION,
     VEHICLE_IDLE,
+    DISPATCHABLE_VEHICLE_STATUSES,
     is_terminal_ride,
 )
 
@@ -192,6 +197,32 @@ def pending_rides_query(db: Session, mode: str, demo_run_id: Optional[str]):
     return apply_ride_scope(db.query(RideRequest), mode, demo_run_id).filter(
         RideRequest.status == RIDE_PENDING
     ).order_by(RideRequest.request_time.asc())
+
+
+def unassigned_clustered_rides_query(db: Session, mode: str, demo_run_id: Optional[str]):
+    """Never redispatch a rider still reserved by a live/reoptimization run."""
+    reserved_stops = select(RouteWaypointRecord.stop_id).join(
+        RoutePlan, RoutePlan.id == RouteWaypointRecord.route_plan_id
+    ).where(
+        RoutePlan.mode == mode,
+        RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
+        RouteWaypointRecord.stop_id.isnot(None),
+    )
+    if mode == PRESENTATION_DEMO_MODE:
+        reserved_stops = reserved_stops.where(RoutePlan.demo_run_id == demo_run_id)
+    return apply_ride_scope(db.query(RideRequest), mode, demo_run_id).filter(
+        RideRequest.status == RIDE_CLUSTERED,
+        RideRequest.virtual_stop_id.isnot(None),
+        ~RideRequest.virtual_stop_id.in_(reserved_stops),
+    )
+
+
+def available_vehicles_query(query):
+    """Presence/ownership are scoped by the caller; a live reservation always wins."""
+    return query.filter(
+        Vehicle.assigned_route_id.is_(None),
+        Vehicle.status.in_(DISPATCHABLE_VEHICLE_STATUSES),
+    )
 
 
 @road_matching_batch()
@@ -576,6 +607,17 @@ def run_auto_dispatch_pipeline(
     with job_runs.running(
         db, "auto_dispatch_pipeline", triggered_by_user_id=triggered_by_user_id, is_scheduled=is_scheduled
     ) as job_run:
+        recovery_query = db.query(RoutePlan).filter(
+            RoutePlan.mode == mode,
+            RoutePlan.status == ROUTE_NEEDS_REOPTIMIZATION,
+        )
+        if mode == PRESENTATION_DEMO_MODE:
+            recovery_query = recovery_query.filter(RoutePlan.demo_run_id == demo_run_id)
+        recovered_runs = sum(
+            int(reconcile_reoptimization_run(db, plan)) for plan in recovery_query.all()
+        )
+        if recovered_runs:
+            db.flush()
         # Release offers stuck on a driver who went offline before accepting, so another online driver can take them.
         if mode == LIVE_MODE:
             presence_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DRIVER_PRESENCE_TIMEOUT_SECONDS)
@@ -585,7 +627,7 @@ def run_auto_dispatch_pipeline(
                 .join(User, User.id == Vehicle.driver_user_id)
                 .filter(
                     RoutePlan.mode == LIVE_MODE,
-                    RoutePlan.status == ROUTE_SOLVED,
+                    RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
                     (
                         User.driver_last_seen_at.is_(None)
                         | (User.driver_last_seen_at < presence_cutoff)
@@ -637,15 +679,11 @@ def run_auto_dispatch_pipeline(
         matching_info = {
             **road_matching_diagnostics(),
             "clustering_duration_ms": cluster_res.get("clustering_duration_ms", 0),
+            "recovered_reoptimization_runs": recovered_runs,
         }
 
         # Clustered stops without active routes.
-        clustered_rides = apply_ride_scope(
-            db.query(RideRequest), mode, demo_run_id
-        ).filter(
-            RideRequest.status == RIDE_CLUSTERED,
-            RideRequest.virtual_stop_id.isnot(None),
-        ).all()
+        clustered_rides = unassigned_clustered_rides_query(db, mode, demo_run_id).all()
 
         if not clustered_rides:
             job_runs.finish(db, job_run, "partial" if matching_info["routing_failures"] else "success", {
@@ -704,9 +742,7 @@ def run_auto_dispatch_pipeline(
                 User.driver_last_seen_at.isnot(None),
                 User.driver_last_seen_at >= presence_cutoff,
             )
-        idle_vehicles = vehicle_scope.filter(
-            (Vehicle.status == VEHICLE_IDLE) | (Vehicle.assigned_route_id.is_(None))
-        ).order_by(Vehicle.id.asc()).all()
+        idle_vehicles = available_vehicles_query(vehicle_scope).order_by(Vehicle.id.asc()).all()
 
         if not idle_vehicles or not virtual_stops:
             job_runs.finish(db, job_run, "partial" if matching_info["routing_failures"] else "success", {

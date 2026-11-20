@@ -1,5 +1,4 @@
 """Shared matching/dispatch limits: never accept a pool the solver may relax."""
-MAX_DESTINATION_SPREAD_METERS = 7000
 MAX_CARPOOL_DETOUR_METERS = 5000
 MAX_CARPOOL_DETOUR_RATIO = 1.45
 MIN_CARPOOL_PASSENGERS = 2

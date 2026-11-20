@@ -151,8 +151,8 @@ export default function DriverView({ user, view, setView, toast }) {
   }, [])
 
   const currentDriverRoute = myVehicle?.id
-    ? routes.find((route) => route.route_id === myVehicle.assigned_route_id && route.status === 'solved' && route.route_metadata?.carpool_run_status !== 'completed')
-      || routes.find((route) => route.vehicle_id === myVehicle.id && route.status === 'solved' && route.route_metadata?.carpool_run_status !== 'completed')
+    ? routes.find((route) => route.route_id === myVehicle.assigned_route_id && ['solved', 'needs_reoptimization'].includes(route.status) && route.route_metadata?.carpool_run_status !== 'completed')
+      || routes.find((route) => route.vehicle_id === myVehicle.id && ['solved', 'needs_reoptimization'].includes(route.status) && route.route_metadata?.carpool_run_status !== 'completed')
       || null
     : null
 
@@ -231,11 +231,16 @@ export default function DriverView({ user, view, setView, toast }) {
     try {
       await ridesApi.updateStatus(rideId, status)
       setRides(prev => prev.map(r => r.id===rideId ? {...r, status} : r))
-      // Trip over: free driver's vehicle.
+      // The backend releases a route only when all riders are finished.
+      // Never mark a shared vehicle idle just because one co-passenger cancelled.
       if ((status === 'completed' || status === 'cancelled') && myVehicle) {
         try {
-          await vehiclesApi.update(myVehicle.id, { status: 'idle' })
-          setMyVehicle((prev) => (prev ? { ...prev, status: 'idle' } : prev))
+          const updated = await vehiclesApi.list()
+          if (Array.isArray(updated)) {
+            setVehicles(updated)
+            setMyVehicle((prev) => updated.find((item) => item.id === prev?.id) || updated[0] || null)
+          }
+          await refreshRoutes()
         } catch { /* non-fatal: vehicle keeps its last status */ }
       }
       toast('success', `Ride #${rideId} → ${status.replace(/_/g, ' ')}`)
@@ -385,7 +390,7 @@ export default function DriverView({ user, view, setView, toast }) {
     if (loading || !navRoute?.route_id) return
     const stillActive = routes.some((item) => (
       item.route_id === navRoute.route_id &&
-      item.status === 'solved' &&
+      ['solved', 'needs_reoptimization'].includes(item.status) &&
       item.route_metadata?.carpool_run_status !== 'completed'
     ))
     if (!stillActive) {

@@ -13,6 +13,12 @@ when no local PostgreSQL test database is supplied.
   The remaining singleton now borrows from a triple only if both pairs pass policy.
 - The local-pickup pass used a different, asymmetric straight-line predicate from
   the corridor pass. Both now use directed road distances and every rider's budget.
+- Production rides 35/36 exposed a remaining destination-radius gate: their
+  destinations are 7,814 m apart, so the 7,000 m gate skipped all road checks.
+  Removed that gate from new-pool matching and pre-acceptance insertion. Long
+  nested corridors now use the same per-rider detour limits as shorter trips.
+  Exact-coordinate regressions use synthetic roads; actual provider compatibility
+  is still evaluated at runtime, not assumed from pickup labels.
 - Requiring all pickups before all drop-offs rejected overlapping chains of trips.
   Feasible orders now allow interleaving, with pickup-before-drop-off and genuine
   shared travel (not just boarding at somebody else's exact drop-off coordinate).
@@ -35,6 +41,18 @@ when no local PostgreSQL test database is supplied.
 - Routing failures now appear in job summaries and mark incomplete jobs `partial`,
   while independently valid pools remain committed. Summaries include clustering
   duration, matrix attempts, route attempts, and routing failures.
+- A production vehicle was reserved by accepted route `route-1-97f5f08b`, with
+  status `needs_reoptimization` and rider 10 incorrectly demoted to `clustered`.
+  Cancellations now preserve accepted co-passenger progress. The worker and driver
+  history reconcile the legacy demotion only while the vehicle still owns that
+  reservation; they never rewind onboard riders or free an unfinished ride.
+- Driver history and map navigation now include both live route states. A plan
+  requiring reoptimization no longer disappears while still reserving a vehicle.
+- Clustered riders bound to a live plan are excluded from fresh dispatch. An
+  `idle` label cannot override an existing reservation. The frontend refreshes
+  backend availability after cancellation instead of marking a shared car idle.
+- Private-ride completion also closes its plan and releases the reservation on
+  the backend, so safe reservation checks do not strand completed private trips.
 
 ## Scenario coverage
 
@@ -42,6 +60,9 @@ when no local PostgreSQL test database is supplied.
 
 - 2, 3, 4, 5, and 7 compatible riders through both matching entry points.
 - Nested destinations in either booking order.
+- Production 35/36 coordinates with synthetic nested-road distances, in both
+  arrival orders and matching entry points; distant destinations with excessive
+  road detours still fail; later riders can continue farther along the corridor.
 - Nearby pickups requiring excessive road detours.
 - Private-ride exclusion; opposite-direction/disjoint/short-trip incompatibility.
 - Overlapping chains that require an early drop-off.
@@ -55,6 +76,11 @@ requests, excessive-detour insertion, curved-road insertion and last-seat races.
 `tests/test_cluster_resilience.py` verifies partial failures preserve good pools
 and dedicated pickups never trigger graph downloads.
 
+`tests/test_reoptimization_recovery.py` verifies accepted/pre-acceptance
+cancellation visibility, legacy repair and idempotency, worker reconciliation,
+no double dispatch or onboard rewind, historical-assignment protection, and
+completion/release with a single surviving rider or a private trip.
+
 ## Operational notes
 
 `AUTO_DISPATCH_INTERVAL_SECONDS=5` is the default; minimum is two seconds.
@@ -65,3 +91,7 @@ still affect end-to-end wait time. Only one dispatch worker is supported.
 No production booking data or provider credentials are needed for this suite.
 Verify deployed job summaries and real-road end-to-end timing after deployment
 before claiming a measured production latency improvement.
+
+The reservation recovery does **not** cancel or complete rider 10. Once deployed,
+the driver must finish the recovered ride or the passenger/admin must explicitly
+cancel it before that vehicle can take another run.

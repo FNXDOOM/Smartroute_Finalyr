@@ -17,6 +17,7 @@ from services.notifications import create_notification, create_notifications_for
 from utils.ride_states import (
     LIVE_ROUTE_STATUSES,
     RIDE_BOUND_STATUSES,
+    RIDE_ASSIGNED,
     RIDE_CANCELLED,
     RIDE_CLUSTERED,
     RIDE_COMPLETED,
@@ -180,10 +181,47 @@ def settle_carpool_run(db: Session, route_plan: RoutePlan, *, notify: bool = Tru
     return True
 
 
+def reconcile_reoptimization_run(db: Session, route_plan: RoutePlan) -> bool:
+    """Repair old cancellation state without releasing an occupied vehicle.
+
+    Older cancellations demoted accepted, not-yet-boarded riders to clustered.
+    Restore only that legacy state; readiness/onboard progress is never rewound.
+    The caller owns flush/commit. Historical/non-owning plans are never repaired.
+    """
+    if route_plan.status != ROUTE_NEEDS_REOPTIMIZATION:
+        return False
+    vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
+    if not vehicle or vehicle.assigned_route_id != route_plan.route_id:
+        return False
+    rides = route_rides(db, route_plan)
+    if not rides:
+        route_plan.status = ROUTE_CANCELLED
+        vehicle.assigned_route_id = None
+        vehicle.status = VEHICLE_IDLE
+        return True
+    if not riders_not_dropped_off(rides):
+        close_carpool_run(db, route_plan, rides, notify=False)
+        return True
+    if not route_plan_meta.is_driver_accepted(route_plan):
+        return False
+    changed = False
+    for ride in rides:
+        if ride.status == RIDE_CLUSTERED:
+            if ride.is_shared:
+                stage = ride.carpool_status
+                set_carpool_stage(
+                    ride, stage if stage_at_least(stage, CARPOOL_DRIVER_ACCEPTED) else CARPOOL_DRIVER_ACCEPTED
+                )
+            else:
+                ride.status = RIDE_ASSIGNED
+            changed = True
+    return changed
+
+
 # -- membership --------------------------------------------------------------
 
 def detach_ride(db: Session, ride: RideRequest) -> None:
-    """Remove a rider from its route. The one sanctioned backward move: survivors drop to clustered for re-solve."""
+    """Remove a rider, preserving accepted co-passengers' lifecycle progress."""
     if not ride.virtual_stop_id:
         ride.cluster_id = None
         return
@@ -195,7 +233,7 @@ def detach_ride(db: Session, ride: RideRequest) -> None:
     route_plans = {}
     for pickup_waypoint in pickup_waypoints:
         route_plan = db.query(RoutePlan).filter(RoutePlan.id == pickup_waypoint.route_plan_id).first()
-        if not route_plan:
+        if not route_plan or route_plan.status not in LIVE_ROUTE_STATUSES:
             continue
         route_plans[route_plan.id] = route_plan
         for waypoint in route_plan.waypoints or []:
@@ -227,16 +265,17 @@ def detach_ride(db: Session, ride: RideRequest) -> None:
         )
         if remaining:
             route_plan.status = ROUTE_NEEDS_REOPTIMIZATION
-            db.query(RideRequest).filter(
-                RideRequest.id.in_(set(remaining)),
-                RideRequest.status.in_(RIDE_BOUND_STATUSES),
-            ).update(
-                {
-                    RideRequest.status: RIDE_CLUSTERED,
-                    RideRequest.carpool_status: CARPOOL_CLUSTERED,
-                },
-                synchronize_session=False,
-            )
+            if not route_plan_meta.is_driver_accepted(route_plan):
+                db.query(RideRequest).filter(
+                    RideRequest.id.in_(set(remaining)),
+                    RideRequest.status.in_(RIDE_BOUND_STATUSES),
+                ).update(
+                    {
+                        RideRequest.status: RIDE_CLUSTERED,
+                        RideRequest.carpool_status: CARPOOL_CLUSTERED,
+                    },
+                    synchronize_session=False,
+                )
         else:
             route_plan.status = ROUTE_CANCELLED
             vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()

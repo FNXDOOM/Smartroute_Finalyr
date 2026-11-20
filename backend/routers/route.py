@@ -30,12 +30,13 @@ from services.carpool_lifecycle import (
     CarpoolRefused,
     CarpoolRun,
     settle_carpool_run,
+    reconcile_reoptimization_run,
 )
 from services.notifications import create_notification, create_notifications_for_users
 from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.carpool_status import CARPOOL_IN_TRANSIT
 from utils.ride_scope import LIVE_MODE
-from utils.ride_states import CLOSABLE_ROUTE_STATUSES, RIDE_COMPLETED, RIDE_IN_PROGRESS, ROUTE_SOLVED
+from utils.ride_states import CLOSABLE_ROUTE_STATUSES, LIVE_ROUTE_STATUSES, RIDE_COMPLETED, RIDE_IN_PROGRESS, ROUTE_SOLVED
 
 router = APIRouter()
 
@@ -303,7 +304,7 @@ def list_routes(
 
     routes_query = db.query(RoutePlan).filter(
         RoutePlan.mode == LIVE_MODE,
-        RoutePlan.status == ROUTE_SOLVED,
+        RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
     )
     if current_user.role == "driver":
         routes_query = routes_query.join(Vehicle, Vehicle.id == RoutePlan.vehicle_id).filter(
@@ -317,10 +318,16 @@ def list_routes(
     )
     # Repair older carpool routes that completed every ride but never stored the route-level completed state.
     completed_route_ids = []
+    repaired = False
     for route in routes:
+        if reconcile_reoptimization_run(db, route):
+            repaired = True
+        if route.status not in LIVE_ROUTE_STATUSES:
+            completed_route_ids.append(route.route_id)
+            continue
         if settle_carpool_run(db, route, notify=False):
             completed_route_ids.append(route.route_id)
-    if completed_route_ids:
+    if completed_route_ids or repaired:
         db.commit()
         routes = [route for route in routes if route.route_id not in completed_route_ids]
     return RouteHistoryResponse(

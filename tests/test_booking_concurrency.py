@@ -87,6 +87,18 @@ def test_curved_road_candidate_not_rejected_by_150m_straight_line(open_run, mock
         assert request.status == "assigned"
 
 
+def test_late_rider_can_travel_further_along_same_corridor(open_run, mock_road_matrix):
+    _, _, candidate_ids = open_run
+    with SessionLocal() as db:
+        request = db.get(RideRequest, candidate_ids[0])
+        # Existing riders exit near 77.6066; this rider continues ~11 km west.
+        request.dest_lat, request.dest_lng = 12.9756, 77.50
+        db.commit()
+        assert carpool_matching.attach_to_existing_run(db, request, mode="live", demo_run_id=None)
+        db.commit()
+        assert request.status == "assigned"
+
+
 def test_compatible_rider_can_take_last_seat_before_acceptance(open_run, mock_road_matrix):
     _, _, candidate_ids = open_run
     with SessionLocal() as db:

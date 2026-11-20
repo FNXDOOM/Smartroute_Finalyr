@@ -21,7 +21,7 @@ from services.notifications import create_notification
 from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
 from utils.carpool_status import CARPOOL_CLUSTERED, set_carpool_stage
 from utils.carpool_policy import (
-    MAX_DESTINATION_SPREAD_METERS, MAX_CARPOOL_DETOUR_METERS,
+    MAX_CARPOOL_DETOUR_METERS,
     MAX_CARPOOL_DETOUR_RATIO, MIN_CARPOOL_PASSENGERS,
     MAX_CARPOOL_PASSENGERS, MAX_PICKUP_WALK_METERS,
 )
@@ -268,12 +268,8 @@ def _compatible_groups(requests):
     def compatible(group):
         if len(group) > MAX_CARPOOL_PASSENGERS:
             return False
-        if any(
-            _haversine_meters(a.dest_lat, a.dest_lng, b.dest_lat, b.dest_lng)
-            > MAX_DESTINATION_SPREAD_METERS
-            for a, b in permutations(group, 2)
-        ):
-            return False
+        # Destination separation does not measure detour. A rider can exit early
+        # while another continues far along the same road without delaying either.
         try:
             return road_detour_compatible(group)
         except RuntimeError:
@@ -365,17 +361,6 @@ def attach_to_existing_run(
         if not pickup_waypoints:
             continue
 
-        furthest_destination_meters = max(
-            _haversine_meters(
-                request.dest_lat,
-                request.dest_lng,
-                existing.dest_lat,
-                existing.dest_lng,
-            )
-            for existing in active_requests
-        )
-        if furthest_destination_meters > MAX_DESTINATION_SPREAD_METERS:
-            continue
         try:
             if not road_detour_compatible([*active_requests, request]):
                 continue
