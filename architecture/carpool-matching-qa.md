@@ -81,6 +81,24 @@ cancellation visibility, legacy repair and idempotency, worker reconciliation,
 no double dispatch or onboard rewind, historical-assignment protection, and
 completion/release with a single surviving rider or a private trip.
 
+`tests/test_carpool_dispatch_consistency.py` adds 44 deterministic scenarios:
+pool backlogs of up to 12, multiple fleet sizes and capacities, stale and
+reoptimizing routes, hidden unassigned requests, failed and undersized pools,
+greedy pair repair, real shared travel, matrix denial recovery, and singleton
+requeue with and without a new partner.
+Automatic dispatch now plans each verified pool independently with a bounded
+stop-order search instead of solving across unrelated pools. Map geometry is
+loaded on demand. The driver and passenger views use the vehicle's current
+reservation to distinguish a real offer from pending matching.
+If cancellation or expiry leaves a single clustered rider without a live
+reservation, the rider returns to searching and can match a new partner.
+
+Job summaries report `clustering_duration_ms` separately from
+`route_planning_duration_ms` (when planning ran), plus eligible `idle_vehicles`
+and `unassigned_clustered_rides` after planning. Matrix HTTP 403 responses
+trigger a one-minute per-process cooldown; valid standard road routes are
+still used and the provider is probed again after the cooldown.
+
 ## Operational notes
 
 `AUTO_DISPATCH_INTERVAL_SECONDS=5` is the default; minimum is two seconds.

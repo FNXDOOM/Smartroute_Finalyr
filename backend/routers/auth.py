@@ -151,12 +151,12 @@ def apply_for_driver(
     if not plate:
         raise HTTPException(status_code=400, detail="Vehicle license plate must not be empty.")
 
-    was_active_driver = (
-        current_user.role == "driver" and current_user.driver_status == "active"
+    preserve_review_status = (
+        current_user.role == "driver" and current_user.driver_status in {"active", "suspended"}
     )
     current_user.role = "driver"
-    if not was_active_driver:
-        # New applicants need review; active drivers keep status.
+    if not preserve_review_status:
+        # New applicants need review; reapplying must not change approval or suspension.
         current_user.driver_status = "pending_verification"
 
     existing_vehicle = db.query(Vehicle).filter(Vehicle.driver_user_id == current_user.id).first()
@@ -193,12 +193,12 @@ def apply_for_driver(
     db.refresh(current_user)
 
     if current_user.clerk_user_id:
-        # Applicants read as pending until approval.
+        # Mirror the committed review state, including profile edits by approved drivers.
         sync_clerk_user_metadata(
             current_user.clerk_user_id,
             {
-                "role": "pending",
-                "driver_status": "pending_verification",
+                "role": "pending" if current_user.driver_status == "pending_verification" else current_user.role,
+                "driver_status": current_user.driver_status,
                 "license_plate": plate,
             },
         )

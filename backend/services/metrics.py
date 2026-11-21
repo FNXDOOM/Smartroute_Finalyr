@@ -85,13 +85,13 @@ class JobRunCollector:
             return
 
         db_up.add_metric([], 1)
-        for job_name, succeeded, failed, running, newest, newest_success in rows:
+        for job_name, succeeded, failed, running, partial, newest, newest_success in rows:
             name = job_name or "unknown"
             if newest is not None:
                 last_run.add_metric([name], _epoch(newest))
             if newest_success is not None:
                 last_success.add_metric([name], _epoch(newest_success))
-            for status, count in (("success", succeeded), ("failed", failed), ("running", running)):
+            for status, count in (("success", succeeded), ("failed", failed), ("running", running), ("partial", partial)):
                 recent.add_metric([name, status], count or 0)
 
         yield db_up
@@ -100,17 +100,20 @@ class JobRunCollector:
         yield recent
 
     def _query(self):
+        from services.job_runs import SUCCESS_STATUSES
+
         cutoff = datetime.now(timezone.utc) - timedelta(hours=JOB_WINDOW_HOURS)
         db = self._session_factory()
         try:
             return (
                 db.query(
                     JobRun.job_name,
-                    func.sum(case((JobRun.status == "success", 1), else_=0)),
+                    func.sum(case((JobRun.status.in_(SUCCESS_STATUSES), 1), else_=0)),
                     func.sum(case((JobRun.status == "failed", 1), else_=0)),
                     func.sum(case((JobRun.status == "running", 1), else_=0)),
+                    func.sum(case((JobRun.status == "partial", 1), else_=0)),
                     func.max(JobRun.started_at),
-                    func.max(case((JobRun.status == "success", JobRun.started_at))),
+                    func.max(case((JobRun.status.in_(SUCCESS_STATUSES), JobRun.started_at))),
                 )
                 .filter(JobRun.started_at >= cutoff)
                 .group_by(JobRun.job_name)

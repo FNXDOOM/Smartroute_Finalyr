@@ -1,6 +1,7 @@
 """Pooled shared-ride routing: one pickup+destination route per vehicle, owned by the optimize endpoint and the dispatch job so they can't drift."""
 
 from dataclasses import dataclass, field
+from itertools import permutations
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
@@ -16,7 +17,10 @@ from services.routing import vrp_solver
 from services.routing.vrp_solver import solve_shared_ride_pdp
 from services.stadia_client import extract_route_details, route_many
 from utils.carpool_status import CARPOOL_ASSIGNED, set_carpool_stage
-from utils.carpool_policy import MIN_CARPOOL_PASSENGERS, MAX_CARPOOL_PASSENGERS
+from utils.carpool_policy import (
+    MIN_CARPOOL_PASSENGERS, MAX_CARPOOL_PASSENGERS,
+    MAX_CARPOOL_DETOUR_METERS, MAX_CARPOOL_DETOUR_RATIO,
+)
 from utils.geo import haversine_meters
 from utils.ride_scope import LIVE_MODE
 from utils.ride_states import RIDE_ASSIGNED, ROUTE_SOLVED, VEHICLE_ACTIVE
@@ -363,6 +367,112 @@ def build_shared_routes(
             built_routes.append(route)
 
     return built_routes
+
+
+def _dispatch_pool_order(waypoints, pairs, depot_lat, depot_lng, capacity):
+    """Exact search for one already-matched pool (at most six stops)."""
+    points = [*waypoints, {"lat": depot_lat, "lng": depot_lng}]
+    distances = vrp_solver.build_stadia_distance_matrix(points)
+    if distances is None:
+        distances = vrp_solver.build_road_distance_matrix(points)
+    if distances is None:
+        return None
+    limits = [
+        min(distances[p][d] + MAX_CARPOOL_DETOUR_METERS,
+            max(1, distances[p][d]) * MAX_CARPOOL_DETOUR_RATIO)
+        for p, d in pairs
+    ]
+    best = None
+    for order in permutations(range(len(waypoints))):
+        positions = {node: index for index, node in enumerate(order)}
+        spans = [(positions[p], positions[d]) for p, d in pairs]
+        if any(p >= d for p, d in spans):
+            continue
+        if any(sum(p <= index < d for p, d in spans) > capacity for index in range(len(order))):
+            continue
+        travelled = [0]
+        for a, b in zip(order, order[1:]):
+            travelled.append(travelled[-1] + distances[a][b])
+        if any(travelled[d] - travelled[p] > limit for (p, d), limit in zip(spans, limits)):
+            continue
+        if any(not any(
+            i != j and travelled[min(d, other_d)] - travelled[max(p, other_p)] > 1
+            for j, (other_p, other_d) in enumerate(spans)
+        ) for i, (p, d) in enumerate(spans)):
+            continue
+        cost = distances[-1][order[0]] + travelled[-1]
+        if best is None or cost < best[0]:
+            best = (cost, order)
+    return best
+
+
+def build_dispatch_routes(*, vehicles, virtual_stops, depot_lat, depot_lng, request_statuses):
+    """Dispatch verified pools independently so a bad pool cannot block another."""
+    groups = {}
+    for stop in sorted(virtual_stops, key=lambda item: item.id):
+        for ride in _pooled_requests(stop, request_statuses):
+            if ride.is_shared:
+                # Old stops can have no cluster ID. Do not accidentally pool
+                # unrelated stops merely because both IDs are missing.
+                key = ("pool", stop.cluster_id) if stop.cluster_id is not None else ("stop", stop.id)
+            else:
+                key = ("private", ride.id)
+            groups.setdefault(key, []).append((stop, ride))
+
+    available = list(enumerate(vehicles))
+    built = []
+    for key, members in groups.items():
+        if not available:
+            break
+        private = key[0] == "private"
+        count = len(members)
+        if not private and not MIN_CARPOOL_PASSENGERS <= count <= MAX_CARPOOL_PASSENGERS:
+            continue
+        # Preserve the smallest adequate vehicle for each pool. A 3-rider
+        # corridor may use a 2-seat car if the exact order permits seat reuse.
+        candidates = [(index, vehicle) for index, vehicle in available
+                      if private or int(vehicle.capacity or 1) >= MIN_CARPOOL_PASSENGERS]
+        if not candidates:
+            continue
+        candidates.sort(key=lambda item: (int(item[1].capacity or 1), item[0]))
+        pickups = [{
+            "stop_id": stop.id, "lat": float(stop.lat), "lng": float(stop.lng),
+            "waypoint_type": "pickup", "passenger_ids": [ride.id],
+        } for stop, ride in members]
+        destinations = [{
+            "stop_id": None, "lat": float(ride.dest_lat), "lng": float(ride.dest_lng),
+            "waypoint_type": "destination", "passenger_ids": [ride.id],
+        } for _, ride in members]
+        waypoints = pickups + destinations
+        if private:
+            matrix = vrp_solver.build_stadia_distance_matrix(waypoints)
+            if matrix is None:
+                matrix = vrp_solver.build_road_distance_matrix(waypoints)
+            if matrix is None:
+                continue
+            index, _ = candidates[0]
+            distance = matrix[0][1]
+        else:
+            pairs = [(i, count + i) for i in range(count)]
+            # Solve once with the largest available capacity, then prefer the
+            # smallest vehicle that can carry the chosen order.
+            max_capacity = min(count, int(candidates[-1][1].capacity or 1))
+            best = _dispatch_pool_order(waypoints, pairs, depot_lat, depot_lng, max_capacity)
+            if best is None:
+                continue
+            distance, order = best
+            index_at = {node: i for i, node in enumerate(order)}
+            peak = max(sum(index_at[p] <= i < index_at[d] for p, d in pairs) for i in range(len(order)))
+            index, _ = next(item for item in candidates if int(item[1].capacity or 1) >= peak)
+            waypoints = [waypoints[node] for node in order]
+        route = _finalize_route(
+            vehicle_index=index, waypoints=waypoints, depot_lat=depot_lat, depot_lng=depot_lng,
+            enrich=False, problem="pdp", fallback_distance_m=distance,
+        )
+        if route is not None:
+            available = [item for item in available if item[0] != index]
+            built.append(route)
+    return built
 
 
 def persist_shared_route(

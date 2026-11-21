@@ -76,12 +76,15 @@ def _age_seconds(moment: Optional[datetime], now: datetime) -> Optional[float]:
 
 def job_health(db) -> Dict[str, Any]:
     """Job outcomes derived from job_runs, the only view of the portless worker."""
+    from services.job_runs import SUCCESS_STATUSES
+
     cutoff = datetime.now(timezone.utc) - timedelta(hours=JOB_WINDOW_HOURS)
     rows = (
         db.query(
             JobRun.job_name,
             func.count(JobRun.id),
-            func.sum(case((JobRun.status == "success", 1), else_=0)),
+            func.sum(case((JobRun.status.in_(SUCCESS_STATUSES), 1), else_=0)),
+            func.sum(case((JobRun.status == "partial", 1), else_=0)),
             func.sum(case((JobRun.status == "failed", 1), else_=0)),
             func.max(JobRun.started_at),
         )
@@ -97,10 +100,11 @@ def job_health(db) -> Dict[str, Any]:
             "job_name": name,
             "runs": int(total or 0),
             "succeeded": int(succeeded or 0),
+            "partial": int(partial or 0),
             "failed": int(failed or 0),
             "seconds_since_last_run": _age_seconds(newest, now),
         }
-        for name, total, succeeded, failed, newest in rows
+        for name, total, succeeded, partial, failed, newest in rows
     ]
 
     recent_failures = (

@@ -4,7 +4,9 @@ from fastapi import HTTPException
 from database import SessionLocal
 from models.user import User
 from models.vehicle import Vehicle
+from routers import auth
 from routers.auth import update_driver_presence
+from schemas.user import DriverApplyRequest
 
 
 def test_presence_activates_only_unassigned_live_vehicle():
@@ -42,3 +44,23 @@ def test_unapproved_driver_cannot_go_online():
         with pytest.raises(HTTPException) as exc:
             update_driver_presence(db=db, current_user=driver)
         assert exc.value.status_code == 403
+
+
+@pytest.mark.parametrize("review_status", ["active", "suspended"])
+def test_reapplication_preserves_review_state_in_db_and_identity_metadata(monkeypatch, review_status):
+    synced = []
+    monkeypatch.setattr(auth, "sync_clerk_user_metadata", lambda _, metadata: synced.append(metadata))
+    with SessionLocal() as db:
+        driver = User(name="Review test", email="review-test@example.test", password_hash="test",
+                      clerk_user_id="review-test", role="driver", driver_status=review_status)
+        db.add(driver)
+        db.flush()
+        try:
+            auth.apply_for_driver(DriverApplyRequest(license_plate="REVIEW-TEST"), db=db, current_user=driver)
+            assert driver.driver_status == review_status
+            assert synced[-1]["role"] == "driver"
+            assert synced[-1]["driver_status"] == review_status
+        finally:
+            db.query(Vehicle).filter(Vehicle.driver_user_id == driver.id).delete()
+            db.delete(driver)
+            db.commit()

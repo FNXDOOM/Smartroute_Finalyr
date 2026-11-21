@@ -437,21 +437,29 @@ def verify_payment(
         )
 
     # 3. All checks passed → mark PAID exactly once.
-    payment.status = "paid"
-    payment.verified = 1
-    payment.razorpay_payment_id = verify_in.razorpay_payment_id
-    payment.razorpay_metadata = {
+    metadata = {
         "verify": {
             "razorpay_payment_id": verify_in.razorpay_payment_id,
             "razorpay_order_id": verify_in.razorpay_order_id,
         }
     }
+    changed = db.query(Payment).filter(
+        Payment.id == payment.id, Payment.status.in_(("created", "pending")),
+    ).update({
+        Payment.status: "paid",
+        Payment.verified: 1,
+        Payment.razorpay_payment_id: verify_in.razorpay_payment_id,
+        Payment.razorpay_metadata: metadata,
+        Payment.failure_reason: None,
+    }, synchronize_session=False)
     db.commit()
     db.refresh(payment)
+    if payment.status != "paid" or payment.verified != 1:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Payment is no longer payable")
 
     logger.info("Payment verified: payment_id=%d amount=%d", payment.id, payment.amount)
 
-    if payment.ride_request_id:
+    if changed and payment.ride_request_id:
         _fire_payment_notification(db, payment, "paid")
 
     return PaymentVerifyResponse(
@@ -506,19 +514,21 @@ async def razorpay_webhook(
     payment = (
         db.query(Payment)
         .filter(Payment.razorpay_order_id == razorpay_order_id)
+        .with_for_update()
         .first()
     )
     if not payment:
         logger.info("Webhook for unknown order %s — acknowledged", razorpay_order_id)
         return WebhookResponse(received=True)
 
-    # Idempotency: never downgrade or duplicate a paid payment.
-    if payment.status == "paid" and event != "refund.processed":
+    # A refund is terminal, including when callbacks arrive out of order.
+    if payment.status == "refunded" or (payment.status == "paid" and event != "refund.processed"):
         return WebhookResponse(received=True)
 
     if event in ("payment.captured", "payment.authorized"):
         payment.status = "paid"
         payment.verified = 1
+        payment.failure_reason = None
         payment.razorpay_payment_id = razorpay_payment_id or payment.razorpay_payment_id
         payment.razorpay_metadata = {"webhook": {"event": event}}
         db.commit()

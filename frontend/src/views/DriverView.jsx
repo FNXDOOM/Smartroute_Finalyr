@@ -7,6 +7,7 @@ import {
 import { authApi, ridesApi, trackingApi, routeApi, vehiclesApi, createTrackingWS } from '../services/api.js'
 import { apiErrorMessage } from '../services/api.js'
 import { useAuth } from '@clerk/clerk-react'
+import { useWebSocket } from '../hooks/useWebSocket.js'
 import AppMap from '../components/AppMapLazy'
 import { DEMO_PRESETS } from '../config/demoPresets.js'
 import { cn } from '@/lib/utils'
@@ -82,6 +83,7 @@ export default function DriverView({ user, view, setView, toast }) {
   const [routes,     setRoutes]     = useState([])
   const [loading,    setLoading]    = useState(true)
   const [myVehicle,  setMyVehicle]  = useState(null)
+  const [presence, setPresence] = useState('checking')
   const [updatingLoc,setUpdatingLoc]= useState(false)
   const [simActive,  setSimActive]  = useState(false)
   const [simProgress,setSimProgress]= useState(0)
@@ -97,7 +99,6 @@ export default function DriverView({ user, view, setView, toast }) {
   const knownPendingRef = useRef(new Set())
   const knownRideStatusRef = useRef(new Map())
   const pollInitRef = useRef(false)
-  const wsRef = useRef(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -107,7 +108,7 @@ export default function DriverView({ user, view, setView, toast }) {
       setVehicles(Array.isArray(v)?v:[])
       setRides(list)
       setRoutes(ro?.routes || [])
-      knownPendingRef.current = new Set(list.filter((x) => ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
+      knownPendingRef.current = new Set(list.filter((x) => !x.is_shared && ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
       knownRideStatusRef.current = new Map(list.map((x) => [x.id, x.status]))
       pollInitRef.current = true
       if (Array.isArray(v) && v.length) setMyVehicle(v[0])
@@ -121,7 +122,7 @@ export default function DriverView({ user, view, setView, toast }) {
       const r = await ridesApi.getAll({ limit: 50 })
       const list = Array.isArray(r) ? r : []
       if (!pollInitRef.current) {
-        knownPendingRef.current = new Set(list.filter((x) => ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
+        knownPendingRef.current = new Set(list.filter((x) => !x.is_shared && ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
         pollInitRef.current = true
       } else {
         const current = new Set()
@@ -131,7 +132,7 @@ export default function DriverView({ user, view, setView, toast }) {
             toast('info', 'Passenger ready', `Ride #${x.id} is waiting at the assigned pickup stop.`)
           }
           knownRideStatusRef.current.set(x.id, x.status)
-          if (!['pending', 'clustered'].includes(x.status)) return
+          if (x.is_shared || !['pending', 'clustered'].includes(x.status)) return
           current.add(x.id)
           if (!knownPendingRef.current.has(x.id)) {
             toast('info', 'New ride request', `${x.pickup_label || 'Pickup'} → ${x.destination_label || 'Destination'}`)
@@ -161,26 +162,43 @@ export default function DriverView({ user, view, setView, toast }) {
   // Presence is the dispatch availability signal: a driver who closed the app must not keep receiving automatic routes.
   useEffect(() => {
     let stopped = false
+    let inFlight = false
     const beat = async () => {
-      if (stopped) return
+      if (stopped || inFlight) return
+      inFlight = true
       try {
         await authApi.driverPresence()
+        if (!stopped) setPresence('connected')
+      } catch {
+        if (!stopped) setPresence('unconfirmed')
+        inFlight = false
+        return
+      }
+      try {
         const updated = await vehiclesApi.list()
         if (!stopped && Array.isArray(updated)) {
           setVehicles(updated)
-          setMyVehicle(updated[0] || null)
+          setMyVehicle(prev => updated.find(item => item.id === prev?.id) || updated[0] || null)
         }
       } catch {
-        // Keep the last known state; dispatch independently checks presence expiry.
+        // A fleet read failure is separate from a successful heartbeat.
+      } finally {
+        inFlight = false
       }
     }
     beat()
     const timer = setInterval(beat, 30000)
-    return () => { stopped = true; clearInterval(timer) }
+    const onVisible = () => { if (!document.hidden) void beat() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   useEffect(() => {
-    if (!['driver-home', 'driver-map', 'driver-carpool'].includes(view) || loading) return undefined
+    if (!['driver-home', 'driver-map', 'driver-carpool', 'driver-routes'].includes(view) || loading) return undefined
     const id = setInterval(() => {
       void refreshRides()
       void refreshRoutes()
@@ -188,25 +206,12 @@ export default function DriverView({ user, view, setView, toast }) {
     return () => clearInterval(id)
   }, [view, loading, refreshRides, refreshRoutes])
 
-  // Live tracking WebSocket
-  useEffect(() => {
-    let dead = false
-    const connect = async () => {
-      try {
-        const token = await getToken()
-        if (!token || dead) return
-        wsRef.current = createTrackingWS(token, (msg) => {
-          if (dead) return
-          // Only track driver's own vehicle.
-          if (msg.type === 'vehicle_location_update' && msg.vehicle) {
-            setMyVehicle(prev => prev?.id === msg.vehicle.id ? { ...prev, ...msg.vehicle } : prev)
-          }
-        }, () => { if (!dead) setTimeout(connect, 3000) })
-      } catch (error) { void error }
+  const onTrackingMessage = useCallback((msg) => {
+    if (msg.type === 'vehicle_location_update' && msg.vehicle) {
+      setMyVehicle(prev => prev?.id === msg.vehicle.id ? { ...prev, ...msg.vehicle } : prev)
     }
-    connect()
-    return () => { dead = true; wsRef.current?.close() }
-  }, [getToken])
+  }, [])
+  useWebSocket(createTrackingWS, getToken, onTrackingMessage)
 
   const updateLocation = async () => {
     if (!myVehicle) { toast('warning','No vehicle selected'); return }
@@ -556,6 +561,7 @@ export default function DriverView({ user, view, setView, toast }) {
   // Driver home
   const firstName = user?.name?.split(' ')[0] || 'Driver'
   const normalRides = rides.filter((r) => r.is_shared === false)
+  const carpoolOffer = currentDriverRoute?.route_metadata?.carpool_run ? currentDriverRoute : null
   const incoming = normalRides.filter((r) => ['pending', 'clustered'].includes(r.status))
   const activeTrips = normalRides.filter((r) => ['assigned', 'arriving', 'in_progress'].includes(r.status))
   const usingDemoManifest = rides.length === 0
@@ -648,7 +654,7 @@ export default function DriverView({ user, view, setView, toast }) {
       ) : (
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           <StatCard icon={CarFront} label="My Vehicle" value={myVehicle?.license_plate || 'Unassigned'} sub={myVehicle ? `${myVehicle.status || 'ready'} · cap ${myVehicle.capacity || 4}` : 'Contact dispatch'} />
-          <StatCard icon={Inbox} label="Incoming Requests" value={String(incoming.length)} sub={incoming.length === 1 ? '1 rider waiting' : `${incoming.length} riders waiting`} />
+          <StatCard icon={Inbox} label="Incoming Requests" value={String(incoming.length + (carpoolOffer && !carpoolOffer.route_metadata.driver_accepted ? 1 : 0))} sub="Private requests and carpool offers" />
           <StatCard icon={Users} label="Active Trips" value={String(activeTrips.length)} sub={activeTrips.length === 1 ? '1 trip in motion' : `${activeTrips.length} trips in motion`} />
           <StatCard icon={RouteIcon} label="My Routes" value={String(routes.length)} sub={routes.length ? 'Optimized by AI' : 'No routes yet'} />
         </div>
@@ -675,6 +681,17 @@ export default function DriverView({ user, view, setView, toast }) {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="min-w-0 space-y-4">
+        {carpoolOffer && (
+            <Card>
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div>
+                  <p className="font-semibold">{carpoolOffer.route_metadata.driver_accepted ? 'Active carpool route' : 'Carpool offer'}</p>
+                  <p className="text-sm text-muted-foreground">Assigned to {myVehicle.license_plate}</p>
+                </div>
+                <Button onClick={() => setView('driver-carpool')}>View carpool</Button>
+              </CardContent>
+            </Card>
+        )}
         {/* Incoming requests — normal-mode passenger bookings land here live */}
         {!usingDemoManifest && (
           <Card className={cn(incoming.length > 0 && 'border-primary/40')}>
@@ -858,7 +875,9 @@ export default function DriverView({ user, view, setView, toast }) {
                 </div>
                 <div className="rounded-lg border p-2.5">
                   <p className="flex items-center gap-1 text-muted-foreground"><Clock className="h-3.5 w-3.5" /> Shift</p>
-                  <p className="mt-1 text-sm font-bold">On duty</p>
+                  <p className="mt-1 text-sm font-bold">
+                    {presence === 'checking' ? 'Checking connection…' : presence === 'unconfirmed' ? 'Connection unconfirmed' : myVehicle?.assigned_route_id ? 'Route assigned' : 'Online'}
+                  </p>
                 </div>
               </div>
               {myVehicle?.lat != null && (

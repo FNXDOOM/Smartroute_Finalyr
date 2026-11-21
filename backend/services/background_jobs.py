@@ -33,7 +33,7 @@ from services.clustering.hdbscan_clusterer import cluster_passengers, get_cluste
 from services.prediction.demand_model import count_requests_by_h3, predict_zone_demands
 from services.stops.road_snapper import build_road_graph, snap_to_road
 from services.stops.virtual_stop_generator import generate_virtual_stops
-from services.routing.shared_route_builder import build_shared_routes, persist_shared_route
+from services.routing.shared_route_builder import build_dispatch_routes, persist_shared_route
 from services.routing.vrp_solver import shared_ride_solver_time_limit
 from services.notifications import create_notification, create_notifications_for_users
 from services import job_runs, route_plan_meta
@@ -203,10 +203,13 @@ def unassigned_clustered_rides_query(db: Session, mode: str, demo_run_id: Option
     """Never redispatch a rider still reserved by a live/reoptimization run."""
     reserved_stops = select(RouteWaypointRecord.stop_id).join(
         RoutePlan, RoutePlan.id == RouteWaypointRecord.route_plan_id
+    ).join(
+        Vehicle, Vehicle.id == RoutePlan.vehicle_id
     ).where(
         RoutePlan.mode == mode,
         RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
         RouteWaypointRecord.stop_id.isnot(None),
+        Vehicle.assigned_route_id == RoutePlan.route_id,
     )
     if mode == PRESENTATION_DEMO_MODE:
         reserved_stops = reserved_stops.where(RoutePlan.demo_run_id == demo_run_id)
@@ -223,6 +226,32 @@ def available_vehicles_query(query):
         Vehicle.assigned_route_id.is_(None),
         Vehicle.status.in_(DISPATCHABLE_VEHICLE_STATUSES),
     )
+
+
+def _requeue_singleton_carpools(db: Session, mode: str, demo_run_id: Optional[str]) -> int:
+    """A pool that lost its partner must reenter matching, not wait for a car alone."""
+    groups = {}
+    candidates = unassigned_clustered_rides_query(db, mode, demo_run_id).filter(
+        RideRequest.is_shared.is_(True),
+    )
+    for ride in candidates:
+        key = ("pool", ride.cluster_id) if ride.cluster_id is not None else ("stop", ride.virtual_stop_id)
+        groups.setdefault(key, []).append(ride)
+    count = 0
+    for group in groups.values():
+        if len(group) >= MIN_CARPOOL_PASSENGERS:
+            continue
+        ride = group[0]
+        stop = db.get(VirtualStop, ride.virtual_stop_id)
+        if stop:
+            stop.passenger_count = max(0, (stop.passenger_count or 0) - 1)
+        ride.virtual_stop_id = None
+        ride.cluster_id = None
+        set_carpool_stage(ride, CARPOOL_SEARCHING)
+        count += 1
+    if count:
+        db.flush()
+    return count
 
 
 @road_matching_batch()
@@ -245,6 +274,7 @@ def run_cluster_job(
     with job_runs.running(
         db, "cluster_pending_rides", triggered_by_user_id=triggered_by_user_id, is_scheduled=is_scheduled
     ) as job_run:
+        requeued = _requeue_singleton_carpools(db, mode, demo_run_id)
         requests = pending_rides_query(db, mode, demo_run_id).all()
         if not requests:
             cluster_run = ClusterRun(
@@ -405,6 +435,7 @@ def run_cluster_job(
         db.flush()
 
         diagnostics = road_matching_diagnostics()
+        diagnostics["requeued_singleton_rides"] = requeued
         diagnostics["clustering_duration_ms"] = round((time.monotonic() - started) * 1000)
         job_runs.finish(
             db,
@@ -628,6 +659,7 @@ def run_auto_dispatch_pipeline(
                 .filter(
                     RoutePlan.mode == LIVE_MODE,
                     RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
+                    Vehicle.assigned_route_id == RoutePlan.route_id,
                     (
                         User.driver_last_seen_at.is_(None)
                         | (User.driver_last_seen_at < presence_cutoff)
@@ -668,6 +700,8 @@ def run_auto_dispatch_pipeline(
                 if vehicle and vehicle.assigned_route_id == stale_route.route_id:
                     vehicle.assigned_route_id = None
                     vehicle.status = VEHICLE_IDLE
+            if stale_routes:
+                db.flush()
 
         cluster_res = run_cluster_job(
             db,
@@ -680,6 +714,7 @@ def run_auto_dispatch_pipeline(
             **road_matching_diagnostics(),
             "clustering_duration_ms": cluster_res.get("clustering_duration_ms", 0),
             "recovered_reoptimization_runs": recovered_runs,
+            "requeued_singleton_rides": cluster_res.get("requeued_singleton_rides", 0),
         }
 
         # Clustered stops without active routes.
@@ -761,7 +796,8 @@ def run_auto_dispatch_pipeline(
                 **matching_info,
             }
 
-        built_routes = build_shared_routes(
+        route_started = time.monotonic()
+        built_routes = build_dispatch_routes(
             vehicles=idle_vehicles,
             virtual_stops=virtual_stops,
             depot_lat=depot_lat,
@@ -769,6 +805,8 @@ def run_auto_dispatch_pipeline(
             request_statuses=(RIDE_CLUSTERED,),
         )
         matching_info.update(road_matching_diagnostics())
+        matching_info["route_planning_duration_ms"] = round((time.monotonic() - route_started) * 1000)
+        matching_info["idle_vehicles"] = len(idle_vehicles)
 
         routes_count = 0
         assigned_rides_count = 0
@@ -790,13 +828,14 @@ def run_auto_dispatch_pipeline(
             assigned_rides_count += len(persisted.ride_ids)
 
             passenger_user_ids = persisted.passenger_user_ids
+            is_carpool = route_plan_meta.is_carpool(persisted.route_plan)
             if passenger_user_ids:
                 create_notifications_for_users(
                     db,
                     user_ids=passenger_user_ids,
                     notification_type="route_assigned",
-                    title="Your route has been optimized",
-                    message=f"Your shared ride has been assigned to vehicle {actual_vehicle.license_plate}.",
+                    title="Vehicle assigned",
+                    message=f"Your {'carpool' if is_carpool else 'ride'} has been assigned to vehicle {actual_vehicle.license_plate}.",
                     related_entity_type="route_plan",
                     related_entity_id=persisted.route_plan.id,
                     metadata={"route_id": persisted.route_id, "vehicle_id": actual_vehicle.id},
@@ -808,19 +847,20 @@ def run_auto_dispatch_pipeline(
                     notification_type="route_assigned",
                     title="New route assigned",
                     message=(
-                        f"Carpool run {persisted.route_id} is ready for your vehicle "
-                        f"{actual_vehicle.license_plate}. Open Carpool Run to accept it."
+                        f"Carpool run {persisted.route_id} is ready for your vehicle {actual_vehicle.license_plate}."
+                        if is_carpool else f"A private ride is ready for vehicle {actual_vehicle.license_plate}."
                     ),
                     related_entity_type="route_plan",
                     related_entity_id=persisted.route_plan.id,
                     metadata={
                         "route_id": persisted.route_id,
                         "vehicle_id": actual_vehicle.id,
-                        "carpool_run": route_plan_meta.is_carpool(persisted.route_plan),
+                        "carpool_run": is_carpool,
                     },
                 )
             routes_count += 1
 
+        matching_info["unassigned_clustered_rides"] = max(0, len(clustered_rides) - assigned_rides_count)
         job_runs.finish(db, job_run, "partial" if matching_info["routing_failures"] else "success", {
             "clusters_formed": cluster_res.get("clusters_formed", 0),
             "routes_optimized": routes_count,

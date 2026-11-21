@@ -835,6 +835,17 @@ def test_webhook_never_downgrades_paid_payment(db, user, ride, set_webhook_secre
 
 # --- Razorpay client (HTTP layer, mocked) ---
 
+@pytest.mark.parametrize("event", ["payment.captured", "payment.authorized", "payment.failed"])
+def test_refunded_payment_ignores_late_events(db, user, ride, set_webhook_secret, event):
+    payment = _make_payment(db, user, ride, status="refunded")
+    payment.razorpay_metadata = {"webhook": {"event": "refund.processed"}}
+    db.commit()
+    body, sig = _signed_body(_captured_payload(event=event))
+    assert _run_webhook(db, sig, json.loads(body)).received
+    db.refresh(payment)
+    assert payment.status == "refunded"
+    assert payment.razorpay_metadata == {"webhook": {"event": "refund.processed"}}
+
 def test_client_create_order_requires_config():
     client = RazorpayClient(key_id="", key_secret="")
     with pytest.raises(RazorpayError):

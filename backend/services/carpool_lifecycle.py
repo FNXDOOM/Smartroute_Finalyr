@@ -105,26 +105,32 @@ def riders_not_dropped_off(rides: List[RideRequest]) -> List[RideRequest]:
     return [ride for ride in rides if ride.status != RIDE_COMPLETED]
 
 
-def route_plan_serving_ride(db: Session, ride: RideRequest) -> Optional[RoutePlan]:
-    """Live route serving this ride; needs_reoptimization stays live, else another driver overwrites the active one."""
+def pickup_waypoint_serving_ride(db: Session, ride: RideRequest) -> Optional[RouteWaypointRecord]:
+    """The rider's pickup on the vehicle's current reservation, not a historical plan."""
     if not ride.virtual_stop_id:
         return None
     candidates = (
         db.query(RouteWaypointRecord)
         .join(RoutePlan)
+        .join(Vehicle, Vehicle.id == RoutePlan.vehicle_id)
         .filter(
             RouteWaypointRecord.stop_id == ride.virtual_stop_id,
+            RouteWaypointRecord.waypoint_type == "pickup",
             RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
+            RoutePlan.mode == ride.mode,
+            Vehicle.assigned_route_id == RoutePlan.route_id,
         )
         .all()
     )
-    match = next(
+    return next(
         (waypoint for waypoint in candidates if ride.id in (waypoint.passenger_ids or [])),
         None,
     )
-    if not match:
-        return None
-    return db.query(RoutePlan).filter(RoutePlan.id == match.route_plan_id).first()
+
+
+def route_plan_serving_ride(db: Session, ride: RideRequest) -> Optional[RoutePlan]:
+    match = pickup_waypoint_serving_ride(db, ride)
+    return db.get(RoutePlan, match.route_plan_id) if match else None
 
 
 def run_is_open_to_riders(route_plan: RoutePlan) -> bool:
@@ -333,6 +339,8 @@ class CarpoolRun:
         vehicle = db.query(Vehicle).filter(Vehicle.id == route_plan.vehicle_id).first()
         if not vehicle or (actor.role == "driver" and vehicle.driver_user_id != actor.id):
             raise CarpoolRefused("not_found", "Carpool route not found")
+        if route_plan.status in LIVE_ROUTE_STATUSES and vehicle.assigned_route_id != route_plan.route_id:
+            raise CarpoolRefused("conflict", "This route is no longer assigned to its vehicle")
         if require_accepted and not route_plan_meta.is_driver_accepted(route_plan):
             raise CarpoolRefused("conflict", "Accept the carpool run first")
         return cls(db, route_plan, actor)

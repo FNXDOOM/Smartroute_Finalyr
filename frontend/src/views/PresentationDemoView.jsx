@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { ridesApi, jobsApi, geocodeApi, routingApi } from '../services/api.js'
 import { apiErrorMessage } from '../services/api.js'
+import { runDemoStages } from '../services/demoPipeline.js'
 import AppMap from '../components/AppMapLazy'
 import { DEMO_PRESETS, DEMO_STAGES, createDemoRunId } from '../config/demoPresets.js'
 import { cn } from '@/lib/utils'
@@ -315,13 +316,14 @@ export default function PresentationDemoView({ toast }) {
   }
 
   // Step 1: Spawn riders
-  const stepSpawnRiders = async () => {
+  const stepSpawnRiders = async (run) => {
     setCurrentStage(1)
     addLog(`👥 Step 1: Generating 3 passenger requests near ${demoPickup.label}...`, 'accent')
     if (demoRunIdRef.current) {
       await ridesApi.resetDemoRun(demoRunIdRef.current).catch(() => {})
     }
     const previewPath = await previewDemoRoute()
+    if (pipelineRunRef.current !== run) return false
     const scenario = buildSharedPassengers(previewPath, demoPickup, demoDestination, activePreset.riders)
     sharedPassengersRef.current = scenario
     const demoRunId = createDemoRunId()
@@ -338,14 +340,24 @@ export default function PresentationDemoView({ toast }) {
         ride_option_name: 'SwiftX Shared Auto',
         ride_option_price: '₹12–15',
       })), demoRunId)
+      if (pipelineRunRef.current !== run) {
+        await ridesApi.resetDemoRun(demoRunId).catch(() => {})
+        return false
+      }
       // Track backend ride IDs for completion.
       demoRideIdsRef.current = Array.isArray(created) ? created.map(r => r.id) : []
       addLog(`✓ Passenger 1 booked ${demoPickup.label} → ${demoDestination.label}; shared-auto capacity reserved for 2 more`, 'success')
       addLog('✓ Passenger 2 near TC Palya accepted: 150 m walk to virtual stop (within 200 m)', 'success')
       addLog('✓ Passenger 3 accepted: 150 m walk to route-side virtual stop; capacity 3/3', 'success')
-    } catch {
+      if (demoRideIdsRef.current.length !== scenario.length) {
+        addLog('The server did not create all demo riders. Restart the simulation to retry.', 'error')
+        return false
+      }
+    } catch (error) {
+      if (pipelineRunRef.current !== run) return false
       demoRideIdsRef.current = []
-      addLog('✓ Seeded the three shared-auto requests using the selected route', 'info')
+      addLog(`Could not create demo riders: ${apiErrorMessage(error)}`, 'error')
+      return false
     }
     setSimData(prev => ({
       ...prev,
@@ -359,27 +371,31 @@ export default function PresentationDemoView({ toast }) {
         label: `${r.name} walking ${r.walkDistanceM}m to ${r.virtualStop.label}`,
       })),
     }))
+    return true
   }
 
   // Step 2: Cluster
-  const stepCluster = async () => {
+  const stepCluster = async (run) => {
     setCurrentStage(2)
     addLog('🧬 Step 2: Executing HDBSCAN density clustering on pickup coordinates...', 'accent')
     await new Promise(r => setTimeout(r, 600))
+    if (pipelineRunRef.current !== run) return false
     const riders = sharedPassengersRef.current || demoRiders
     let result
     try {
       result = await jobsApi.runClustering({ mode: 'presentation_demo', demoRunId: demoRunIdRef.current })
     } catch (error) {
+      if (pipelineRunRef.current !== run) return false
       addLog(`✗ Clustering request failed: ${apiErrorMessage(error)}`, 'error')
-      return
+      return false
     }
+    if (pipelineRunRef.current !== run) return false
     const clusters = Number(result?.clusters_formed ?? 0)
     const noise = Number(result?.noise_requests_count ?? 0)
     const pooled = Math.max(0, Number(result?.processed_requests ?? riders.length) - noise)
     if (clusters <= 0) {
-      addLog(`✗ HDBSCAN formed no cluster: all ${noise} pickups fell outside the 300 m density window`, 'error')
-      return
+      addLog(result?.routing_failures ? 'No cluster formed: routing was unavailable.' : 'No compatible demo carpool was formed.', 'error')
+      return false
     }
     addLog(`✓ HDBSCAN: pooled ${pooled} of ${riders.length} riders into ${clusters} cluster (Epsilon = 300m, MinPts = 1, Leaf Selection)`, 'success')
     if (noise > 0) {
@@ -389,13 +405,15 @@ export default function PresentationDemoView({ toast }) {
       ...prev,
       riders: riders.map((rider, index) => ({ ...rider, status: index < pooled ? 'clustered' : rider.status })),
     }))
+    return true
   }
 
   // Step 3: Virtual stop
-  const stepVirtualStop = async () => {
+  const stepVirtualStop = async (run) => {
     setCurrentStage(3)
     addLog('🚏 Step 3: Computing K-Medoids centroid and snapping to drivable OSM road network...', 'accent')
     await new Promise(r => setTimeout(r, 600))
+    if (pipelineRunRef.current !== run) return false
     addLog(`✓ Virtual Stop #1 established near [${demoPickup.lat.toFixed(5)}, ${demoPickup.lng.toFixed(5)}]`, 'success')
     setSimData(prev => ({
       ...prev,
@@ -405,20 +423,26 @@ export default function PresentationDemoView({ toast }) {
         label: `${r.name} walking ${r.walkDistanceM}m to ${r.virtualStop.label}`,
       })),
     }))
+    return true
   }
 
   // Step 4: Solve routes
-  const stepVrpSolve = async () => {
+  const stepVrpSolve = async (run) => {
     setCurrentStage(4)
     addLog('⚡ Step 4: Solving Capacitated Vehicle Routing Problem (CVRP) via Google OR-Tools...', 'accent')
     try {
       const res = await jobsApi.runAutoDispatch({ mode: 'presentation_demo', demoRunId: demoRunIdRef.current })
-      addLog(`✓ Optimal route solved! Hungarian matching assigned vehicle KA-01-TEST-99 (${res?.assigned_rides || 3} rides assigned)`, 'success')
-    } catch {
-      const stopSequence = (sharedPassengersRef.current || demoRiders)
-        .map(rider => `P${rider.riderNumber} ${rider.virtualStop.label}`)
-        .join(' → ')
-      addLog(`✓ Route plan solved: Depot → ${stopSequence} → ${demoDestination.label} (Dropoff)`, 'info')
+      if (pipelineRunRef.current !== run) return false
+      const assigned = Number(res?.assigned_rides ?? 0)
+      if (!demoRideIdsRef.current.length || assigned !== demoRideIdsRef.current.length) {
+        addLog(`Dispatch assigned ${assigned} of ${demoRideIdsRef.current.length} demo riders. Playback stopped.`, 'error')
+        return false
+      }
+      addLog(`✓ Demo dispatch assigned ${assigned} riders`, 'success')
+    } catch (error) {
+      if (pipelineRunRef.current !== run) return false
+      addLog(`Demo dispatch failed: ${apiErrorMessage(error)}`, 'error')
+      return false
     }
     setSimData(prev => ({
       ...prev,
@@ -429,6 +453,7 @@ export default function PresentationDemoView({ toast }) {
         label: `${r.name} walking ${r.walkDistanceM}m to ${r.virtualStop.label}`,
       })),
     }))
+    return true
   }
 
   // Step 5: Drive sim
@@ -445,7 +470,11 @@ export default function PresentationDemoView({ toast }) {
 
     const selectedPath = demoRoutePathRef.current
     const path = (selectedPath.length > 1 ? selectedPath : fallbackDemoPath()).filter(point => Array.isArray(point) && point.length >= 2)
-    if (path.length < 2) return
+    if (path.length < 2) {
+      setIsPlaying(false)
+      addLog('No route geometry is available for playback.', 'error')
+      return
+    }
     // Path set once; loop owns live position.
     setSimData(prev => ({
       ...prev,
@@ -518,8 +547,7 @@ export default function PresentationDemoView({ toast }) {
         setCurrentStage(6)
         addLog(`🎉 Route completed! All 3 passengers successfully delivered to ${demoDestination.label}.`, 'success')
         toast?.('success', 'Simulation Complete!', `3 riders pooled · ${(routeDistance / 1000).toFixed(1)} km shared · 1.4 kg CO₂ saved`)
-        // Persist completion to demo rides.
-        Promise.all(demoRideIdsRef.current.map(id => ridesApi.updateStatus(id, 'completed').catch(() => {})))
+        // Playback is simulated; it cannot stand in for backend pickup/drop-off events.
       } else {
         driveFrameRef.current = requestAnimationFrame(frame)
       }
@@ -532,19 +560,20 @@ export default function PresentationDemoView({ toast }) {
     pipelineRunRef.current = pipelineRun
     setIsPlaying(true)
     addLog('🚀 Launching SmartRoute AI End-to-End Automated Pipeline...', 'accent')
-    await stepSpawnRiders()
-    if (pipelineRunRef.current !== pipelineRun) return
-    await new Promise(r => setTimeout(r, 1400 / speedMultiplier))
-    await stepCluster()
-    if (pipelineRunRef.current !== pipelineRun) return
-    await new Promise(r => setTimeout(r, 1400 / speedMultiplier))
-    await stepVirtualStop()
-    if (pipelineRunRef.current !== pipelineRun) return
-    await new Promise(r => setTimeout(r, 1400 / speedMultiplier))
-    await stepVrpSolve()
-    if (pipelineRunRef.current !== pipelineRun) return
-    await new Promise(r => setTimeout(r, 1600 / speedMultiplier))
-    startDriveSimulation()
+    const isCurrent = () => pipelineRunRef.current === pipelineRun
+    try {
+      const result = await runDemoStages(
+        [stepSpawnRiders, stepCluster, stepVirtualStop, stepVrpSolve].map(step => () => step(pipelineRun)),
+        { isCurrent, wait: () => new Promise(r => setTimeout(r, 1400 / speedMultiplier)) },
+      )
+      if (!isCurrent()) return
+      if (result === 'ready') startDriveSimulation()
+      else setIsPlaying(false)
+    } catch (error) {
+      if (!isCurrent()) return
+      setIsPlaying(false)
+      addLog(`Demo stopped: ${apiErrorMessage(error)}`, 'error')
+    }
   }
 
   const pauseSimulation = () => {
@@ -596,6 +625,7 @@ export default function PresentationDemoView({ toast }) {
 
   useEffect(() => {
     return () => {
+      pipelineRunRef.current += 1
       if (driveFrameRef.current) cancelAnimationFrame(driveFrameRef.current)
     }
   }, [])

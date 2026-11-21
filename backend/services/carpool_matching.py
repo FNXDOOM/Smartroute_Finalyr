@@ -5,7 +5,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
-from itertools import permutations
+from itertools import combinations, permutations
 from typing import List, Set, Tuple
 
 from sqlalchemy.orm import Session
@@ -50,7 +50,7 @@ def road_matching_batch():
         yield current["stats"]
         return
     state = {
-        "edges": {}, "failed_edges": set(), "matrix_unavailable": False,
+        "edges": {}, "failed_edges": set(), "matrix_unavailable": False, "decisions": {},
         "stats": {"routing_failures": 0, "matrix_attempts": 0, "route_attempts": 0},
     }
     token = _matching_batch.set(state)
@@ -265,13 +265,19 @@ def _compatible_groups(requests):
         with road_matching_batch():
             return _compatible_groups(requests)
 
+    decisions = _matching_batch.get()["decisions"]
+
     def compatible(group):
         if len(group) > MAX_CARPOOL_PASSENGERS:
             return False
         # Destination separation does not measure detour. A rider can exit early
         # while another continues far along the same road without delaying either.
+        key = tuple(sorted((r.id, r.pickup_lat, r.pickup_lng, r.dest_lat, r.dest_lng) for r in group))
+        if key in decisions:
+            return decisions[key]
         try:
-            return road_detour_compatible(group)
+            decisions[key] = road_detour_compatible(group)
+            return decisions[key]
         except RuntimeError:
             # Keep unrelated good pools; the caller records incomplete evaluation.
             logger.warning("Carpool road matching unavailable; skipping corridor pool this tick")
@@ -305,6 +311,30 @@ def _compatible_groups(requests):
                     singleton.append(member)
                     break
             if len(singleton) > 1:
+                break
+    # Recover a greedy A-B match when A-C and B-D would serve all four.
+    # Try at most the remaining singletons and verified pairs, never triples.
+    singletons = [group for group in groups if len(group) == 1]
+    pairs = [group for group in groups if len(group) == 2]
+    repair_budget = 12
+    for left, right in combinations(singletons, 2):
+        if not pairs or repair_budget <= 0:
+            break
+        if len(left) != 1 or len(right) != 1:
+            continue
+        for pair in pairs:
+            if repair_budget <= 0:
+                break
+            repair_budget -= 1
+            a, b = pair
+            for first, second in ((a, b), (b, a)):
+                if compatible([left[0], first]) and compatible([right[0], second]):
+                    left.append(first)
+                    right.append(second)
+                    groups.remove(pair)
+                    pairs.remove(pair)
+                    break
+            if len(left) == 2:
                 break
     return groups
 

@@ -32,6 +32,7 @@ from services.carpool_lifecycle import (
     cancel_ride,
     detach_ride,
     route_plan_serving_ride,
+    pickup_waypoint_serving_ride,
     settle_carpool_run,
     route_rides,
 )
@@ -524,27 +525,7 @@ def get_ride_vehicle(
             detail="Access denied to this ride request",
         )
 
-    if not ride.virtual_stop_id:
-        return None
-
-    candidate_waypoints = (
-        db.query(RouteWaypointRecord)
-        .join(RoutePlan)
-        .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id)
-        .filter(RoutePlan.status == ROUTE_SOLVED)
-        .all()
-    )
-    match = next(
-        (w for w in candidate_waypoints if ride.id in (w.passenger_ids or [])),
-        None,
-    )
-    if not match:
-        return None
-
-    route_plan = db.query(RoutePlan).filter(
-        RoutePlan.id == match.route_plan_id,
-        RoutePlan.status == ROUTE_SOLVED,
-    ).first()
+    route_plan = route_plan_serving_ride(db, ride)
     if not route_plan:
         return None
 
@@ -574,20 +555,7 @@ def get_ride_route(
             detail="Access denied to this ride request",
         )
 
-    if not ride.virtual_stop_id:
-        return None
-
-    candidate_waypoints = (
-        db.query(RouteWaypointRecord)
-        .join(RoutePlan)
-        .filter(RouteWaypointRecord.stop_id == ride.virtual_stop_id)
-        .filter(RoutePlan.status.in_(LIVE_ROUTE_STATUSES))
-        .all()
-    )
-    pickup_waypoint = next(
-        (waypoint for waypoint in candidate_waypoints if ride.id in (waypoint.passenger_ids or [])),
-        None,
-    )
+    pickup_waypoint = pickup_waypoint_serving_ride(db, ride)
     if not pickup_waypoint:
         return None
 
@@ -680,13 +648,7 @@ def get_ride_route(
 
 def _has_live_route(db: Session, ride: RideRequest) -> bool:
     """Whether this ride is on a live route; needs_reoptimization still counts, because the driver keeps serving riders already on board."""
-    if not ride.virtual_stop_id:
-        return False
-    candidates = db.query(RouteWaypointRecord).join(RoutePlan).filter(
-        RouteWaypointRecord.stop_id == ride.virtual_stop_id,
-        RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
-    ).all()
-    return any(ride.id in (waypoint.passenger_ids or []) for waypoint in candidates)
+    return pickup_waypoint_serving_ride(db, ride) is not None
 
 
 def _vehicle_serving_ride(db: Session, ride: RideRequest) -> Optional[Vehicle]:
@@ -734,7 +696,7 @@ def list_ride_requests(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_driver_user),
 ):
-    """List rides. Admin/driver only."""
+    """List rides. Shared bookings are visible to drivers only on their reserved routes."""
     try:
         mode = validate_ride_mode(mode)
         query = apply_ride_scope(db.query(RideRequest), mode, demo_run_id)
@@ -749,6 +711,20 @@ def list_ride_requests(
         query = query.filter(RideRequest.status == ride_status)
     if h3_index:
         query = query.filter(RideRequest.h3_index == h3_index)
+
+    if current_user.role == "driver":
+        roster = db.query(RouteWaypointRecord.passenger_ids).join(
+            RoutePlan, RoutePlan.id == RouteWaypointRecord.route_plan_id,
+        ).join(Vehicle, Vehicle.id == RoutePlan.vehicle_id).filter(
+            Vehicle.driver_user_id == current_user.id,
+            Vehicle.assigned_route_id == RoutePlan.route_id,
+            RoutePlan.mode == mode,
+            RoutePlan.status.in_(LIVE_ROUTE_STATUSES),
+        )
+        if mode == PRESENTATION_DEMO_MODE:
+            roster = roster.filter(RoutePlan.demo_run_id == demo_run_id)
+        assigned_ids = {ride_id for (ids,) in roster for ride_id in ids or []}
+        query = query.filter(RideRequest.is_shared.is_(False) | RideRequest.id.in_(assigned_ids))
 
     rides = query.order_by(RideRequest.request_time.desc()).offset(offset).limit(limit).all()
     return rides

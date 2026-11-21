@@ -1504,6 +1504,7 @@ function MonitoringPanel({ setView, toast }) {
                 <TableRow>
                   <TableHead>Job</TableHead>
                   <TableHead className="text-right">Runs</TableHead>
+                  <TableHead className="text-right">Partial</TableHead>
                   <TableHead className="text-right">Failed</TableHead>
                   <TableHead className="text-right">Last run</TableHead>
                 </TableRow>
@@ -1515,6 +1516,7 @@ function MonitoringPanel({ setView, toast }) {
                     <TableRow key={job.job_name}>
                       <TableCell className="font-medium">{job.job_name}</TableCell>
                       <TableCell className="mob-data text-right">{job.runs}</TableCell>
+                      <TableCell className="mob-data text-right">{job.partial ?? 0}</TableCell>
                       <TableCell className={cn("mob-data text-right", job.failed > 0 && "text-red-600 dark:text-red-400")}>
                         {job.failed}
                       </TableCell>

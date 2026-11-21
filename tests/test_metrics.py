@@ -67,6 +67,8 @@ def test_job_collector_reports_worker_written_runs():
         session.add_all(
             [
                 JobRun(job_name=marker, status="success", started_at=started, finished_at=started),
+                JobRun(job_name=marker, status="succeeded", started_at=started, finished_at=started),
+                JobRun(job_name=marker, status="partial", started_at=started, finished_at=started),
                 JobRun(job_name=marker, status="failed", started_at=started, finished_at=started),
                 JobRun(job_name=marker, status="failed", started_at=started, finished_at=started),
             ]
@@ -75,7 +77,11 @@ def test_job_collector_reports_worker_written_runs():
 
         body = _scrape()
         assert f'job_runs_recent_total{{job="{marker}",status="failed"}} 2.0' in body
-        assert f'job_runs_recent_total{{job="{marker}",status="success"}} 1.0' in body
+        assert f'job_runs_recent_total{{job="{marker}",status="success"}} 2.0' in body
+        assert f'job_runs_recent_total{{job="{marker}",status="partial"}} 1.0' in body
+        from services.monitoring import job_health
+        job = next(item for item in job_health(session)["jobs"] if item["job_name"] == marker)
+        assert (job["succeeded"], job["partial"], job["failed"]) == (2, 1, 2)
         assert f'job_last_run_timestamp_seconds{{job="{marker}"}}' in body
         assert f'job_last_success_timestamp_seconds{{job="{marker}"}}' in body
         assert "app_database_up 1.0" in body

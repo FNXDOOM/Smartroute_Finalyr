@@ -30,6 +30,16 @@ _http_client: httpx.Client | None = None
 # Per-process cache: N workers each keep their own copy (swap for Redis later).
 _cache = TTLCache(max_entries=STADIA_CACHE_MAX_ENTRIES)
 _TRAFFIC_COSTINGS = {"auto_traffic", "auto_traffic_premium"}
+_MATRIX_DENIAL_COOLDOWN_SECONDS = 60
+_matrix_denied_until = 0.0
+
+
+class StadiaHTTPError(RuntimeError):
+    """Provider failure without request URLs or credentials."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__("Stadia request failed")
 
 
 def _get_http_client() -> httpx.Client:
@@ -64,7 +74,7 @@ def _request_json(url: str, *, params: dict | None = None, body: dict | None = N
             timeout=10.0,
         )
         if response.status_code >= 400:
-            raise RuntimeError("Stadia request failed")
+            raise StadiaHTTPError(response.status_code)
         return response.json()
     except RuntimeError:
         raise
@@ -248,6 +258,20 @@ def nearest_roads(locations: list[dict]) -> dict:
     )
 
 
+def _request_matrix(body):
+    global _matrix_denied_until
+    if time.monotonic() < _matrix_denied_until:
+        raise StadiaHTTPError(403)
+    try:
+        return _request_json(STADIA_MATRIX_URL, body=body)
+    except StadiaHTTPError as error:
+        if error.status_code == 403:
+            # A matrix entitlement denial is not specific to one pool. Keep
+            # using standard routing, and probe again after a short cooldown.
+            _matrix_denied_until = time.monotonic() + _MATRIX_DENIAL_COOLDOWN_SECONDS
+        raise
+
+
 def matrix(sources: list[dict], targets: list[dict], *, costing: str | None = None) -> dict:
     """Return a travel-cost matrix for source and target locations."""
     selected_costing = costing or STADIA_ROUTING_COSTING
@@ -257,9 +281,8 @@ def matrix(sources: list[dict], targets: list[dict], *, costing: str | None = No
         "matrix",
         key,
         ttl,
-        lambda: _request_json(
-            STADIA_MATRIX_URL,
-            body={
+        lambda: _request_matrix(
+            {
                 "sources": sources,
                 "targets": targets,
                 "costing": selected_costing,

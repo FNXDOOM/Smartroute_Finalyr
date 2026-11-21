@@ -32,6 +32,12 @@ const RIDE_TIERS = [
 const RIDE_STAGES = ['pending', 'clustered', 'assigned', 'arriving', 'in_progress', 'completed']
 const RIDE_STAGE_LABELS = { pending: 'Requested', clustered: 'Clustered', assigned: 'Assigned', arriving: 'Arriving', ready_for_pickup: 'At pickup', in_progress: 'In transit', completed: 'Delivered' }
 
+function rideStageLabel(ride, status = ride.status) {
+  if (status === 'pending' && ride.is_shared) return 'Finding riders'
+  if (status === 'clustered') return 'Finding driver'
+  return RIDE_STAGE_LABELS[status] || status.replace(/_/g, ' ')
+}
+
 export default function PassengerView({ view, setView, toast }) {
   const [trips,    setTrips]    = useState([])
   const [loading,  setLoading]  = useState(true)
@@ -267,17 +273,18 @@ export default function PassengerView({ view, setView, toast }) {
   useEffect(() => {
     if (!activeRideId) { clearInterval(pollRef.current); return undefined }
     let cancelled = false
+    let inFlight = false
     const poll = async () => {
+      if (inFlight || cancelled) return
+      inFlight = true
       try {
-        const v = await ridesApi.getVehicle(activeRideId)
-        if (cancelled) return
-        setRideVehicle(v)
         const r = await ridesApi.getById(activeRideId)
         if (cancelled) return
         setActiveRide(r)
         setTrips(prev => prev.map(t => t.id === r.id ? r : t))
         if (r.status === 'completed' || r.status === 'cancelled') {
           clearInterval(pollRef.current)
+          setRideVehicle(null)
           if (r.status === 'completed') toast('success', 'Ride completed!', 'Tap Dismiss to book a new ride.')
           else toast('info', 'Ride ' + r.status)
           // Keep completed fares available until the passenger dismisses them.
@@ -289,8 +296,13 @@ export default function PassengerView({ view, setView, toast }) {
             setRouteGeometry([]); setRouteEstimate(null)
             dismissTimeoutRef.current = null
           }, 8000)
+          return
         }
+        // Vehicle lookup is optional: missing telemetry must not hide trip status or payment.
+        const vehicle = await ridesApi.getVehicle(activeRideId)
+        if (!cancelled) setRideVehicle(vehicle)
       } catch (error) { void error }
+      finally { inFlight = false }
     }
     poll()
     pollRef.current = setInterval(poll, 4000)
@@ -424,7 +436,7 @@ export default function PassengerView({ view, setView, toast }) {
                       <p className="mt-1 text-[11px] font-semibold text-primary">Walk about {Math.round(pickupWalkMeters)} m to the shared pickup stop</p>
                     )}
                   </div>
-                    <StatusBadge status={activeRide.status} label={activeRide.is_shared === false && activeRide.status === 'clustered' ? 'Finding driver' : undefined} />
+                    <StatusBadge status={activeRide.status} label={rideStageLabel(activeRide)} />
                 </div>
 
                 <div>
@@ -447,10 +459,10 @@ export default function PassengerView({ view, setView, toast }) {
                             {passed && !current ? <CheckCircle2 className="h-3 w-3" /> : idx + 1}
                           </span>
                           <span className={cn('hidden truncate text-[10px] font-medium leading-tight sm:block', current ? 'text-black dark:text-white' : passed ? 'text-[#333333] dark:text-[#E2E2E2]' : 'text-[#8A8A8A]')}>
-                            {key === 'clustered' && activeRide.is_shared === false ? 'Finding driver' : RIDE_STAGE_LABELS[key]}
+                            {rideStageLabel(activeRide, key)}
                           </span>
                           <span className={cn('truncate text-[10px] font-medium leading-tight sm:hidden', current ? 'text-black dark:text-white' : 'text-[#8A8A8A]')}>
-                            {current ? (key === 'clustered' && activeRide.is_shared === false ? 'Finding driver' : RIDE_STAGE_LABELS[key]) : idx + 1}
+                            {current ? rideStageLabel(activeRide, key) : idx + 1}
                           </span>
                         </li>
                       )
@@ -698,7 +710,7 @@ export default function PassengerView({ view, setView, toast }) {
             className="absolute left-1/2 top-4 z-10 hidden -translate-x-1/2 items-center gap-2.5 rounded-lg border border-[#E2E2E2] bg-white py-2 pl-4 pr-2 text-[13px] font-semibold text-black shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-colors duration-150 hover:border-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black lg:left-[calc(448px+((100%-448px)/2))] lg:flex"
           >
             <span className="h-2 w-2 animate-pulse rounded-full bg-black" aria-hidden="true" />
-            Ride #{activeRide.id} · {activeRide.is_shared === false && activeRide.status === 'clustered' ? 'Finding driver' : RIDE_STAGE_LABELS[activeRide.status] || activeRide.status.replace(/_/g, ' ')}
+            Ride #{activeRide.id} · {rideStageLabel(activeRide)}
             <span className="rounded-md bg-black px-2.5 py-1 text-[12px] font-semibold text-white">Track</span>
           </button>
         )}
@@ -739,7 +751,7 @@ function TripCard({ trip, onClick }) {
           <p className="truncate text-[14px] font-semibold">→ {trip.destination_label || `${trip.dest_lat?.toFixed(3)}, ${trip.dest_lng?.toFixed(3)}`}</p>
           <p className="mt-0.5 text-[12px] text-[#6B6B6B]">{trip.request_time ? new Date(trip.request_time).toLocaleTimeString() : ''}</p>
         </div>
-        <StatusBadge status={trip.status} label={trip.is_shared === false && trip.status === 'clustered' ? 'Finding driver' : undefined} />
+        <StatusBadge status={trip.status} label={rideStageLabel(trip)} />
       </CardContent>
     </Card>
   )
@@ -777,7 +789,7 @@ function TripsView({ trips, loading, setView, onOpenTrip, title = 'My Trips' }) 
               <div className="min-w-0">
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <span className="font-mono text-[12px] text-[#8A8A8A]">#{t.id}</span>
-                  <StatusBadge status={t.status} label={t.is_shared === false && t.status === 'clustered' ? 'Finding driver' : undefined} />
+                  <StatusBadge status={t.status} label={rideStageLabel(t)} />
                 </div>
                 <p className="truncate text-[14px] font-semibold tracking-[-0.01em]">
                   {t.pickup_label || 'Pickup'} <ArrowRight className="mx-1 inline h-4 w-4 text-[#8A8A8A]" />
@@ -798,7 +810,7 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
   const canCancel = ['pending', 'clustered'].includes(ride.status)
   return (
     <div className="mx-auto w-full max-w-[580px] space-y-5 p-4 md:p-8">
-      <PageHeader title={`Ride #${ride.id}`} description={ride.request_time ? new Date(ride.request_time).toLocaleString() : undefined} onBack={onBack} backLabel="Back" actions={<StatusBadge status={ride.status} label={ride.is_shared === false && ride.status === 'clustered' ? 'Finding driver' : undefined} />} />
+      <PageHeader title={`Ride #${ride.id}`} description={ride.request_time ? new Date(ride.request_time).toLocaleString() : undefined} onBack={onBack} backLabel="Back" actions={<StatusBadge status={ride.status} label={rideStageLabel(ride)} />} />
       <Card className="shadow-none">
         <CardContent className="flex flex-col gap-2 p-5">
           <InfoCard label="From" value={ride.pickup_label || `${ride.pickup_lat}, ${ride.pickup_lng}`} />
@@ -851,7 +863,7 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
         </Button>
         <Separator orientation="vertical" className="h-5 bg-[#E2E2E2] dark:bg-[#333333]" />
         <p className="text-[15px] font-semibold tracking-[-0.01em]">Live ride tracking</p>
-        {ride && <StatusBadge status={ride.status} label={ride.is_shared === false && ride.status === 'clustered' ? 'Finding driver' : undefined} />}
+        {ride && <StatusBadge status={ride.status} label={rideStageLabel(ride)} />}
         <span className="ml-auto text-[13px] text-[#6B6B6B]">
           {displayVehicle
             ? <Badge variant="secondary" className="gap-1.5 font-mono text-[12px]"><CarFront className="h-3.5 w-3.5" /> {displayVehicle.license_plate}</Badge>

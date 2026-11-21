@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from models.job_run import JobRun
 
+SUCCESS_STATUSES = ("success", "succeeded")
+
 
 def start(
     db: Session,

@@ -309,6 +309,7 @@ def list_routes(
     if current_user.role == "driver":
         routes_query = routes_query.join(Vehicle, Vehicle.id == RoutePlan.vehicle_id).filter(
             Vehicle.driver_user_id == current_user.id,
+            Vehicle.assigned_route_id == RoutePlan.route_id,
         )
     routes = (
         routes_query

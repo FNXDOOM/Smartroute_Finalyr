@@ -11,23 +11,27 @@ export function useWebSocket(factory, getToken, onMessage, enabled = true) {
   const connect = useCallback(async () => {
     const generation = generationRef.current;
     if (!enabled || !mountedRef.current) return;
+    const isCurrent = () => mountedRef.current && generation === generationRef.current;
+    const retry = () => {
+      if (!isCurrent()) return;
+      clearTimeout(retryRef.current);
+      retryRef.current = setTimeout(() => connectRef.current?.(), 3000);
+    };
     let token;
     try {
       token = await getToken();
-    } catch (error) { void error; return; }
+    } catch { retry(); return; }
     // A teardown may have happened while the token was resolving; that socket
     // must never be created or tracked.
-    if (!token || !mountedRef.current || generation !== generationRef.current) return;
+    if (!isCurrent()) return;
+    if (!token) { retry(); return; }
     try {
       const ws = factory(token, (msg) => {
         if (mountedRef.current && generation === generationRef.current) onMessage(msg);
-      }, () => {
-        if (!mountedRef.current || generation !== generationRef.current) return;
-        retryRef.current = setTimeout(() => connectRef.current?.(), 3000);
-      });
+      }, retry);
       if (generation !== generationRef.current) { ws.close(); return; }
       wsRef.current = ws;
-    } catch (error) { void error }
+    } catch { retry(); }
   }, [factory, getToken, onMessage, enabled]);
 
   useEffect(() => {
