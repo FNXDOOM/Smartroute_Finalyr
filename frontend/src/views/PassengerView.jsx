@@ -21,6 +21,7 @@ import { Switch } from '@/components/ui/switch'
 import { Progress } from '@/components/ui/progress'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { StatusBadge, PageHeader, DashboardEmptyState, LoadingRows, MapLegend } from '@/components/dashboard-shared'
+import { findActiveRide } from './passengerActiveRide.js'
 
 const RIDE_TIERS = [
   { id: 'swift-x', name: 'SwiftX', desc: 'Affordable shared ride', eta: '3 min', price: '₹12–15', Icon: CarFront, seats: 4 },
@@ -217,9 +218,17 @@ export default function PassengerView({ view, setView, toast }) {
   }
 
   useEffect(() => {
+    let cancelled = false
     ridesApi.getMyRides()
-      .then(data => { setTrips(Array.isArray(data)?data:[]); setLoading(false) })
-      .catch(() => setLoading(false))
+      .then(data => {
+        if (cancelled) return
+        const rides = Array.isArray(data) ? data : []
+        setTrips(rides)
+        setActiveRide(current => current ?? findActiveRide(rides))
+      })
+      .catch(() => { /* Booking remains available if ride history cannot load. */ })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
   }, [])
 
   const activeRideId = activeRide?.id
@@ -670,7 +679,7 @@ export default function PassengerView({ view, setView, toast }) {
             </div>
           </div>
 
-          <Button className="primary-action uber-cta h-[52px] w-full text-[16px]" onClick={handleBook} disabled={booking || isRideActive} size="lg">
+          <Button className="primary-action uber-cta h-[52px] w-full text-[16px]" onClick={handleBook} disabled={loading || booking || isRideActive} size="lg">
             {geocoding ? <><Loader2 className="h-4 w-4 animate-spin" /> Finding locations…</>
               : booking ? <><Loader2 className="h-4 w-4 animate-spin" /> Booking…</>
                 : isRideActive ? 'Ride in progress'
