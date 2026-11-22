@@ -79,9 +79,15 @@ export default function PassengerView({ view, setView, toast }) {
       setVehicles(prev => prev.some(v => v.id === message.vehicle.id)
         ? prev.map(v => v.id === message.vehicle.id ? { ...v, ...message.vehicle } : v)
         : [...prev, message.vehicle])
-      if (rideVehicle?.id === message.vehicle.id) setRideVehicle((prev) => ({ ...prev, ...message.vehicle }))
+      const fixTimestamp = Date.parse(message.event?.created_at)
+      setRideVehicle((prev) => {
+        if (prev?.id !== message.vehicle.id) return prev
+        if (!ROUTED_TRACKING) return { ...prev, ...message.vehicle }
+        if (Number.isFinite(fixTimestamp) && fixTimestamp <= (prev.fixTimestamp ?? -Infinity)) return prev
+        return { ...prev, ...message.vehicle, fixTimestamp }
+      })
     }
-  }, [rideVehicle?.id])
+  }, [])
 
   useWebSocket(createTrackingWS, getToken, handleTrackingMessage, true)
 
@@ -218,6 +224,7 @@ export default function PassengerView({ view, setView, toast }) {
 
   const activeRideId = activeRide?.id
   const activeRideStatus = activeRide?.status
+  const activeVehicleRouteId = rideVehicle?.assigned_route_id
   const activePickupLat = activeRide?.pickup_lat
   const activePickupLng = activeRide?.pickup_lng
   const activeDestinationLat = activeRide?.dest_lat
@@ -235,6 +242,7 @@ export default function PassengerView({ view, setView, toast }) {
           setPickupWalkMeters(pooled.my_pickup_walk_meters ?? null)
           setRouteEstimate({
             geometry: pooled.geometry,
+            planned: true,
             distanceMeters: pooled.total_distance_meters || 0,
             durationSeconds: pooled.estimated_duration_seconds || 0,
           })
@@ -262,7 +270,7 @@ export default function PassengerView({ view, setView, toast }) {
     }
     void loadRoute()
     return () => { cancelled = true }
-  }, [activeDestinationLat, activeDestinationLng, activePickupLat, activePickupLng, activeRideId, activeRideStatus, trafficRouting])
+  }, [activeDestinationLat, activeDestinationLng, activePickupLat, activePickupLng, activeRideId, activeRideStatus, activeVehicleRouteId, trafficRouting])
 
   const clearActiveRideState = useCallback(() => {
     if (dismissTimeoutRef.current) { clearTimeout(dismissTimeoutRef.current); dismissTimeoutRef.current = null }
@@ -300,7 +308,12 @@ export default function PassengerView({ view, setView, toast }) {
         }
         // Vehicle lookup is optional: missing telemetry must not hide trip status or payment.
         const vehicle = await ridesApi.getVehicle(activeRideId)
-        if (!cancelled) setRideVehicle(vehicle)
+        if (!cancelled) setRideVehicle(previous => (
+          ROUTED_TRACKING && previous?.id === vehicle?.id && previous?.assigned_route_id === vehicle?.assigned_route_id
+            && Number.isFinite(previous?.fixTimestamp)
+            ? { ...vehicle, lat: previous.lat, lng: previous.lng, fixTimestamp: previous.fixTimestamp }
+            : vehicle
+        ))
       } catch (error) { void error }
       finally { inFlight = false }
     }
@@ -385,7 +398,7 @@ export default function PassengerView({ view, setView, toast }) {
       ? <TripDetail ride={detailRide} vehicle={activeRide ? rideVehicle : null} onCancel={handleCancel} onBack={() => { setViewingRide(null); setView('home') }} />
       : <div className="p-7"><Button variant="ghost" size="sm" onClick={() => setView('home')}><ArrowLeft className="h-4 w-4" /> Back home</Button></div>
   }
-  if (view === 'tracking') return <TrackingView ride={activeRide} vehicle={rideVehicle} routeGeometry={routeGeometry} onBack={()=>setView('home')} />
+  if (view === 'tracking') return <TrackingView key={activeRide?.id} ride={activeRide} vehicle={rideVehicle} routeGeometry={routeGeometry} planned={routeEstimate?.planned && routeEstimate.geometry === routeGeometry} onBack={()=>setView('home')} />
 
   // Home booking layout
   const pickupCoords  = { lat:pickupPoint.lat, lng:pickupPoint.lng, label: pickup||'Current location' }
@@ -845,12 +858,25 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
   )
 }
 
-function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
+const ROUTED_TRACKING = import.meta.env.VITE_PASSENGER_ROUTE_ANIMATION === 'true'
+
+function TrackingView({ ride, vehicle, routeGeometry, planned, onBack }) {
+  const [follow, setFollow] = useState(false)
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    if (!ROUTED_TRACKING) return
+    const timer = setInterval(() => setNow(Date.now()), 2000)
+    return () => clearInterval(timer)
+  }, [])
   const pickupCoords = ride ? { lat: ride.pickup_lat, lng: ride.pickup_lng, label: ride.pickup_label } : null
   const destCoords = ride ? { lat: ride.dest_lat, lng: ride.dest_lng, label: ride.destination_label } : null
   const displayVehicle = vehicle || null
   const trackingPickupPulse = !!ride && ['pending', 'clustered'].includes(ride.status)
-  const vList = displayVehicle?.lat != null ? [displayVehicle] : []
+  const trackingLeg = ride?.status === 'in_progress' ? 'drop' : 'pickup'
+  const vList = displayVehicle?.lat != null ? [{
+    ...displayVehicle, trackingLeg, trackingSnap: planned,
+    trackingKey: `${ride?.id}:${displayVehicle.assigned_route_id}:${trackingLeg}:${planned}`,
+  }] : []
   const center = displayVehicle?.lat != null ? [displayVehicle.lat, displayVehicle.lng] : ride ? [ride.pickup_lat, ride.pickup_lng] : [12.9784, 77.6408]
 
   const vehicleAnimation = null
@@ -864,6 +890,17 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
         <Separator orientation="vertical" className="h-5 bg-[#E2E2E2] dark:bg-[#333333]" />
         <p className="text-[15px] font-semibold tracking-[-0.01em]">Live ride tracking</p>
         {ride && <StatusBadge status={ride.status} label={rideStageLabel(ride)} />}
+        {ROUTED_TRACKING && displayVehicle && (
+          <>
+            <Button variant="outline" size="sm" aria-pressed={follow} onClick={() => setFollow(value => !value)}>
+              Follow vehicle
+            </Button>
+            <span role="status" className="text-sm">
+              {!Number.isFinite(displayVehicle.fixTimestamp) ? 'Waiting for live GPS'
+                : now - displayVehicle.fixTimestamp > 20_000 ? 'GPS update delayed' : ''}
+            </span>
+          </>
+        )}
         <span className="ml-auto text-[13px] text-[#6B6B6B]">
           {displayVehicle
             ? <Badge variant="secondary" className="gap-1.5 font-mono text-[12px]"><CarFront className="h-3.5 w-3.5" /> {displayVehicle.license_plate}</Badge>
@@ -873,7 +910,7 @@ function TrackingView({ ride, vehicle, routeGeometry, onBack }) {
       <div className="min-h-0 flex-1 bg-[#EEEEEE] dark:bg-[#111111]">
         {!ride
           ? <div className="mx-auto w-full max-w-[560px] p-4 md:p-8"><DashboardEmptyState icon={Navigation} title="No active ride" hint="Start a booking from Home to track it live here." action={<Button size="sm" onClick={onBack}>Back home</Button>} /></div>
-          : <AppMap center={center} zoom={14} height="100%" vehicles={vList} pickup={pickupCoords} destination={destCoords} routeGeometry={routeGeometry} vehicleAnimation={vehicleAnimation} pickupPulse={trackingPickupPulse} followCamera={ride.status === 'in_progress'} />
+          : <AppMap center={center} zoom={14} height="100%" vehicles={vList} pickup={pickupCoords} destination={destCoords} routeGeometry={routeGeometry} vehicleAnimation={vehicleAnimation} pickupPulse={trackingPickupPulse} vehicleMotion={ROUTED_TRACKING ? 'routed' : 'smooth'} followCamera={ROUTED_TRACKING ? follow : ride.status === 'in_progress'} />
         }
       </div>
     </div>
