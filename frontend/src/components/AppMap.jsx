@@ -6,8 +6,7 @@ import { setWorkerUrl } from 'maplibre-gl'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { headingDelta, telemetryPath, vehicleKind, vehicleSvg } from './vehicleTracking'
-import { buildRoute } from '../map/routeUtils.js'
-import { acceptFix, routeProgress, smoothHeading, STALE_MS, trailFeatures } from '../map/passengerMotion.js'
+import { animatePassengerFix, lineFeatureData } from '../map/passengerMotion.js'
 
 setWorkerUrl(workerUrl)
 
@@ -601,7 +600,7 @@ function updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells
     const label = wp.marker_label || (isDepot ? '🏢' : isPickup ? `🚏 ${i}` : '•')
     const col = isDepot ? colours.depot : colours.waypoint
     if (mapLayerMarkers) addStopFeature(wp, col, label)
-    else add(wp, col, label, isDepot ? 'Depot Hub' : `Stop ${i}`, wp.waypoint_type)
+    else add(wp, col, label, isDepot ? 'Depot Hub' : `Stop ${wp.marker_label || i + 1}`, wp.waypoint_type)
   })
 
   if (pickup) {
@@ -623,13 +622,6 @@ function updateOverlays(map, { routeGeometry, waypoints, walkingPaths, heatCells
   if (pickupPulse && pickup?.lat != null && pickup?.lng != null) {
     map.__smartRoutePulse = new maplibregl.Marker({ element: pulseElement(colours.pickup), anchor: 'center' })
       .setLngLat([pickup.lng, pickup.lat]).addTo(map)
-  }
-}
-
-function lineFeatureData(coords) {
-  return {
-    type: 'FeatureCollection',
-    features: coords.length > 1 ? [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }] : [],
   }
 }
 
@@ -770,64 +762,6 @@ function syncMarkers(map, vehicles, markersRef, animationRef, vehicleAnimation, 
       markersRef.current.delete(id)
     }
   })
-}
-
-function animatePassengerFix(map, marker, vehicle, target, id, frames) {
-  const coords = map.__trackingRoute
-  const now = performance.now()
-  const previous = marker.trackingMotion
-  const key = vehicle.trackingKey
-  const color = vehicle.trackingLeg === 'drop' ? '#18181b' : '#2563eb'
-  const changed = !previous || previous.coords !== coords || previous.key !== key
-  if (!changed && previous.fix.point[0] === target[0] && previous.fix.point[1] === target[1]) {
-    if (vehicle.fixTimestamp > (previous.fix.timestamp ?? -Infinity)) {
-      previous.fix.timestamp = vehicle.fixTimestamp
-      previous.fix.now = now
-    }
-    if (previous.distance != null) map.getSource('route')?.setData(trailFeatures(previous.route, previous.distance, color))
-    return
-  }
-  const fix = acceptFix(changed ? null : previous.fix, target, now, vehicle.fixTimestamp)
-  if (!fix) return
-  const route = changed ? buildRoute(vehicle.trackingSnap ? coords || [] : []) : previous.route
-  const reanchor = changed || document.hidden || now - previous.fix.now >= STALE_MS
-  const projected = route.coords.length > 1 ? routeProgress(route, target, reanchor ? null : previous.goal) : null
-  if (!reanchor && previous.goal != null && projected == null
-    && route.project(target, previous.goal).offset <= 65) return
-  if (frames.has(id)) cancelAnimationFrame(frames.get(id))
-  frames.delete(id)
-  const state = { coords, key, route, fix, goal: projected, distance: projected }
-  marker.trackingMotion = state
-  const mapSource = () => map.getSource('route')
-  const paint = (distance) => mapSource()?.setData(trailFeatures(route, distance, color))
-  const from = marker.getLngLat().toArray()
-  const initial = reanchor ? projected : previous.distance
-  const duration = reanchor || matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 1000
-  const path = projected == null || initial == null
-    ? [from, projected == null ? target : route.pointAtDistance(projected).position] : null
-  let heading = marker.getRotation()
-  let last = now
-  function frame(time) {
-    const t = duration && !document.hidden ? Math.min(1, (time - now) / duration) : 1
-    const eased = t * t * (3 - 2 * t)
-    const distance = path ? null : initial + (projected - initial) * eased
-    const sample = path ? interpolatePath(path, eased) : route.pointAtDistance(distance)
-    marker.setLngLat(sample.position)
-    if (sample.bearing != null) {
-      heading = duration ? smoothHeading(heading, sample.bearing, (time - last) / 1000) : sample.bearing
-      marker.setRotation(heading)
-    }
-    last = time
-    state.distance = distance ?? (t === 1 ? projected : null)
-    if (distance != null) paint(distance)
-    else if (t === 1 && projected != null) paint(projected)
-    else if (t === 1) mapSource()?.setData(lineFeatureData(coords || []))
-    if (!document.hidden && map.__followCamera && !map.__followPaused) map.jumpTo({ center: sample.position })
-    if (t < 1) frames.set(id, requestAnimationFrame(frame))
-    else frames.delete(id)
-  }
-  if (duration) frames.set(id, requestAnimationFrame(frame))
-  else frame(now)
 }
 
 function animateVehicleAlongPath(map, animation, markersRef, animationRef, followCamera = false) {

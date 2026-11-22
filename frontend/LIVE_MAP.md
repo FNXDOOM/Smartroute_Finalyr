@@ -11,6 +11,14 @@ Stored pooled routes support snapping and trail progress; rides without a
 stored route glide between fixes without snapping to the booking preview.
 The standalone demo and synthetic WebSocket are local only.
 
+To replay the passenger renderer on 23 Bengaluru road routes, run
+`node frontend/scripts/verify-bengaluru-tracking.mjs` from the repository root.
+It sends paced routing requests for public landmarks and feeds synthetic GPS
+fixes into the same animation code the passenger map uses. Optionally set
+`BENGALURU_ROUTE_CACHE` to a scratch JSON file to reuse the downloaded routes.
+This does not replace an on-device test: the driver web app currently publishes
+GPS manually through **Real GPS**; its preview intentionally sends no live data.
+
 ## Standalone demo
 
 Install the existing frontend dependencies from `frontend` with `npm ci`; no additional

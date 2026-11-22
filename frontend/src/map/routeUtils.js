@@ -59,18 +59,24 @@ export function buildRoute(input) {
     }
     return { position: interpolate(coords[lo], coords[hi], (d - distances[lo]) / (distances[hi] - distances[lo])), bearing: headings[lo], segmentIndex: lo }
   }
-  function project(point, near = 0) {
-    let best = { distance: 0, offset: coords.length ? haversine(point, coords[0]) : Infinity }
+  function project(point, near = 0, min = 0, max = length) {
+    let best = { distance: 0, offset: coords.length === 1 ? haversine(point, coords[0]) : Infinity }
     // Local tangent plane for projection; distances along the route stay in metres.
     const scale = Math.cos(point[1] * radians)
     for (let i = 0; i < coords.length - 1; i++) {
       const a = coords[i]
       const b = coords[i + 1]
+      const start = distances[i]
+      const end = distances[i + 1]
+      if (end < min) continue
+      if (start > max) break
+      const span = end - start
       const x = (b[0] - a[0]) * scale
       const y = b[1] - a[1]
-      const t = clamp((((point[0] - a[0]) * scale) * x + (point[1] - a[1]) * y) / (x * x + y * y), 0, 1)
+      const t = clamp((((point[0] - a[0]) * scale) * x + (point[1] - a[1]) * y) / (x * x + y * y),
+        Math.max(0, (min - start) / span), Math.min(1, (max - start) / span))
       const offset = haversine(point, interpolate(a, b, t))
-      const distance = distances[i] + t * (distances[i + 1] - distances[i])
+      const distance = start + t * span
       if (offset < best.offset - 0.01 || (Math.abs(offset - best.offset) <= 0.01
         && Math.abs(distance - near) < Math.abs(best.distance - near))) best = { distance, offset }
     }

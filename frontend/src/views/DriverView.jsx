@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { MapLegend, StatusBadge } from '@/components/dashboard-shared'
+import { assignedDriverRoute, carpoolItinerary } from './driverCarpool.js'
 
 const DEMO_RIDES = DEMO_PRESETS.indiranagar.riders.map((r, i) => ({
   id: r.id,
@@ -103,7 +104,8 @@ export default function DriverView({ user, view, setView, toast }) {
   const loadData = useCallback(async () => {
     try {
       // Load all rides; driver needs incoming and active.
-      const [v, r, ro] = await Promise.all([vehiclesApi.list(), ridesApi.getAll({ limit: 50 }), routeApi.history(10)])
+      const [r, ro] = await Promise.all([ridesApi.getAll({ limit: 50 }), routeApi.history(10)])
+      const v = await vehiclesApi.list()
       const list = Array.isArray(r) ? r : []
       setVehicles(Array.isArray(v)?v:[])
       setRides(list)
@@ -111,7 +113,7 @@ export default function DriverView({ user, view, setView, toast }) {
       knownPendingRef.current = new Set(list.filter((x) => !x.is_shared && ['pending', 'clustered'].includes(x.status)).map((x) => x.id))
       knownRideStatusRef.current = new Map(list.map((x) => [x.id, x.status]))
       pollInitRef.current = true
-      if (Array.isArray(v) && v.length) setMyVehicle(v[0])
+      setMyVehicle(Array.isArray(v) ? v[0] ?? null : null)
     } catch(e) { toast('error','Failed to load data', apiErrorMessage(e, '')) }
     setLoading(false)
   }, [toast])
@@ -148,14 +150,15 @@ export default function DriverView({ user, view, setView, toast }) {
     try {
       const result = await routeApi.history(10)
       setRoutes(result?.routes || [])
+      const updated = await vehiclesApi.list()
+      if (Array.isArray(updated)) {
+        setVehicles(updated)
+        setMyVehicle(prev => updated.find(item => item.id === prev?.id) || updated[0] || null)
+      }
     } catch { /* keep the last good route plan; next tick retries */ }
   }, [])
 
-  const currentDriverRoute = myVehicle?.id
-    ? routes.find((route) => route.route_id === myVehicle.assigned_route_id && ['solved', 'needs_reoptimization'].includes(route.status) && route.route_metadata?.carpool_run_status !== 'completed')
-      || routes.find((route) => route.vehicle_id === myVehicle.id && ['solved', 'needs_reoptimization'].includes(route.status) && route.route_metadata?.carpool_run_status !== 'completed')
-      || null
-    : null
+  const currentDriverRoute = assignedDriverRoute(routes, myVehicle)
 
   useEffect(() => { const timer = setTimeout(() => { void loadData() }, 0); return () => clearTimeout(timer) }, [loadData])
 
@@ -323,7 +326,7 @@ export default function DriverView({ user, view, setView, toast }) {
     }
 
     setSimActive(true)
-    toast('success', single ? `Driving ${resolvedRide.name}` : 'Driver Navigation Active', single ? `${resolvedRide.pickup} → ${resolvedRide.dest}.` : resolvedRoute ? 'Following the assigned route stops.' : 'No assigned route selected.')
+    toast('info', 'Route preview started', 'Pickups and drop-offs must be confirmed separately.')
     const totalSteps = 200
 
     if (simTimerRef.current) clearInterval(simTimerRef.current)
@@ -335,9 +338,7 @@ export default function DriverView({ user, view, setView, toast }) {
         setSimActive(false)
         setSimProgress(1)
         setSimSpeed(0)
-        if (single) fireOnce('drop', 'success', `Dropped ${resolvedRide.name}`, `${resolvedRide.dest} · trip complete.`)
-        else fireOnce('ananya', 'success', 'Dropped Ananya Sharma', 'MG Road Metro Station · trip complete.')
-        toast('success', 'Route Navigation Finished', single ? `${resolvedRide.name} delivered.` : 'All dropoffs completed.')
+        toast('info', 'Route preview finished', 'No ride statuses changed. Confirm actual stops on the ride screen.')
         return
       }
 
@@ -373,8 +374,6 @@ export default function DriverView({ user, view, setView, toast }) {
       setSimBearing(bearing)
       setSimSpeed(Math.round(35 + Math.sin(p * 20) * 5))
 
-      // Push telemetry via functional update.
-      setMyVehicle(prev => (prev ? { ...prev, lat: currLat, lng: currLng } : prev))
     }, 80)
   }
 
@@ -484,9 +483,9 @@ export default function DriverView({ user, view, setView, toast }) {
         simBearing={simBearing}
          onToggleSim={() => {
            const route = navRoute || (previewRide ? null : currentDriverRoute)
-           if (!simActive && route) void startFullNav(route)
-           else toggleDriveSimulation(undefined, route)
+           toggleDriveSimulation(undefined, route)
          }}
+         onOpenCarpool={currentDriverRoute?.route_metadata?.carpool_run ? () => setView('driver-carpool') : null}
          previewRide={previewRide}
          runRide={runRide}
          route={navRoute || (previewRide ? null : currentDriverRoute)}
@@ -503,7 +502,7 @@ export default function DriverView({ user, view, setView, toast }) {
   if (view === 'driver-carpool') {
     return (
       <CarpoolRouteView
-        routes={routes}
+        route={currentDriverRoute}
         rides={rides}
         vehicle={myVehicle}
         loading={loading}
@@ -521,7 +520,7 @@ export default function DriverView({ user, view, setView, toast }) {
           try {
             await routeApi.confirmCarpoolPickup(routeId, rideId)
             await refreshRides()
-            toast('success', 'Passenger picked up', `Ride #${rideId} is now in progress.`)
+            toast('success', 'Passenger picked up', 'Start the trip when you are ready to depart.')
           } catch (error) { toast('error', 'Could not confirm pickup', apiErrorMessage(error, '')) }
         }}
         onMarkArrived={async (routeId, rideId) => {
@@ -917,7 +916,7 @@ function StatCard({ icon: Icon, label, value, sub }) {
 }
 
 // Live navigation map
-function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActive, simProgress, simSpeed, simCoords, simBearing, onToggleSim, previewRide, runRide, onClearPreview, onResetSim }) {
+function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActive, simProgress, simSpeed, simCoords, simBearing, onToggleSim, onOpenCarpool, previewRide, runRide, onClearPreview, onResetSim }) {
   // The persisted assigned route is the source of truth; a single ride only backs the driver's preview.
   const contextRide = (simActive || simProgress > 0) && runRide ? runRide : previewRide
   const activePath = useMemo(() => route ? pathForRoute(route) : contextRide ? pathForRide(contextRide) : [], [route, contextRide])
@@ -960,8 +959,8 @@ function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActiv
   if (contextRide) {
     const destShort = String(contextRide.dest).split(',')[0]
     if (simProgress >= 1) {
-      navInstruction = `Delivered ${contextRide.name} · ${contextRide.dest}`
-      nextStopLabel = `${destShort} · delivered`
+      navInstruction = 'Route preview finished'
+      nextStopLabel = destShort
       nextStopShort = destShort
     } else if (simProgress >= boardAt) {
       navInstruction = `En route: dropping ${contextRide.name} at ${destShort}`
@@ -977,7 +976,7 @@ function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActiv
   } else if (route) {
     const nextWaypoint = routeWaypoints[Math.min(Math.floor(simProgress * routeWaypoints.length), Math.max(0, routeWaypoints.length - 1))]
     const nextLabel = nextWaypoint?.label || `${nextWaypoint?.waypoint_type === 'pickup' ? 'Pickup' : 'Drop-off'} stop`
-    navInstruction = simProgress >= 1 ? 'Assigned route completed' : `Proceed to ${nextLabel}`
+    navInstruction = simProgress >= 1 ? 'Route preview finished' : `Proceed to ${nextLabel}`
     nextStopLabel = nextLabel
     nextStopShort = nextLabel
   } else {
@@ -1004,7 +1003,7 @@ function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActiv
           <div className="min-w-0">
             <p className="truncate text-[13px] font-bold">{navInstruction}</p>
             <p className="truncate text-xs text-muted-foreground">
-              {simActive ? `${simSpeed} km/h · ${kmLeft} km to destination` : 'Ready to start driving'}
+              {simActive ? `Preview · ${simSpeed} km/h · ${kmLeft} km remaining` : simProgress >= 1 ? 'No ride statuses changed' : 'GPS preview does not update ride status'}
             </p>
           </div>
         </div>
@@ -1012,8 +1011,9 @@ function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActiv
         <div className="flex items-center gap-2">
           <Button size="sm" onClick={onToggleSim} className="gap-1.5">
             {simActive ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-            {simActive ? 'Pause drive' : route && !(route.route_metadata || {}).driver_accepted ? 'Accept & start drive' : 'Start GPS drive'}
+            {simActive ? 'Pause preview' : 'Preview route'}
           </Button>
+          {onOpenCarpool && <Button size="sm" variant="outline" onClick={onOpenCarpool}>Manage stops</Button>}
           <Button size="sm" variant="outline" onClick={onUpdateLoc} disabled={updating} className="gap-1.5">
             {updating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <LocateFixed className="h-3.5 w-3.5" />}
             {updating ? 'Updating…' : 'Real GPS'}
@@ -1031,7 +1031,7 @@ function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActiv
           <div className="absolute left-3 top-3 z-10 flex max-w-[calc(100%-24px)] flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 shadow backdrop-blur">
             <Badge className="gap-1">
               <MapPin className="h-3 w-3" />
-               Driving assigned route · {Math.round(simProgress * 100)}%
+               Route preview · {Math.round(simProgress * 100)}%
             </Badge>
             <span className="max-w-[420px] truncate text-xs text-muted-foreground">
                {route.waypoints?.length || 0} ordered stops · {((route.total_distance_meters || 0) / 1000).toFixed(1)} km
@@ -1230,27 +1230,12 @@ function carpoolDistanceMeters(aLat, aLng, bLat, bLng) {
   return 2 * radius * Math.asin(Math.sqrt(h))
 }
 
-function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, onAcceptRoute, onAnnouncePickup, onMarkArrived, onConfirmPickup, onDepart, onConfirmDropoff, onCompleteRun }) {
-  const route = routes?.find((item) => (
-    item.vehicle_id === vehicle?.id &&
-    // A co-passenger cancellation leaves the plan needing re-optimization while served riders stay live, so the run must remain drivable.
-    ['solved', 'needs_reoptimization'].includes(item.status) &&
-    item.route_metadata?.carpool_run &&
-    item.route_metadata?.carpool_run_status !== 'completed' &&
-    (item.problem || item.route_metadata?.problem || 'pdp') === 'pdp'
-  )) || null
+function CarpoolRouteView({ route: assignedRoute, rides, vehicle, loading, onBack, onOpenMap, onAcceptRoute, onAnnouncePickup, onMarkArrived, onConfirmPickup, onDepart, onConfirmDropoff, onCompleteRun }) {
+  const route = assignedRoute?.route_metadata?.carpool_run ? assignedRoute : null
   const waypoints = route?.waypoints || []
-  const rideById = new Map((rides || []).map((ride) => [ride.id, ride]))
-  const passengerIds = [...new Set(waypoints.flatMap((waypoint) => waypoint.passenger_ids || []))]
-  const passengers = passengerIds
-    .map((id) => rideById.get(id))
-    .filter((ride) => ride && ride.status !== 'cancelled')
-  const boardedCount = passengers.filter((ride) => ride.carpool_status === 'boarded').length
-  const everyRiderDroppedOff = passengers.length > 0 && passengers.every((ride) => ride.status === 'completed')
+  const { stops, remainingCount, boardedCount, readyToClose } = carpoolItinerary(waypoints, rides)
   const accepted = Boolean(route?.route_metadata?.driver_accepted)
-  const routeGeometry = route?.geometry?.length > 1
-    ? route.geometry
-    : waypoints.map((waypoint) => [waypoint.lng, waypoint.lat])
+  const routeGeometry = pathForRoute(route)
   const center = waypoints.length
     ? [
         waypoints.reduce((sum, waypoint) => sum + waypoint.lat, 0) / waypoints.length,
@@ -1266,30 +1251,31 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, 
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
           <div>
-            <p className="text-xs font-semibold text-primary">DRIVER ITINERARY</p>
             <h1 className="mob-page-title text-xl">Carpool run</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">Stop-by-stop guidance for up to three riders.</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">Manage pickups and confirm drop-offs.</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {boardedCount > 0 && (
+          {accepted && boardedCount > 0 && (
             <Button variant="outline" onClick={() => onDepart(route.route_id)} className="gap-1.5">
               <Play className="h-4 w-4" /> Start trip ({boardedCount})
             </Button>
           )}
-          {accepted && everyRiderDroppedOff && (
+          {accepted && readyToClose && (
             <Button onClick={() => onCompleteRun(route.route_id)} className="gap-1.5">
               <Check className="h-4 w-4" /> Complete run
             </Button>
           )}
-          <Button onClick={() => accepted ? onOpenMap(route) : onAcceptRoute(route)} className="gap-1.5" disabled={!route}>
-            <Navigation className="h-4 w-4" /> {accepted ? 'Open live map' : 'Accept carpool run'}
-          </Button>
+          {route && !readyToClose && (
+            <Button onClick={() => accepted ? onOpenMap(route) : onAcceptRoute(route)} className="gap-1.5">
+              <Navigation className="h-4 w-4" /> {accepted ? 'Open map' : 'Accept carpool run'}
+            </Button>
+          )}
         </div>
       </div>
 
       {loading ? (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_360px]">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
           <div className="h-[360px] animate-pulse rounded-2xl bg-muted" />
           <div className="h-[360px] animate-pulse rounded-2xl bg-muted" />
         </div>
@@ -1306,57 +1292,54 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, 
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_360px]">
-          <Card className="overflow-hidden">
-            <div className="relative h-[420px] border-b">
-              <AppMap center={center} zoom={13.5} height="100%" routeGeometry={routeGeometry} waypoints={waypoints} />
-              <div className="absolute left-3 top-3 flex items-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow backdrop-blur">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
+          <Card className="min-w-0 gap-0 overflow-hidden py-0">
+            <div className="relative h-[min(38vh,420px)] min-h-56 border-b md:h-[420px]">
+              <AppMap center={center} zoom={13.5} height="100%" routeGeometry={routeGeometry}
+                waypoints={stops.map((stop, index) => ({ ...stop, marker_label: String(index + 1) }))} />
+              <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow backdrop-blur">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Users className="h-4 w-4" /></span>
                 <div>
-                  <p className="text-xs font-bold">{passengerIds.length} / 3 passengers</p>
+                  <p className="text-xs font-semibold">{remainingCount} {remainingCount === 1 ? 'rider' : 'riders'} remaining</p>
                   <p className="text-[11px] text-muted-foreground">{vehicle?.license_plate || 'Assigned vehicle'}</p>
                 </div>
               </div>
             </div>
-            <CardContent className="grid grid-cols-3 gap-3 p-4">
-              <RouteMetric label="Stops" value={String(waypoints.length)} />
-              <RouteMetric label="Distance" value={`${((route.total_distance_meters || 0) / 1000).toFixed(1)} km`} />
-              <RouteMetric label="Mode" value="PDP" />
+            <CardContent className="grid grid-cols-2 gap-3 p-4">
+              <RouteMetric label="Stops remaining" value={String(stops.length)} />
+              <RouteMetric label="Total route distance" value={route.total_distance_meters == null ? '—' : `${(route.total_distance_meters / 1000).toFixed(1)} km`} />
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="min-w-0">
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Your next stops</CardTitle>
-              <CardDescription>Follow this order. Pickups are shared curb stops.</CardDescription>
+              <CardTitle>Remaining stops</CardTitle>
+              <CardDescription>{accepted ? 'Confirm each stop after it happens.' : 'Accept the run before managing stops.'}</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-0">
-              {waypoints.map((waypoint, index) => {
-                const ids = waypoint.passenger_ids || []
-                const isPickup = waypoint.waypoint_type === 'pickup'
+            <CardContent>
+              {!stops.length && <p className="text-sm text-muted-foreground">No stops remaining. The run will clear once it is closed.</p>}
+              <ol className="space-y-3">
+              {stops.map((waypoint, index) => {
+                const isPickup = waypoint.pickup
                 return (
-                  <div key={`${waypoint.sequence ?? index}-${waypoint.lat}`} className="flex gap-3 border-l-2 border-border pb-4 pl-4 last:pb-0">
-                    <div className={cn('relative -ml-[23px] mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border-2 bg-card text-xs font-bold', isPickup ? 'border-primary text-primary' : 'border-foreground')}>
+                  <li key={waypoint.sequence ?? index} className="flex gap-3 border-b border-border pb-3 last:border-b-0 last:pb-0">
+                    <div aria-hidden="true" className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold', index === 0 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground')}>
                       {index + 1}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-xs font-bold">{isPickup ? 'Pick up' : 'Drop off'}</p>
-                        <Badge variant="outline" className="text-[10px]">{isPickup ? 'BOARD' : 'EXIT'}</Badge>
-                      </div>
-                      {ids.map((id) => {
-                        const ride = rideById.get(id)
+                      <p className="text-sm font-semibold">{isPickup ? 'Pick up' : 'Drop off'}</p>
+                      {waypoint.riders.map(({ id, ride }) => {
                         const walk = isPickup && ride
                           ? carpoolDistanceMeters(ride.pickup_lat, ride.pickup_lng, waypoint.lat, waypoint.lng)
                           : 0
                         return (
                           <div key={id} className="mt-1 space-y-1">
-                            <p className="truncate text-sm">
-                              {ride?.pickup_label || ride?.destination_label || `Rider #${id}`}
-                              {isPickup && walk > 0 ? <span className="ml-1 text-xs text-muted-foreground">· walks {Math.round(walk)} m</span> : null}
+                            <p className="break-words text-sm">
+                              {(isPickup ? ride?.pickup_label : ride?.destination_label) || `Rider #${id}`}
                             </p>
-                            {ride && <div className="flex flex-wrap items-center gap-1.5">
-                              <StatusBadge status={ride.status} />
+                            {isPickup && walk >= 1 && <p className="text-xs text-muted-foreground">Walk to pickup: {Math.round(walk)} m</p>}
+                            {accepted && ride && <div className="flex flex-wrap items-center gap-1.5">
+                              {isPickup && <StatusBadge status={ride.status} />}
                               {isPickup && ride.status === 'assigned' && (
                                 <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onAnnouncePickup(route.route_id, id)}>Ask rider to walk</Button>
                               )}
@@ -1369,18 +1352,21 @@ function CarpoolRouteView({ routes, rides, vehicle, loading, onBack, onOpenMap, 
                               {isPickup && ride.status === 'ready_for_pickup' && (
                                 <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onConfirmPickup(route.route_id, id)}>Confirm pickup</Button>
                               )}
-                              {!isPickup && ride.status === 'in_progress' && (
+                              {!isPickup && ['boarded', 'in_transit'].includes(ride.carpool_status) && (
                                 <Button size="sm" className="h-7 px-2 text-[11px]" onClick={() => onConfirmDropoff(route.route_id, id)}>Confirm drop-off</Button>
                               )}
                             </div>}
                           </div>
                         )
                       })}
-                      <p className="mt-0.5 text-[11px] text-muted-foreground">{waypoint.lat.toFixed(5)}, {waypoint.lng.toFixed(5)}</p>
+                      {!waypoint.riders.some(({ ride }) => isPickup ? ride?.pickup_label : ride?.destination_label) && (
+                        <p className="mt-1 text-xs text-muted-foreground">{waypoint.lat.toFixed(5)}, {waypoint.lng.toFixed(5)}</p>
+                      )}
                     </div>
-                  </div>
+                  </li>
                 )
               })}
+              </ol>
             </CardContent>
           </Card>
         </div>

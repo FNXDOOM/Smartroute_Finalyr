@@ -391,6 +391,7 @@
 .dark .maplibregl-ctrl-group { border-color: #333 !important; }
 .dark .maplibregl-ctrl-group button { background-color: #1F1F1F !important; color: #fff !important; }
 .dark .maplibregl-ctrl-group button:hover { background-color: #2A2A2A !important; }
+.dark .maplibregl-ctrl-group .maplibregl-ctrl-icon { filter: invert(1); }
 
 /* Legacy CTA helper — now maps to premium button scale */
 .uber-cta {
