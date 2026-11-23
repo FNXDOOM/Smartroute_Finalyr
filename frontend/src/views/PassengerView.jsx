@@ -421,7 +421,9 @@ export default function PassengerView({ view, setView, toast }) {
   const mapPickup = activeRide ? { lat:activeRide.pickup_lat, lng:activeRide.pickup_lng, label:activeRide.pickup_label } : pickupCoords
   const mapDestination = activeRide ? { lat:activeRide.dest_lat, lng:activeRide.dest_lng, label:activeRide.destination_label } : destCoords
   
-  const mapVehicleAnimation = null
+  const trackedMapVehicle = displayVehicle && passengerTrackingVehicle(
+    displayVehicle, activeRide, routeEstimate?.planned && routeEstimate.geometry === routeGeometry,
+  )
 
   const mapCenter = activeRide
     ? [(activeRide.pickup_lat + activeRide.dest_lat) / 2, (activeRide.pickup_lng + activeRide.dest_lng) / 2]
@@ -713,8 +715,8 @@ export default function PassengerView({ view, setView, toast }) {
             pickup={mapPickup}
             destination={mapDestination}
             routeGeometry={routeGeometry}
-            vehicles={activeRide && displayVehicle ? [displayVehicle] : activeRide ? [] : vehicles.filter(v => v.status !== 'offline')}
-            vehicleAnimation={mapVehicleAnimation}
+            vehicles={activeRide ? (isRideActive && trackedMapVehicle ? [trackedMapVehicle] : []) : vehicles.filter(v => v.status !== 'offline')}
+            vehicleMotion={ROUTED_TRACKING && isRideActive ? 'routed' : 'smooth'}
             followCamera={activeRide?.status === 'in_progress'}
             pickupPulse={mapPickupPulse}
             onMapClick={mapPickupMode ? choosePickupOnMap : undefined}
@@ -867,7 +869,15 @@ function TripDetail({ ride, vehicle, onCancel, onBack }) {
   )
 }
 
-const ROUTED_TRACKING = import.meta.env.VITE_PASSENGER_ROUTE_ANIMATION === 'true'
+const ROUTED_TRACKING = import.meta.env.VITE_PASSENGER_ROUTE_ANIMATION !== 'false'
+
+function passengerTrackingVehicle(vehicle, ride, planned) {
+  const trackingLeg = ride?.status === 'in_progress' ? 'drop' : 'pickup'
+  return {
+    ...vehicle, trackingLeg, trackingSnap: planned,
+    trackingKey: `${ride?.id}:${vehicle.assigned_route_id}:${trackingLeg}:${planned}`,
+  }
+}
 
 function TrackingView({ ride, vehicle, routeGeometry, planned, onBack }) {
   const [follow, setFollow] = useState(false)
@@ -881,11 +891,7 @@ function TrackingView({ ride, vehicle, routeGeometry, planned, onBack }) {
   const destCoords = ride ? { lat: ride.dest_lat, lng: ride.dest_lng, label: ride.destination_label } : null
   const displayVehicle = vehicle || null
   const trackingPickupPulse = !!ride && ['pending', 'clustered'].includes(ride.status)
-  const trackingLeg = ride?.status === 'in_progress' ? 'drop' : 'pickup'
-  const vList = displayVehicle?.lat != null ? [{
-    ...displayVehicle, trackingLeg, trackingSnap: planned,
-    trackingKey: `${ride?.id}:${displayVehicle.assigned_route_id}:${trackingLeg}:${planned}`,
-  }] : []
+  const vList = displayVehicle?.lat != null ? [passengerTrackingVehicle(displayVehicle, ride, planned)] : []
   const center = displayVehicle?.lat != null ? [displayVehicle.lat, displayVehicle.lng] : ride ? [ride.pickup_lat, ride.pickup_lng] : [12.9784, 77.6408]
 
   const vehicleAnimation = null

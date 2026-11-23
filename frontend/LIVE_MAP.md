@@ -2,11 +2,11 @@
 
 ## Production passenger tracking
 
-Set `VITE_PASSENGER_ROUTE_ANIMATION=true` in `frontend/.env.local` for a local
-test, or in the repository's GitHub Actions variables before a production
-build. This is a build-time flag: disable it and rebuild to restore the
-original tracking renderer. It defaults to off. Open an active ride and
-select **Live ride tracking** to test the authenticated feed and route trail.
+Passenger route animation is enabled by default on the booking map and in
+fullscreen tracking. Set `VITE_PASSENGER_ROUTE_ANIMATION=false` in
+`frontend/.env.local` or in GitHub Actions variables and rebuild to use the
+original tracking renderer. Open an active ride to see the vehicle animate
+between real GPS updates.
 Stored pooled routes support snapping and trail progress; rides without a
 stored route glide between fixes without snapping to the booking preview.
 The standalone demo and synthetic WebSocket are local only.

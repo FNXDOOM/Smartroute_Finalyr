@@ -1064,7 +1064,7 @@ function LiveMapView({ myVehicle, route, onBack, onUpdateLoc, updating, simActiv
           routeGeometry={activePath}
           waypoints={waypoints}
           followCamera={simActive}
-          vehicleMotion="direct"
+           vehicleMotion={simActive ? 'direct' : 'smooth'}
         />
 
         {/* Floating telemetry HUD */}
@@ -1296,6 +1296,7 @@ function CarpoolRouteView({ route: assignedRoute, rides, vehicle, loading, onBac
           <Card className="min-w-0 gap-0 overflow-hidden py-0">
             <div className="relative h-[min(38vh,420px)] min-h-56 border-b md:h-[420px]">
               <AppMap center={center} zoom={13.5} height="100%" routeGeometry={routeGeometry}
+                vehicles={vehicle && vehicle.id === route.vehicle_id ? [vehicle] : []}
                 waypoints={stops.map((stop, index) => ({ ...stop, marker_label: String(index + 1) }))} />
               <div className="pointer-events-none absolute left-3 top-3 flex items-center gap-2 rounded-xl border bg-card/95 px-3 py-2 shadow backdrop-blur">
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground"><Users className="h-4 w-4" /></span>
