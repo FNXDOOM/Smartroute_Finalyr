@@ -132,13 +132,21 @@ def test_profile_email_change_is_normalized_and_checked_case_insensitively():
         other_row = db.query(User).filter(User.id == other.id).first()
 
         with pytest.raises(HTTPException) as exc_info:
-            update_current_user(UserUpdate(email="PATCH.OWNER@EXAMPLE.COM"), db, other_row)
+            update_current_user(
+                UserUpdate(
+                    email="PATCH.OWNER@EXAMPLE.COM", current_password="password123"
+                ),
+                db,
+                other_row,
+            )
         assert exc_info.value.status_code == 400
         db.refresh(other_row)
         assert other_row.email == "patch.other@example.com"
 
         updated = update_current_user(
-            UserUpdate(email="New.Address@Example.COM"), db, other_row
+            UserUpdate(email="New.Address@Example.COM", current_password="password123"),
+            db,
+            other_row,
         )
         assert updated.email == "new.address@example.com"
     finally:
@@ -151,6 +159,44 @@ def test_profile_email_change_is_normalized_and_checked_case_insensitively():
                 ]
             )
         ).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_profile_email_change_requires_current_password():
+    """A stolen session must not be able to re-bind the account email silently."""
+    db = _db()
+    try:
+        user = register_local_user(
+            UserRegister(name="Stepper", email="step.up@example.com", password="password123"),
+            db,
+        ).user
+        row = db.query(User).filter(User.id == user.id).first()
+
+        # No step-up at all.
+        with pytest.raises(HTTPException) as no_password:
+            update_current_user(UserUpdate(email="hijacked@example.com"), db, row)
+        assert no_password.value.status_code == 403
+
+        # Wrong password is refused too.
+        with pytest.raises(HTTPException) as wrong_password:
+            update_current_user(
+                UserUpdate(email="hijacked@example.com", current_password="not-it"),
+                db,
+                row,
+            )
+        assert wrong_password.value.status_code == 403
+
+        db.refresh(row)
+        assert row.email == "step.up@example.com"
+
+        # Name/phone edits stay password-free.
+        updated = update_current_user(UserUpdate(name="Stepper Two"), db, row)
+        assert updated.name == "Stepper Two"
+    finally:
+        db.query(User).filter(User.email == "step.up@example.com").delete(
+            synchronize_session=False
+        )
         db.commit()
         db.close()
 

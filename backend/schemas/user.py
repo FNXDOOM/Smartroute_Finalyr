@@ -15,6 +15,10 @@ class UserUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=120)
     email: Optional[str] = Field(None, min_length=3, max_length=320)
     phone: Optional[str] = Field(None, max_length=40)
+    # Required whenever [email] changes for a local (password) account —
+    # an email change without step-up lets a stolen session silently re-bind
+    # the account. Clerk-managed accounts cannot change email here at all.
+    current_password: Optional[str] = Field(None, min_length=1, max_length=128)
 
 
 class DriverApplyRequest(BaseModel):

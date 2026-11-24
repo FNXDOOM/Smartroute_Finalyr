@@ -66,12 +66,26 @@ from utils.ride_states import (
     is_terminal_ride,
 )
 from services.clustering.h3_partitioner import get_h3_index
+from config import APP_ENV
 from utils.ride_scope import (
     LIVE_MODE,
     PRESENTATION_DEMO_MODE,
     apply_ride_scope,
     validate_ride_mode,
 )
+
+
+def _require_demo_allowed(current_user: User) -> None:
+    """Presentation-demo endpoints are for demos and admins only.
+
+    Outside production any signed-in user may spawn a demo run (scoped to
+    themselves and TTL-reclaimed); in production only admins may.
+    """
+    if APP_ENV == "production" and current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Presentation demo endpoints are disabled in production.",
+        )
 
 router = APIRouter()
 
@@ -208,6 +222,7 @@ def create_demo_clustered_riders(
     current_user: User = Depends(get_current_user),
 ):
     """Create 3 clustered sample rides along one corridor for live HDBSCAN + pre-dispatch CVRP demos."""
+    _require_demo_allowed(current_user)
     demo_run_id = demo_run_id or uuid4().hex
     custom_coordinates = (pickup_lat, pickup_lng, dest_lat, dest_lng)
     if any(value is not None for value in custom_coordinates) and not all(
@@ -305,6 +320,7 @@ def create_demo_shared_batch(
     current_user: User = Depends(get_current_user),
 ):
     """Create up to three presentation riders joining one shared-auto route."""
+    _require_demo_allowed(current_user)
     _reclaim_stale_demo_runs(db, batch_in.demo_run_id, current_user.id)
     created = []
     for item in batch_in.riders:
@@ -448,6 +464,7 @@ def reset_demo_run(
     current_user: User = Depends(get_current_user),
 ):
     """Remove one presentation run and release any vehicle it temporarily used."""
+    _require_demo_allowed(current_user)
     owned_demo_rides = db.query(RideRequest).filter(
         RideRequest.mode == PRESENTATION_DEMO_MODE,
         RideRequest.demo_run_id == demo_run_id,

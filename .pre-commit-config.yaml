@@ -1,0 +1,10 @@
+# Blocks a credential from being committed (the audit's F1 class of finding).
+# One-time setup on each clone:  pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        name: Detect hardcoded secrets (gitleaks)
+        # Scan staged changes; the full-history scan runs in CI.
+        args: ["protect", "--staged", "--redact"]

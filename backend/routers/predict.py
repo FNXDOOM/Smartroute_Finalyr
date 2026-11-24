@@ -17,10 +17,20 @@ from schemas.predict import (
 )
 from services.clustering.h3_partitioner import get_h3_center, get_h3_index
 from services.prediction.demand_model import build_heatmap_cells, predict_zone_demand
-from utils.auth_utils import get_current_user
+from utils.auth_utils import ensure_active_driver, get_current_user
 from utils.ride_scope import LIVE_MODE
 
 router = APIRouter()
+
+
+def _require_analytics_access(current_user: User) -> None:
+    """Demand predictions are business analytics — admins and active drivers only."""
+    if current_user.role not in {"admin", "driver"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Requires one of roles: admin, driver",
+        )
+    ensure_active_driver(current_user)
 
 
 def latest_demand_snapshots_query(db: Session, lookback_days: int):
@@ -42,6 +52,7 @@ def predict_demand_for_point(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _require_analytics_access(current_user)
     h3_index = get_h3_index(latitude, longitude, resolution=resolution)
     ref_time = reference_time or datetime.now(timezone.utc)
     prediction = predict_zone_demand(
@@ -75,6 +86,7 @@ def predict_demand_heatmap(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _require_analytics_access(current_user)
     if min_lat > max_lat or min_lng > max_lng:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

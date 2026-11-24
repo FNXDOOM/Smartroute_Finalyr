@@ -121,6 +121,20 @@ def update_current_user(
         if not email:
             raise HTTPException(status_code=400, detail="Email must not be empty.")
         if email != normalize_email(current_user.email):
+            # Email is a recovery + identity credential: changing it needs
+            # step-up auth. Clerk-managed accounts own their email at the IdP.
+            if not current_user.password_hash:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Email is managed by your sign-in provider and cannot be changed here.",
+                )
+            if not user_update.current_password or not verify_password(
+                user_update.current_password, current_user.password_hash
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Current password is required to change your email.",
+                )
             existing_user = (
                 db.query(User)
                 .filter(func.lower(User.email) == email, User.id != current_user.id)
