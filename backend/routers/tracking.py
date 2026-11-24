@@ -79,6 +79,8 @@ class ConnectionManager:
             db.close()
 
     async def _send_snapshot(self, entry: TrackingConnection, db: Session, vehicles, events) -> None:
+        if not await self._still_authorized(entry, db):
+            return
         visible_vehicle_ids, visible_ride_ids = _visible_tracking_ids(db, entry)
         visible_vehicles = vehicles if entry.role == "admin" else [
             vehicle for vehicle in vehicles if vehicle.id in visible_vehicle_ids
@@ -102,6 +104,8 @@ class ConnectionManager:
             self.disconnect(entry.websocket)
 
     async def _send_vehicle_update(self, entry: TrackingConnection, db: Session, vehicle: dict, event: dict) -> None:
+        if not await self._still_authorized(entry, db):
+            return
         visible_vehicle_ids, _ = _visible_tracking_ids(db, entry)
         if entry.role != "admin" and vehicle["id"] not in visible_vehicle_ids:
             return
@@ -110,6 +114,18 @@ class ConnectionManager:
             "vehicle": vehicle,
             "event": event,
         }, default=str))
+
+    async def _still_authorized(self, entry: TrackingConnection, db: Session) -> bool:
+        if entry not in self.active_connections:
+            return False
+        row = db.query(User.role, User.driver_status).filter(User.id == entry.user_id).first()
+        if row is not None and row.role == entry.role and (
+            row.role != "driver" or row.driver_status == "active"
+        ):
+            return True
+        self.disconnect(entry.websocket)
+        await entry.websocket.close(code=4403, reason="Tracking access revoked")
+        return False
 
     async def broadcast_vehicle_update(self, vehicle: dict, event: dict):
         """Broadcast one vehicle update to all connected clients."""
@@ -450,6 +466,10 @@ async def websocket_endpoint(websocket: WebSocket):
         return
     finally:
         db.close()
+
+    if user.role == "driver" and user.driver_status != "active":
+        await websocket.close(code=4403, reason="Driver is not active")
+        return
 
     entry = await manager.connect(websocket, user.id, user.role)
     try:

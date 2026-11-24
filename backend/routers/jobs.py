@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -92,7 +93,13 @@ def list_job_runs(
 ):
     """Return recent runs for background jobs."""
     _require_admin_or_driver(current_user)
-    runs = db.query(JobRun).order_by(JobRun.started_at.desc()).limit(limit).all()
+    query = db.query(JobRun)
+    if current_user.role != "admin":
+        query = query.filter(or_(
+            JobRun.job_name != "optimize_route",
+            JobRun.triggered_by_user_id == current_user.id,
+        ))
+    runs = query.order_by(JobRun.started_at.desc()).limit(limit).all()
     return [JobRunResponse.model_validate(run) for run in runs]
 
 

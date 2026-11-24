@@ -428,7 +428,16 @@ def verify_payment(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Payment amount does not match the order",
         )
-    if rzp_payment.get("status") not in ("captured", "authorized"):
+    provider_status = rzp_payment.get("status")
+    if provider_status == "authorized":
+        return PaymentVerifyResponse(
+            payment_id=payment.id,
+            status="pending",
+            verified=False,
+            ride_request_id=payment.ride_request_id,
+            message="Payment is awaiting capture",
+        )
+    if provider_status != "captured":
         payment.failure_reason = "payment_not_captured"
         db.commit()
         raise HTTPException(
@@ -525,7 +534,7 @@ async def razorpay_webhook(
     if payment.status == "refunded" or (payment.status == "paid" and event != "refund.processed"):
         return WebhookResponse(received=True)
 
-    if event in ("payment.captured", "payment.authorized"):
+    if event == "payment.captured":
         payment.status = "paid"
         payment.verified = 1
         payment.failure_reason = None

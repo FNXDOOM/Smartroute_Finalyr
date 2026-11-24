@@ -15,8 +15,9 @@ export default function RazorpayPayment({
   className = '',
   disabled = false,
 }) {
-  const [phase, setPhase] = useState('idle') // idle|creating|paying|verifying|paid|failed
+  const [phase, setPhase] = useState('idle')
   const [error, setError] = useState('')
+  const [pendingCheckout, setPendingCheckout] = useState(null)
 
   // Cancelled checkout resets to idle so the user can retry cleanly.
   useEffect(() => {
@@ -28,6 +29,10 @@ export default function RazorpayPayment({
   const handlePay = async () => {
     if (rideRequest?.status !== 'completed') return
     setError('')
+    if (pendingCheckout?.rideId === rideRequest.id) {
+      await verifyCheckout(pendingCheckout.response)
+      return
+    }
     setPhase('creating')
     let checkoutData
     try {
@@ -68,13 +73,22 @@ export default function RazorpayPayment({
       return
     }
 
-    // Checkout returned a payment — the backend must confirm it.
+    await verifyCheckout(result.response)
+  }
+
+  const verifyCheckout = async (response) => {
     setPhase('verifying')
     try {
-      const verification = await paymentsApi.verify(result.response)
+      const verification = await paymentsApi.verify(response)
       if (verification?.verified && verification?.status === 'paid') {
+        setPendingCheckout(null)
         setPhase('paid')
         onPaid?.(verification)
+        return
+      }
+      if (verification?.status === 'pending') {
+        setPendingCheckout({ response, rideId: rideRequest.id })
+        setPhase('pending')
         return
       }
       setError(verification?.message || 'Payment could not be verified.')
@@ -92,9 +106,10 @@ export default function RazorpayPayment({
     phase === 'creating' ? 'Preparing payment…'
     : phase === 'paying' ? 'Complete payment in checkout'
     : phase === 'verifying' ? 'Verifying payment…'
+    : phase === 'pending' ? 'Awaiting capture — check status'
     : phase === 'paid' ? 'Payment successful'
     : phase === 'cancelled' ? 'Payment cancelled — tap to retry'
-    : phase === 'failed' ? 'Payment failed — tap to retry'
+    : phase === 'failed' ? (pendingCheckout?.rideId === rideRequest?.id ? 'Check payment status again' : 'Payment failed — tap to retry')
     : `Pay ${rideOptionName ? `· ${rideOptionName}` : ''}`
 
   if (rideRequest?.status !== 'completed') return null

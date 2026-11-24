@@ -760,6 +760,28 @@ def test_verify_rejects_amount_mismatch(db, user, ride, fake_client, set_secrets
 
 # --- Webhooks ---
 
+def test_authorized_payment_stays_pending_until_capture(db, user, ride, fake_client, set_secrets, set_webhook_secret):
+    payment = _make_payment(db, user, ride)
+    fetch = fake_client.fetch_payment
+    fake_client.fetch_payment = lambda payment_id: {**fetch(payment_id), "status": "authorized"}
+    request = PaymentVerifyRequest(
+        razorpay_order_id="order_payment-1",
+        razorpay_payment_id="pay_w1",
+        razorpay_signature=_valid_signature("order_payment-1", "pay_w1"),
+    )
+    response = payments_router.verify_payment(request, db, user)
+    assert response.status == "pending"
+    assert not response.verified
+
+    for event, expected in (("payment.authorized", "pending"), ("payment.captured", "paid")):
+        payload = {**_captured_payload(), "event": event}
+        body, signature = _signed_body(payload)
+        assert _run_webhook(db, signature, json.loads(body)).received
+        db.refresh(payment)
+        assert payment.status == expected
+        assert bool(payment.verified) == (expected == "paid")
+
+
 def test_webhook_marks_payment_paid(db, user, ride, set_webhook_secret):
     payment = _make_payment(db, user, ride)
     body, sig = _signed_body(_captured_payload())

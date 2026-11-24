@@ -297,10 +297,8 @@ def list_routes(
 ):
     """Return route plans visible to the current user."""
     if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view route history",
-        )
+        raise HTTPException(status_code=403, detail="Only admin or driver users can view route history")
+    ensure_active_driver(current_user)
 
     routes_query = db.query(RoutePlan).filter(
         RoutePlan.mode == LIVE_MODE,
@@ -345,10 +343,8 @@ def get_route_history(
 ):
     """Return recently generated route plans."""
     if current_user.role not in {"admin", "driver"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin or driver users can view route history",
-        )
+        raise HTTPException(status_code=403, detail="Only admin or driver users can view route history")
+    ensure_active_driver(current_user)
 
     route_plan = db.query(RoutePlan).filter(
         RoutePlan.route_id == route_id,
